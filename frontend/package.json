@@ -9,6 +9,8 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@stacks/connect": "^8.2.5",
+    "@stacks/transactions": "^7.3.1",
     "next": "16.1.6",
     "react": "19.2.3",
     "react-dom": "19.2.3"

@@ -1,8 +1,3 @@
-;; ============================================================
-;; State machine: PENDING → ACTIVE → COMPLETE | REFUNDED | DISPUTED
-;; ============================================================
-
-;; ─── Error codes ─────────────────────────────────────────────
 (define-constant ERR-NOT-AUTHORIZED    (err u100))
 (define-constant ERR-WRONG-STATE       (err u101))
 (define-constant ERR-ALREADY-DEPOSITED (err u102))
@@ -12,46 +7,41 @@
 (define-constant ERR-NOT-FOUND         (err u106))
 (define-constant ERR-TIMEOUT-NOT-MET   (err u107))
 (define-constant ERR-TIMEOUT-ACTIVE    (err u108))
+(define-constant ERR-ZERO-BALANCE      (err u109))
 
-;; ─── State constants ──────────────────────────────────────────
+
 (define-constant STATE-PENDING  u0)
 (define-constant STATE-ACTIVE   u1)
 (define-constant STATE-COMPLETE u2)
 (define-constant STATE-REFUNDED u3)
 (define-constant STATE-DISPUTED u4)
 
-;; ─── Timeouts ─────────────────────────────────────────────────
-(define-constant TIMEOUT-BLOCKS     u432)  ;; 72 hours (~10 min/block)
+(define-constant TIMEOUT-BLOCKS     u432)  ;; 72 hours
 (define-constant ARB-TIMEOUT-BLOCKS u288)  ;; 48 hours
 
-;; ─── Minimum deposit (anti-spam) ──────────────────────────────
 (define-constant MIN-AMOUNT u1000)
 
-;; ─── Dynamic owner — set once at deploy time ──────────────────
 (define-data-var contract-owner principal tx-sender)
 
-;; ============================================================
-;; MULTI-ESCROW MAP
-;; ============================================================
 
 (define-map agreements
   (string-ascii 64)
   {
-    state:             uint,
-    party-a:           principal,
-    party-b:           principal,
-    arbitrator:        principal,
-    amount-per-party:  uint,
-    party-a-deposited: bool,
-    party-b-deposited: bool,
-    deadline-block:    uint,
-    dispute-block:     uint
+    state:              uint,
+    party-a:            principal,
+    party-b:            principal,
+    arbitrator:         principal,
+    amount-per-party:   uint,
+    party-a-deposited:  bool,
+    party-b-deposited:  bool,
+    party-a-amount:     uint,  
+    party-b-amount:     uint,   
+    total-deposited:    uint,  
+    deadline-block:     uint,
+    dispute-block:      uint
   }
 )
 
-;; ============================================================
-;; READ-ONLY
-;; ============================================================
 
 (define-read-only (get-owner)
   (var-get contract-owner)
@@ -64,6 +54,13 @@
 (define-read-only (get-state (id (string-ascii 64)))
   (match (map-get? agreements id)
     agreement (ok (get state agreement))
+    ERR-NOT-FOUND
+  )
+)
+
+(define-read-only (get-total-deposited (id (string-ascii 64)))
+  (match (map-get? agreements id)
+    agreement (ok (get total-deposited agreement))
     ERR-NOT-FOUND
   )
 )
@@ -93,10 +90,6 @@
   )
 )
 
-;; ============================================================
-;; CREATE-AGREEMENT
-;; Anyone can create. No owner permission needed.
-;; ============================================================
 
 (define-public (create-agreement
     (id  (string-ascii 64))
@@ -106,9 +99,9 @@
     (amt uint)
   )
   (begin
-    (asserts! (>= amt MIN-AMOUNT)                           ERR-INVALID-AMOUNT)
-    (asserts! (not (is-eq a b))                             ERR-NOT-AUTHORIZED)
-    (asserts! (is-none (map-get? agreements id))            ERR-WRONG-STATE)
+    (asserts! (>= amt MIN-AMOUNT)                ERR-INVALID-AMOUNT)
+    (asserts! (not (is-eq a b))                  ERR-NOT-AUTHORIZED)
+    (asserts! (is-none (map-get? agreements id)) ERR-WRONG-STATE)
 
     (map-set agreements id {
       state:             STATE-PENDING,
@@ -118,6 +111,9 @@
       amount-per-party:  amt,
       party-a-deposited: false,
       party-b-deposited: false,
+      party-a-amount:    u0,
+      party-b-amount:    u0,
+      total-deposited:   u0,
       deadline-block:    u0,
       dispute-block:     u0
     })
@@ -135,10 +131,6 @@
   )
 )
 
-;; ============================================================
-;; DEPOSIT
-;; Each party deposits once. Both deposited → ACTIVE.
-;; ============================================================
 
 (define-public (deposit (id (string-ascii 64)))
   (let (
@@ -157,12 +149,20 @@
       (begin
         (asserts! (not (get party-a-deposited agreement)) ERR-ALREADY-DEPOSITED)
         (try! (stx-transfer? amt caller (as-contract tx-sender)))
-        (map-set agreements id (merge agreement { party-a-deposited: true }))
+        (map-set agreements id (merge agreement {
+          party-a-deposited: true,
+          party-a-amount:    amt,
+          total-deposited:   (+ (get total-deposited agreement) amt)
+        }))
       )
       (begin
         (asserts! (not (get party-b-deposited agreement)) ERR-ALREADY-DEPOSITED)
         (try! (stx-transfer? amt caller (as-contract tx-sender)))
-        (map-set agreements id (merge agreement { party-b-deposited: true }))
+        (map-set agreements id (merge agreement {
+          party-b-deposited: true,
+          party-b-amount:    amt,
+          total-deposited:   (+ (get total-deposited agreement) amt)
+        }))
       )
     )
 
@@ -177,32 +177,92 @@
     )
 
     (print {
-      event:        "deposit",
-      agreement-id: id,
-      by:           caller,
-      amount:       amt
+      event:           "deposit",
+      agreement-id:    id,
+      by:              caller,
+      amount:          amt,
+      total-deposited: (get total-deposited (unwrap! (map-get? agreements id) ERR-NOT-FOUND))
     })
 
     (ok { deposited-by: caller, amount: amt })
   )
 )
 
-;; ============================================================
-;; COMPLETE
-;; Party B confirms delivery → full balance to Party A.
-;; ============================================================
+
+(define-public (cancel-deposit (id (string-ascii 64)))
+  (let (
+    (agreement (unwrap! (map-get? agreements id) ERR-NOT-FOUND))
+    (caller    tx-sender)
+  )
+    ;; Only valid while PENDING (one party deposited, other hasn't)
+    (asserts! (is-eq (get state agreement) STATE-PENDING) ERR-WRONG-STATE)
+    (asserts!
+      (or (is-eq caller (get party-a agreement))
+          (is-eq caller (get party-b agreement)))
+      ERR-NOT-PARTY
+    )
+
+    (if (is-eq caller (get party-a agreement))
+      (begin
+        ;; Party A can only cancel their own deposit
+        (asserts! (get party-a-deposited agreement) ERR-WRONG-STATE)
+        (let ((refund-amt (get party-a-amount agreement)))
+          (asserts! (> refund-amt u0) ERR-ZERO-BALANCE)
+          (try! (as-contract (stx-transfer? refund-amt tx-sender caller)))
+          (map-set agreements id (merge agreement {
+            party-a-deposited: false,
+            party-a-amount:    u0,
+            total-deposited:   (- (get total-deposited agreement) refund-amt)
+          }))
+          (print {
+            event:        "cancel-deposit",
+            agreement-id: id,
+            by:           caller,
+            refunded:     refund-amt
+          })
+          (ok { refunded: refund-amt })
+        )
+      )
+      (begin
+        ;; Party B can only cancel their own deposit
+        (asserts! (get party-b-deposited agreement) ERR-WRONG-STATE)
+        (let ((refund-amt (get party-b-amount agreement)))
+          (asserts! (> refund-amt u0) ERR-ZERO-BALANCE)
+          (try! (as-contract (stx-transfer? refund-amt tx-sender caller)))
+          (map-set agreements id (merge agreement {
+            party-b-deposited: false,
+            party-b-amount:    u0,
+            total-deposited:   (- (get total-deposited agreement) refund-amt)
+          }))
+          (print {
+            event:        "cancel-deposit",
+            agreement-id: id,
+            by:           caller,
+            refunded:     refund-amt
+          })
+          (ok { refunded: refund-amt })
+        )
+      )
+    )
+  )
+)
+
 
 (define-public (complete (id (string-ascii 64)))
   (let (
     (agreement (unwrap! (map-get? agreements id) ERR-NOT-FOUND))
-    (bal       (* (get amount-per-party agreement) u2))
+    (bal       (get total-deposited agreement))
   )
-    (asserts! (is-eq (get state agreement) STATE-ACTIVE)          ERR-WRONG-STATE)
-    (asserts! (is-eq tx-sender (get party-b agreement))           ERR-NOT-AUTHORIZED)
-    (asserts! (< block-height (get deadline-block agreement))     ERR-TIMEOUT-ACTIVE)
+    (asserts! (is-eq (get state agreement) STATE-ACTIVE)      ERR-WRONG-STATE)
+    (asserts! (is-eq tx-sender (get party-b agreement))       ERR-NOT-AUTHORIZED)
+    (asserts! (< block-height (get deadline-block agreement)) ERR-TIMEOUT-ACTIVE)
+    (asserts! (> bal u0)                                      ERR-ZERO-BALANCE)
 
     (try! (as-contract (stx-transfer? bal tx-sender (get party-a agreement))))
-    (map-set agreements id (merge agreement { state: STATE-COMPLETE }))
+    (map-set agreements id (merge agreement {
+      state:           STATE-COMPLETE,
+      total-deposited: u0
+    }))
 
     (print {
       event:        "complete",
@@ -215,21 +275,21 @@
   )
 )
 
-;; ============================================================
-;; REFUND
-;; Only Party A voluntarily cancels → balance back to Party B.
-;; ============================================================
 
 (define-public (refund (id (string-ascii 64)))
   (let (
     (agreement (unwrap! (map-get? agreements id) ERR-NOT-FOUND))
-    (bal       (* (get amount-per-party agreement) u2))
+    (bal       (get total-deposited agreement))
   )
-    (asserts! (is-eq (get state agreement) STATE-ACTIVE)  ERR-WRONG-STATE)
-    (asserts! (is-eq tx-sender (get party-a agreement))   ERR-NOT-AUTHORIZED)
+    (asserts! (is-eq (get state agreement) STATE-ACTIVE) ERR-WRONG-STATE)
+    (asserts! (is-eq tx-sender (get party-a agreement))  ERR-NOT-AUTHORIZED)
+    (asserts! (> bal u0)                                 ERR-ZERO-BALANCE)
 
     (try! (as-contract (stx-transfer? bal tx-sender (get party-b agreement))))
-    (map-set agreements id (merge agreement { state: STATE-REFUNDED }))
+    (map-set agreements id (merge agreement {
+      state:           STATE-REFUNDED,
+      total-deposited: u0
+    }))
 
     (print {
       event:        "refund",
@@ -242,21 +302,21 @@
   )
 )
 
-;; ============================================================
-;; TRIGGER-TIMEOUT
-;; Anyone can call after 72hr deadline. Refunds Party B.
-;; ============================================================
 
 (define-public (trigger-timeout (id (string-ascii 64)))
   (let (
     (agreement (unwrap! (map-get? agreements id) ERR-NOT-FOUND))
-    (bal       (* (get amount-per-party agreement) u2))
+    (bal       (get total-deposited agreement))
   )
-    (asserts! (is-eq (get state agreement) STATE-ACTIVE)           ERR-WRONG-STATE)
-    (asserts! (>= block-height (get deadline-block agreement))     ERR-TIMEOUT-NOT-MET)
+    (asserts! (is-eq (get state agreement) STATE-ACTIVE)        ERR-WRONG-STATE)
+    (asserts! (>= block-height (get deadline-block agreement))  ERR-TIMEOUT-NOT-MET)
+    (asserts! (> bal u0)                                        ERR-ZERO-BALANCE)
 
     (try! (as-contract (stx-transfer? bal tx-sender (get party-b agreement))))
-    (map-set agreements id (merge agreement { state: STATE-REFUNDED }))
+    (map-set agreements id (merge agreement {
+      state:           STATE-REFUNDED,
+      total-deposited: u0
+    }))
 
     (print {
       event:        "timeout",
@@ -269,10 +329,6 @@
   )
 )
 
-;; ============================================================
-;; DISPUTE
-;; Either party opens dispute → STATE-DISPUTED.
-;; ============================================================
 
 (define-public (dispute (id (string-ascii 64)))
   (let ((agreement (unwrap! (map-get? agreements id) ERR-NOT-FOUND)))
@@ -299,21 +355,21 @@
   )
 )
 
-;; ============================================================
-;; RESOLVE-TO-A
-;; Arbitrator rules for Party A.
-;; ============================================================
 
 (define-public (resolve-to-a (id (string-ascii 64)))
   (let (
     (agreement (unwrap! (map-get? agreements id) ERR-NOT-FOUND))
-    (bal       (* (get amount-per-party agreement) u2))
+    (bal       (get total-deposited agreement))
   )
-    (asserts! (is-eq (get state agreement) STATE-DISPUTED)  ERR-WRONG-STATE)
-    (asserts! (is-eq tx-sender (get arbitrator agreement))  ERR-NOT-ARBITRATOR)
+    (asserts! (is-eq (get state agreement) STATE-DISPUTED) ERR-WRONG-STATE)
+    (asserts! (is-eq tx-sender (get arbitrator agreement)) ERR-NOT-ARBITRATOR)
+    (asserts! (> bal u0)                                   ERR-ZERO-BALANCE)
 
     (try! (as-contract (stx-transfer? bal tx-sender (get party-a agreement))))
-    (map-set agreements id (merge agreement { state: STATE-COMPLETE }))
+    (map-set agreements id (merge agreement {
+      state:           STATE-COMPLETE,
+      total-deposited: u0
+    }))
 
     (print {
       event:        "resolved",
@@ -326,21 +382,21 @@
   )
 )
 
-;; ============================================================
-;; RESOLVE-TO-B
-;; Arbitrator rules for Party B.
-;; ============================================================
 
 (define-public (resolve-to-b (id (string-ascii 64)))
   (let (
     (agreement (unwrap! (map-get? agreements id) ERR-NOT-FOUND))
-    (bal       (* (get amount-per-party agreement) u2))
+    (bal       (get total-deposited agreement))
   )
-    (asserts! (is-eq (get state agreement) STATE-DISPUTED)  ERR-WRONG-STATE)
-    (asserts! (is-eq tx-sender (get arbitrator agreement))  ERR-NOT-ARBITRATOR)
+    (asserts! (is-eq (get state agreement) STATE-DISPUTED) ERR-WRONG-STATE)
+    (asserts! (is-eq tx-sender (get arbitrator agreement)) ERR-NOT-ARBITRATOR)
+    (asserts! (> bal u0)                                   ERR-ZERO-BALANCE)
 
     (try! (as-contract (stx-transfer? bal tx-sender (get party-b agreement))))
-    (map-set agreements id (merge agreement { state: STATE-REFUNDED }))
+    (map-set agreements id (merge agreement {
+      state:           STATE-REFUNDED,
+      total-deposited: u0
+    }))
 
     (print {
       event:        "resolved",
@@ -353,24 +409,24 @@
   )
 )
 
-;; ============================================================
-;; TRIGGER-ARB-TIMEOUT
-;; Anyone calls if arbitrator inactive 48hr. Refunds Party B.
-;; ============================================================
 
 (define-public (trigger-arb-timeout (id (string-ascii 64)))
   (let (
     (agreement (unwrap! (map-get? agreements id) ERR-NOT-FOUND))
-    (bal       (* (get amount-per-party agreement) u2))
+    (bal       (get total-deposited agreement))
   )
     (asserts! (is-eq (get state agreement) STATE-DISPUTED) ERR-WRONG-STATE)
     (asserts!
       (>= block-height (+ (get dispute-block agreement) ARB-TIMEOUT-BLOCKS))
       ERR-TIMEOUT-NOT-MET
     )
+    (asserts! (> bal u0) ERR-ZERO-BALANCE)
 
     (try! (as-contract (stx-transfer? bal tx-sender (get party-b agreement))))
-    (map-set agreements id (merge agreement { state: STATE-REFUNDED }))
+    (map-set agreements id (merge agreement {
+      state:           STATE-REFUNDED,
+      total-deposited: u0
+    }))
 
     (print {
       event:        "arb-timeout",

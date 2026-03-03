@@ -1,14 +1,19 @@
 // ============================================================
-// store/slices/agreementSlice.ts  — PRODUCTION UPDATE
-// Key changes:
-//   • isPartyB flag + role awareness
-//   • registerPresenceThunk — POST wallet to presence API
-//   • pollPresenceThunk — GET presence, detect counterparty
-//   • rehydrateFromSession — restore wallet on page reload
-//   • All thunks properly typed
+// store/slices/agreementSlice.ts — PRODUCTION v2
+// Key changes from v1:
+//   • subscribePresenceThunk — SSE-first, poll fallback
+//   • Party B full flow: fetchTermsForPartyB, rehydratePartyB
+//   • termsSnapshot stored in presence so Party B can see terms
+//   • Session keys consistent + isPartyB persisted properly
+//   • Deposit flow: Party B deposits independently after Party A
 // ============================================================
 
-import { createSlice, createAsyncThunk, PayloadAction } from "@reduxjs/toolkit";
+import {
+  createSlice,
+  createAsyncThunk,
+  PayloadAction,
+  createAction,
+} from "@reduxjs/toolkit";
 import { parseAgreement, ParsedAgreement, AgreementType } from "@/api/parseApi";
 import {
   callCreateAgreement,
@@ -35,7 +40,10 @@ import {
   PresenceState,
 } from "../../api/PresenceaApi";
 
-// ── Types ─────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────
+
 export type AppScreen =
   | "landing"
   | "select-type"
@@ -101,7 +109,7 @@ export interface AgreementState {
   counterpartyConnected: boolean;
 
   // role
-  isPartyB: boolean; // true when this user joined via share link
+  isPartyB: boolean;
 
   // agreement lifecycle
   agreementId: string | null;
@@ -111,7 +119,10 @@ export interface AgreementState {
   deadlineBlock: number | null;
   disputeOpenedBy: string | null;
 
-  // on-chain data (from polling)
+  // Party B: tracks whether THIS user has deposited
+  myDepositDone: boolean;
+
+  // on-chain data
   onChainData: OnChainAgreement | null;
   blockHeight: number;
   pollingActive: boolean;
@@ -120,7 +131,7 @@ export interface AgreementState {
   presenceRegistered: boolean;
   presenceError: string | null;
 
-  // tx states per action
+  // tx states
   txCreate: TxState;
   txDeposit: TxState;
   txComplete: TxState;
@@ -151,6 +162,7 @@ const initialState: AgreementState = {
   amountLocked: null,
   deadlineBlock: null,
   disputeOpenedBy: null,
+  myDepositDone: false,
   onChainData: null,
   blockHeight: 0,
   pollingActive: false,
@@ -167,7 +179,6 @@ const initialState: AgreementState = {
 // ASYNC THUNKS
 // ─────────────────────────────────────────────────────────────
 
-// ── Parse agreement ───────────────────────────────────────────
 export const parseAgreementThunk = createAsyncThunk(
   "agreement/parse",
   async (
@@ -187,7 +198,6 @@ export const parseAgreementThunk = createAsyncThunk(
   },
 );
 
-// ── Connect wallet ────────────────────────────────────────────
 export const connectWalletThunk = createAsyncThunk(
   "agreement/connectWallet",
   async (_, { rejectWithValue }) => {
@@ -206,8 +216,7 @@ export const connectWalletThunk = createAsyncThunk(
   },
 );
 
-// ── Register presence on server ───────────────────────────────
-// Called after wallet connect, for both Party A and Party B
+// ── Register presence (Party A or B) ─────────────────────────
 export const registerPresenceThunk = createAsyncThunk(
   "agreement/registerPresence",
   async (
@@ -216,6 +225,7 @@ export const registerPresenceThunk = createAsyncThunk(
       role: "partyA" | "partyB";
       address: string;
       termsHash?: string;
+      termsSnapshot?: Record<string, unknown>;
     },
     { rejectWithValue },
   ) => {
@@ -225,6 +235,7 @@ export const registerPresenceThunk = createAsyncThunk(
         payload.role,
         payload.address,
         payload.termsHash,
+        payload.termsSnapshot,
       );
       return presence;
     } catch (err: unknown) {
@@ -235,7 +246,7 @@ export const registerPresenceThunk = createAsyncThunk(
   },
 );
 
-// ── Poll presence (used by Party A on share-link screen) ──────
+// ── Poll presence (HTTP fallback) ─────────────────────────────
 export const pollPresenceThunk = createAsyncThunk(
   "agreement/pollPresence",
   async (agreementId: string, { rejectWithValue }) => {
@@ -249,7 +260,55 @@ export const pollPresenceThunk = createAsyncThunk(
   },
 );
 
-// ── Create agreement on-chain ─────────────────────────────────
+// ── Fetch terms for Party B from presence snapshot ────────────
+// When Party B opens the link, they need to see Party A's terms.
+export const fetchTermsForPartyBThunk = createAsyncThunk(
+  "agreement/fetchTermsForPartyB",
+  async (agreementId: string, { rejectWithValue }) => {
+    try {
+      const presence = await getPresence(agreementId);
+      return presence;
+    } catch (err: unknown) {
+      return rejectWithValue(
+        err instanceof Error ? err.message : "Failed to load agreement terms",
+      );
+    }
+  },
+);
+
+// ── Rehydrate Party B session from localStorage ───────────────
+// Call this in the join page on mount to restore after page refresh.
+export const rehydratePartyBThunk = createAsyncThunk(
+  "agreement/rehydratePartyB",
+  async (agreementId: string, { rejectWithValue }) => {
+    try {
+      if (typeof window === "undefined") return null;
+
+      const storedAddress = localStorage.getItem("clauseai_wallet_address");
+      const storedIsPartyB =
+        localStorage.getItem(`clauseai_is_party_b_${agreementId}`) === "true";
+
+      if (!storedAddress || !storedIsPartyB) return null;
+
+      // Re-register presence (idempotent — backend just overwrites same address)
+      const presence = await registerParty(
+        agreementId,
+        "partyB",
+        storedAddress,
+      );
+
+      return {
+        address: storedAddress,
+        presence,
+      };
+    } catch (err: unknown) {
+      return rejectWithValue(
+        err instanceof Error ? err.message : "Rehydration failed",
+      );
+    }
+  },
+);
+
 export const createAgreementThunk = createAsyncThunk(
   "agreement/createOnChain",
   async (
@@ -279,7 +338,6 @@ export const createAgreementThunk = createAsyncThunk(
   },
 );
 
-// ── Deposit ───────────────────────────────────────────────────
 export const depositThunk = createAsyncThunk(
   "agreement/deposit",
   async (
@@ -301,7 +359,6 @@ export const depositThunk = createAsyncThunk(
   },
 );
 
-// ── Complete ──────────────────────────────────────────────────
 export const completeThunk = createAsyncThunk(
   "agreement/complete",
   async (agreementId: string, { rejectWithValue }) => {
@@ -316,7 +373,6 @@ export const completeThunk = createAsyncThunk(
   },
 );
 
-// ── Dispute ───────────────────────────────────────────────────
 export const disputeThunk = createAsyncThunk(
   "agreement/dispute",
   async (agreementId: string, { rejectWithValue }) => {
@@ -331,7 +387,6 @@ export const disputeThunk = createAsyncThunk(
   },
 );
 
-// ── Timeout ───────────────────────────────────────────────────
 export const timeoutThunk = createAsyncThunk(
   "agreement/timeout",
   async (agreementId: string, { rejectWithValue }) => {
@@ -346,7 +401,6 @@ export const timeoutThunk = createAsyncThunk(
   },
 );
 
-// ── Poll on-chain state ───────────────────────────────────────
 export const pollAgreementThunk = createAsyncThunk(
   "agreement/poll",
   async (agreementId: string, { rejectWithValue }) => {
@@ -364,9 +418,16 @@ export const pollAgreementThunk = createAsyncThunk(
   },
 );
 
+// ── Action dispatched by SSE subscription (from component) ───
+// Components subscribe to SSE and dispatch this action on each event.
+export const presenceUpdated = createAction<PresenceState>(
+  "agreement/presenceUpdated",
+);
+
 // ─────────────────────────────────────────────────────────────
 // SLICE
 // ─────────────────────────────────────────────────────────────
+
 const agreementSlice = createSlice({
   name: "agreement",
   initialState,
@@ -412,7 +473,6 @@ const agreementSlice = createSlice({
       state.walletConnected = false;
       state.walletAddress = null;
     },
-    // Used by Party B's join page to set their role
     setAsPartyB(
       state,
       action: PayloadAction<{ agreementId: string; address: string }>,
@@ -421,8 +481,20 @@ const agreementSlice = createSlice({
       state.walletConnected = true;
       state.walletAddress = action.payload.address;
       state.agreementId = action.payload.agreementId;
-      state.shareLink = `${typeof window !== "undefined" ? window.location.origin : "https://clauseai.xyz"}/agreement/${action.payload.agreementId}`;
-      state.counterpartyConnected = false; // Party A is the counterparty from B's perspective
+      state.shareLink = buildShareLink(action.payload.agreementId);
+      state.counterpartyConnected = false;
+      // Persist Party B session
+      if (typeof window !== "undefined") {
+        localStorage.setItem("clauseai_wallet_address", action.payload.address);
+        localStorage.setItem(
+          `clauseai_is_party_b_${action.payload.agreementId}`,
+          "true",
+        );
+        localStorage.setItem(
+          "clauseai_agreement_id",
+          action.payload.agreementId,
+        );
+      }
     },
     setCounterpartyConnected(state, action: PayloadAction<string>) {
       state.counterpartyWallet = action.payload;
@@ -435,29 +507,32 @@ const agreementSlice = createSlice({
           .substring(2, 8)
           .toUpperCase();
       }
-      state.shareLink = `${typeof window !== "undefined" ? window.location.origin : "https://clauseai.xyz"}/agreement/${state.agreementId}`;
+      state.shareLink = buildShareLink(state.agreementId);
     },
     setAgreementId(state, action: PayloadAction<string>) {
       state.agreementId = action.payload;
-      state.shareLink = `${typeof window !== "undefined" ? window.location.origin : "https://clauseai.xyz"}/agreement/${action.payload}`;
+      state.shareLink = buildShareLink(action.payload);
     },
-    // Rehydrate wallet session from localStorage on mount
     rehydrateSession(state) {
       if (typeof window === "undefined") return;
       const address = localStorage.getItem("clauseai_wallet_address");
       const agreementId = localStorage.getItem("clauseai_agreement_id");
-      const isPartyB = localStorage.getItem("clauseai_is_party_b") === "true";
       if (address) {
         state.walletConnected = true;
         state.walletAddress = address;
       }
       if (agreementId) {
         state.agreementId = agreementId;
-        state.shareLink = `${window.location.origin}/agreement/${agreementId}`;
+        state.shareLink = buildShareLink(agreementId);
+        // Check if this was a Party B session
+        const isPartyB =
+          localStorage.getItem(`clauseai_is_party_b_${agreementId}`) === "true";
+        if (isPartyB) state.isPartyB = true;
       }
-      if (isPartyB) {
-        state.isPartyB = true;
-      }
+    },
+    // Called by SSE/poll handler in component
+    applyPresenceUpdate(state, action: PayloadAction<PresenceState>) {
+      applyPresence(state, action.payload);
     },
     syncOnChainState(state, action: PayloadAction<OnChainAgreement>) {
       const data = action.payload;
@@ -491,6 +566,7 @@ const agreementSlice = createSlice({
     lockFunds(state) {
       state.fundState = "locked";
       state.amountLocked = state.editedTerms?.amount_usd ?? null;
+      state.myDepositDone = true;
     },
     markComplete(state) {
       state.fundState = "released";
@@ -507,8 +583,10 @@ const agreementSlice = createSlice({
     },
     resetAll() {
       if (typeof window !== "undefined") {
-        localStorage.removeItem("clauseai_agreement_id");
-        localStorage.removeItem("clauseai_is_party_b");
+        // Clean up all clauseai keys
+        Object.keys(localStorage)
+          .filter((k) => k.startsWith("clauseai_"))
+          .forEach((k) => localStorage.removeItem(k));
       }
       return initialState;
     },
@@ -547,7 +625,6 @@ const agreementSlice = createSlice({
       .addCase(connectWalletThunk.fulfilled, (state, action) => {
         state.walletConnected = true;
         state.walletAddress = action.payload;
-        // Persist to localStorage
         if (typeof window !== "undefined") {
           localStorage.setItem("clauseai_wallet_address", action.payload);
         }
@@ -561,17 +638,7 @@ const agreementSlice = createSlice({
       .addCase(registerPresenceThunk.fulfilled, (state, action) => {
         state.presenceRegistered = true;
         state.presenceError = null;
-        const presence = action.payload as PresenceState;
-        // If both connected, sync counterparty
-        if (presence.bothConnected) {
-          if (state.isPartyB && presence.partyA) {
-            state.counterpartyWallet = presence.partyA;
-            state.counterpartyConnected = true;
-          } else if (!state.isPartyB && presence.partyB) {
-            state.counterpartyWallet = presence.partyB;
-            state.counterpartyConnected = true;
-          }
-        }
+        applyPresence(state, action.payload as PresenceState);
       })
       .addCase(registerPresenceThunk.rejected, (state, action) => {
         state.presenceError = action.payload as string;
@@ -579,26 +646,66 @@ const agreementSlice = createSlice({
 
     // pollPresence
     builder.addCase(pollPresenceThunk.fulfilled, (state, action) => {
-      const presence = action.payload as PresenceState;
-      if (state.isPartyB) {
-        // Party B is polling — looking for Party A
-        if (presence.partyA && !state.counterpartyConnected) {
+      applyPresence(state, action.payload as PresenceState);
+    });
+
+    // presenceUpdated (from SSE in component)
+    builder.addCase(presenceUpdated, (state, action) => {
+      applyPresence(state, action.payload);
+    });
+
+    // fetchTermsForPartyB — loads Party A's terms snapshot
+    builder
+      .addCase(fetchTermsForPartyBThunk.pending, (state) => {
+        state.parseLoading = true;
+        state.parseError = null;
+      })
+      .addCase(fetchTermsForPartyBThunk.fulfilled, (state, action) => {
+        state.parseLoading = false;
+        const presence = action.payload as PresenceState;
+        applyPresence(state, presence);
+
+        // Load terms snapshot if Party A saved it
+        if (presence.termsSnapshot) {
+          const terms = presence.termsSnapshot as unknown as ParsedAgreement;
+          state.parsedTerms = terms;
+          state.editedTerms = { ...terms };
+        }
+        if (presence.partyA) {
           state.counterpartyWallet = presence.partyA;
           state.counterpartyConnected = true;
         }
-      } else {
-        // Party A is polling — looking for Party B
-        if (presence.partyB && !state.counterpartyConnected) {
-          state.counterpartyWallet = presence.partyB;
-          state.counterpartyConnected = true;
-        }
+      })
+      .addCase(fetchTermsForPartyBThunk.rejected, (state, action) => {
+        state.parseLoading = false;
+        state.parseError = action.payload as string;
+      });
+
+    // rehydratePartyB
+    builder.addCase(rehydratePartyBThunk.fulfilled, (state, action) => {
+      if (!action.payload) return;
+      const { address, presence } = action.payload;
+      state.walletConnected = true;
+      state.walletAddress = address;
+      state.isPartyB = true;
+      state.presenceRegistered = true;
+      applyPresence(state, presence);
+      if (presence.termsSnapshot) {
+        const terms = presence.termsSnapshot as unknown as ParsedAgreement;
+        state.parsedTerms = terms;
+        state.editedTerms = { ...terms };
       }
     });
 
     // createAgreement
     builder
       .addCase(createAgreementThunk.pending, (state) => {
-        state.txCreate = { status: "pending", txId: null, txUrl: null, error: null };
+        state.txCreate = {
+          status: "pending",
+          txId: null,
+          txUrl: null,
+          error: null,
+        };
       })
       .addCase(createAgreementThunk.fulfilled, (state, action) => {
         state.txCreate = {
@@ -620,7 +727,12 @@ const agreementSlice = createSlice({
     // deposit
     builder
       .addCase(depositThunk.pending, (state) => {
-        state.txDeposit = { status: "pending", txId: null, txUrl: null, error: null };
+        state.txDeposit = {
+          status: "pending",
+          txId: null,
+          txUrl: null,
+          error: null,
+        };
       })
       .addCase(depositThunk.fulfilled, (state, action) => {
         state.txDeposit = {
@@ -629,6 +741,7 @@ const agreementSlice = createSlice({
           txUrl: action.payload.txUrl,
           error: null,
         };
+        state.myDepositDone = true;
         state.fundState = "locked";
         state.amountLocked = state.editedTerms?.amount_usd ?? null;
       })
@@ -644,7 +757,12 @@ const agreementSlice = createSlice({
     // complete
     builder
       .addCase(completeThunk.pending, (state) => {
-        state.txComplete = { status: "pending", txId: null, txUrl: null, error: null };
+        state.txComplete = {
+          status: "pending",
+          txId: null,
+          txUrl: null,
+          error: null,
+        };
       })
       .addCase(completeThunk.fulfilled, (state, action) => {
         state.txComplete = {
@@ -668,7 +786,12 @@ const agreementSlice = createSlice({
     // dispute
     builder
       .addCase(disputeThunk.pending, (state) => {
-        state.txDispute = { status: "pending", txId: null, txUrl: null, error: null };
+        state.txDispute = {
+          status: "pending",
+          txId: null,
+          txUrl: null,
+          error: null,
+        };
       })
       .addCase(disputeThunk.fulfilled, (state, action) => {
         state.txDispute = {
@@ -692,7 +815,12 @@ const agreementSlice = createSlice({
     // timeout
     builder
       .addCase(timeoutThunk.pending, (state) => {
-        state.txTimeout = { status: "pending", txId: null, txUrl: null, error: null };
+        state.txTimeout = {
+          status: "pending",
+          txId: null,
+          txUrl: null,
+          error: null,
+        };
       })
       .addCase(timeoutThunk.fulfilled, (state, action) => {
         state.txTimeout = {
@@ -743,6 +871,35 @@ const agreementSlice = createSlice({
   },
 });
 
+// ─────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────
+
+function buildShareLink(id: string): string {
+  const origin =
+    typeof window !== "undefined"
+      ? window.location.origin
+      : "https://clauseai.xyz";
+  return `${origin}/agreement/${id}`;
+}
+
+// Shared presence application logic (avoids duplication)
+function applyPresence(state: AgreementState, presence: PresenceState) {
+  if (state.isPartyB) {
+    // Party B is looking for Party A
+    if (presence.partyA && !state.counterpartyConnected) {
+      state.counterpartyWallet = presence.partyA;
+      state.counterpartyConnected = true;
+    }
+  } else {
+    // Party A is looking for Party B
+    if (presence.partyB && !state.counterpartyConnected) {
+      state.counterpartyWallet = presence.partyB;
+      state.counterpartyConnected = true;
+    }
+  }
+}
+
 export const {
   setScreen,
   setAgreementType,
@@ -757,6 +914,7 @@ export const {
   generateShareLink,
   setAgreementId,
   rehydrateSession,
+  applyPresenceUpdate,
   syncOnChainState,
   setBlockHeight,
   setPollingActive,

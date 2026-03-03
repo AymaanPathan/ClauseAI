@@ -1,4 +1,11 @@
 "use client";
+// ============================================================
+// ScreenLockFunds.tsx — PRODUCTION UPDATE
+// Key change: Party A creates contract + deposits.
+// Party B ONLY deposits (contract already exists).
+// Role-aware UI.
+// ============================================================
+
 import { useState } from "react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { setScreen } from "@/store/slices/agreementSlice";
@@ -7,7 +14,10 @@ import {
   depositThunk,
 } from "@/store/slices/agreementSlice";
 
-type Step = "create" | "deposit" | "done";
+// Party A: create → deposit
+// Party B: deposit only (contract already exists from Party A)
+type StepPartyA = "create" | "deposit" | "done";
+type StepPartyB = "deposit" | "done";
 
 export default function ScreenLockFunds() {
   const dispatch = useAppDispatch();
@@ -18,17 +28,21 @@ export default function ScreenLockFunds() {
     agreementId,
     txCreate,
     txDeposit,
+    isPartyB,
   } = useAppSelector((s) => s.agreement);
 
-  const [step, setStep] = useState<Step>("create");
+  const [stepA, setStepA] = useState<StepPartyA>("create");
+  const [stepB, setStepB] = useState<StepPartyB>("deposit");
 
   const sbtcAmount = editedTerms?.amount_usd
     ? (parseFloat(editedTerms.amount_usd) / 67000).toFixed(6)
     : "0.000000";
 
   const amountUsd = parseFloat(editedTerms?.amount_usd ?? "0");
+  const isBusy =
+    txCreate.status === "pending" || txDeposit.status === "pending";
 
-  // ── Step 1: Create agreement on chain ────────────────────────
+  // ── Party A: Step 1 — Create contract ────────────────────────
   async function handleCreate() {
     if (!agreementId || !walletAddress || !counterpartyWallet || !editedTerms)
       return;
@@ -36,7 +50,7 @@ export default function ScreenLockFunds() {
     const arbitrator =
       editedTerms.arbitrator && editedTerms.arbitrator !== "TBD"
         ? editedTerms.arbitrator
-        : walletAddress; // fallback: self as arbitrator for demo
+        : walletAddress;
 
     const result = await dispatch(
       createAgreementThunk({
@@ -49,11 +63,11 @@ export default function ScreenLockFunds() {
     );
 
     if (createAgreementThunk.fulfilled.match(result)) {
-      setStep("deposit");
+      setStepA("deposit");
     }
   }
 
-  // ── Step 2: Deposit your share ────────────────────────────────
+  // ── Deposit (both parties call this) ─────────────────────────
   async function handleDeposit() {
     if (!agreementId || !walletAddress) return;
 
@@ -66,12 +80,15 @@ export default function ScreenLockFunds() {
     );
 
     if (depositThunk.fulfilled.match(result)) {
-      setStep("done");
+      if (isPartyB) {
+        setStepB("done");
+      } else {
+        setStepA("done");
+      }
     }
   }
 
-  const isBusy =
-    txCreate.status === "pending" || txDeposit.status === "pending";
+  const currentStep = isPartyB ? stepB : stepA;
 
   return (
     <div
@@ -86,19 +103,21 @@ export default function ScreenLockFunds() {
       <div style={{ maxWidth: 540, width: "100%" }}>
         {/* Header */}
         <div className="animate-fade-up" style={{ marginBottom: 36 }}>
-          <button
-            onClick={() => dispatch(setScreen("share-link"))}
-            style={{
-              background: "none",
-              border: "none",
-              color: "var(--grey-1)",
-              fontSize: 13,
-              cursor: "pointer",
-              marginBottom: 20,
-            }}
-          >
-            ← Back
-          </button>
+          {!isPartyB && (
+            <button
+              onClick={() => dispatch(setScreen("share-link"))}
+              style={{
+                background: "none",
+                border: "none",
+                color: "var(--grey-1)",
+                fontSize: 13,
+                cursor: "pointer",
+                marginBottom: 20,
+              }}
+            >
+              ← Back
+            </button>
+          )}
           <span
             style={{
               fontSize: 12,
@@ -110,7 +129,7 @@ export default function ScreenLockFunds() {
               marginBottom: 12,
             }}
           >
-            Step 6 of 6
+            {isPartyB ? "Final Step" : "Step 6 of 6"}
           </span>
           <h2
             style={{
@@ -120,12 +139,38 @@ export default function ScreenLockFunds() {
               marginBottom: 8,
             }}
           >
-            Review & lock funds
+            {isPartyB ? "Lock your deposit" : "Review & lock funds"}
           </h2>
           <p style={{ color: "var(--grey-1)", fontSize: 14 }}>
-            Both parties sign. Funds lock into the smart contract. Bitcoin
-            enforces the rest.
+            {isPartyB
+              ? "Party A has deployed the contract. Deposit your share to activate the agreement."
+              : "Both parties sign. Funds lock into the smart contract. Bitcoin enforces the rest."}
           </p>
+        </div>
+
+        {/* Role badge */}
+        <div
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            background: "var(--black-2)",
+            border: "1px solid var(--black-4)",
+            borderRadius: 99,
+            padding: "6px 14px",
+            marginBottom: 20,
+            fontSize: 12,
+            fontFamily: "var(--font-mono)",
+            color: isPartyB ? "#60a5fa" : "var(--yellow)",
+          }}
+        >
+          <span>{isPartyB ? "👤" : "👑"}</span>
+          <span>
+            You are {isPartyB ? "Party B" : "Party A"}
+            {isPartyB
+              ? " — contract already deployed by Party A"
+              : " — you deploy + deposit first"}
+          </span>
         </div>
 
         {/* Agreement summary */}
@@ -167,12 +212,16 @@ export default function ScreenLockFunds() {
               {
                 label: "From (Party A)",
                 value: editedTerms?.partyA ?? "—",
-                sub: walletAddress ?? "",
+                sub: isPartyB
+                  ? (counterpartyWallet ?? "")
+                  : (walletAddress ?? ""),
               },
               {
                 label: "To (Party B)",
                 value: editedTerms?.partyB ?? "—",
-                sub: counterpartyWallet ?? "",
+                sub: isPartyB
+                  ? (walletAddress ?? "")
+                  : (counterpartyWallet ?? ""),
               },
               { label: "Condition", value: editedTerms?.condition ?? "—" },
               { label: "Deadline", value: editedTerms?.deadline ?? "—" },
@@ -210,7 +259,7 @@ export default function ScreenLockFunds() {
                         marginTop: 2,
                       }}
                     >
-                      {row.sub}
+                      {row.sub.slice(0, 10)}...{row.sub.slice(-6)}
                     </div>
                   )}
                 </div>
@@ -218,6 +267,7 @@ export default function ScreenLockFunds() {
             ))}
           </div>
 
+          {/* Amount */}
           <div
             style={{
               background: "var(--yellow-dim)",
@@ -262,9 +312,7 @@ export default function ScreenLockFunds() {
               >
                 ≈ USD
               </div>
-              <div
-                style={{ fontSize: 18, fontWeight: 700, color: "var(--white)" }}
-              >
+              <div style={{ fontSize: 18, fontWeight: 700 }}>
                 ${editedTerms?.amount_usd ?? "—"}
               </div>
             </div>
@@ -282,20 +330,35 @@ export default function ScreenLockFunds() {
             marginBottom: 20,
           }}
         >
-          {[
-            { id: "create", label: "Deploy contract on-chain", tx: txCreate },
-            {
-              id: "deposit",
-              label: "Lock your funds (deposit)",
-              tx: txDeposit,
-            },
-            { id: "done", label: "Contract active", tx: null },
-          ].map((s, i) => {
+          {(isPartyB
+            ? [
+                {
+                  id: "deposit",
+                  label: "Lock your funds (deposit)",
+                  tx: txDeposit,
+                },
+              ]
+            : [
+                {
+                  id: "create",
+                  label: "Deploy contract on-chain",
+                  tx: txCreate,
+                },
+                {
+                  id: "deposit",
+                  label: "Lock your funds (deposit)",
+                  tx: txDeposit,
+                },
+              ]
+          ).map((s, i, arr) => {
             const isDone =
-              (s.id === "create" && (step === "deposit" || step === "done")) ||
-              (s.id === "deposit" && step === "done") ||
-              (s.id === "done" && step === "done");
-            const isActive = s.id === step;
+              (!isPartyB &&
+                ((s.id === "create" &&
+                  (stepA === "deposit" || stepA === "done")) ||
+                  (s.id === "deposit" && stepA === "done"))) ||
+              (isPartyB && s.id === "deposit" && stepB === "done");
+            const isActive = isPartyB ? s.id === stepB : s.id === stepA;
+
             return (
               <div
                 key={s.id}
@@ -304,7 +367,8 @@ export default function ScreenLockFunds() {
                   alignItems: "center",
                   gap: 12,
                   padding: "8px 0",
-                  borderBottom: i < 2 ? "1px solid var(--black-4)" : "none",
+                  borderBottom:
+                    i < arr.length - 1 ? "1px solid var(--black-4)" : "none",
                 }}
               >
                 <div
@@ -366,20 +430,6 @@ export default function ScreenLockFunds() {
                     </div>
                   )}
                 </div>
-                {isActive && s.tx?.status === "confirming" && (
-                  <span
-                    style={{
-                      fontSize: 11,
-                      fontFamily: "var(--font-mono)",
-                      color: "#f59e0b",
-                      background: "#f59e0b15",
-                      borderRadius: 4,
-                      padding: "2px 8px",
-                    }}
-                  >
-                    confirming...
-                  </span>
-                )}
               </div>
             );
           })}
@@ -408,28 +458,14 @@ export default function ScreenLockFunds() {
           </span>
         </div>
 
-        {/* Action button */}
-        {step === "create" && (
+        {/* Action buttons */}
+        {/* Party A: step 1 */}
+        {!isPartyB && stepA === "create" && (
           <button
             onClick={handleCreate}
             disabled={isBusy}
             className="animate-fade-up delay-3"
-            style={{
-              width: "100%",
-              padding: "18px",
-              background: isBusy ? "var(--black-4)" : "var(--yellow)",
-              color: isBusy ? "var(--grey-2)" : "var(--black)",
-              border: "none",
-              borderRadius: "var(--radius)",
-              fontSize: 15,
-              fontWeight: 700,
-              cursor: isBusy ? "not-allowed" : "pointer",
-              transition: "all var(--transition)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 10,
-            }}
+            style={actionButtonStyle(isBusy)}
           >
             {isBusy ? (
               <>
@@ -441,38 +477,27 @@ export default function ScreenLockFunds() {
           </button>
         )}
 
-        {step === "deposit" && (
+        {/* Party A + B: deposit step */}
+        {((isPartyB && stepB === "deposit") ||
+          (!isPartyB && stepA === "deposit")) && (
           <button
             onClick={handleDeposit}
             disabled={isBusy}
             className="animate-fade-up"
-            style={{
-              width: "100%",
-              padding: "18px",
-              background: isBusy ? "var(--black-4)" : "var(--yellow)",
-              color: isBusy ? "var(--grey-2)" : "var(--black)",
-              border: "none",
-              borderRadius: "var(--radius)",
-              fontSize: 15,
-              fontWeight: 700,
-              cursor: isBusy ? "not-allowed" : "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 10,
-            }}
+            style={actionButtonStyle(isBusy)}
           >
             {isBusy ? (
               <>
                 <Spinner /> Signing deposit...
               </>
             ) : (
-              `Step 2 — Lock ${sbtcAmount} sBTC →`
+              `${isPartyB ? "Lock" : "Step 2 — Lock"} ${sbtcAmount} sBTC →`
             )}
           </button>
         )}
 
-        {step === "done" && (
+        {/* Done */}
+        {currentStep === "done" && (
           <div
             className="animate-fade-up"
             style={{ display: "flex", flexDirection: "column", gap: 12 }}
@@ -527,6 +552,25 @@ export default function ScreenLockFunds() {
       </div>
     </div>
   );
+}
+
+function actionButtonStyle(isBusy: boolean): React.CSSProperties {
+  return {
+    width: "100%",
+    padding: "18px",
+    background: isBusy ? "var(--black-4)" : "var(--yellow)",
+    color: isBusy ? "var(--grey-2)" : "var(--black)",
+    border: "none",
+    borderRadius: "var(--radius)",
+    fontSize: 15,
+    fontWeight: 700,
+    cursor: isBusy ? "not-allowed" : "pointer",
+    transition: "all var(--transition)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+  };
 }
 
 function Spinner() {

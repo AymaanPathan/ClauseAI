@@ -28,6 +28,19 @@ export default function ScreenDashboard() {
     txDispute,
     txTimeout,
   } = useAppSelector((s) => s.agreement);
+  console.log("Agreement state:", {
+    agreementId,
+    walletAddress,
+    counterpartyWallet,
+    amountLocked,
+    fundState,
+    onChainData,
+    blockHeight,
+    deadlineBlock,
+    txComplete,
+    txDispute,
+    txTimeout,
+  });
 
   const [showDisputeConfirm, setShowDisputeConfirm] = useState(false);
   const [lastPolled, setLastPolled] = useState<string>("—");

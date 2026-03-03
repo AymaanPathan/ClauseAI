@@ -1,15 +1,24 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+// ============================================================
+// ScreenShareLink.tsx — PRODUCTION UPDATE
+// Key changes:
+//   • Saves editedTerms as termsSnapshot in presence (so Party B can read them)
+//   • Uses SSE subscription for real-time Party B detection
+//   • Falls back to polling if SSE unavailable
+// ============================================================
+
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
   setScreen,
   generateShareLink,
   registerPresenceThunk,
   pollPresenceThunk,
+  applyPresenceUpdate,
 } from "@/store/slices/agreementSlice";
-import { hashTerms } from "../../api/PresenceaApi";
+import { hashTerms, subscribePresence } from "../../api/PresenceaApi";
 
-const POLL_INTERVAL_MS = 3_000; // Poll every 3s for snappy UX
+const POLL_INTERVAL_MS = 3_000;
 
 export default function ScreenShareLink() {
   const dispatch = useAppDispatch();
@@ -28,13 +37,14 @@ export default function ScreenShareLink() {
   const [registrationError, setRegistrationError] = useState<string | null>(
     null,
   );
+  const unsubscribeRef = useRef<(() => void) | null>(null);
 
   // ── Generate share link on mount ─────────────────────────────
   useEffect(() => {
     if (!shareLink) dispatch(generateShareLink());
   }, []);
 
-  // ── Register Party A's presence once we have all the pieces ──
+  // ── Register Party A's presence (with terms snapshot) ────────
   useEffect(() => {
     if (!agreementId || !walletAddress || presenceRegistered || isPartyB)
       return;
@@ -47,10 +57,14 @@ export default function ScreenShareLink() {
         role: "partyA",
         address: walletAddress,
         termsHash,
+        // ★ KEY: Save terms so Party B can read them when they open the link
+        termsSnapshot: editedTerms
+          ? (editedTerms as unknown as Record<string, unknown>)
+          : undefined,
       }),
     ).then((result) => {
       if (!registerPresenceThunk.fulfilled.match(result)) {
-        setRegistrationError("Failed to register presence. Please refresh.");
+        setRegistrationError("Failed to register. Please refresh.");
       }
     });
   }, [
@@ -62,18 +76,37 @@ export default function ScreenShareLink() {
     dispatch,
   ]);
 
-  // ── Poll for Party B ──────────────────────────────────────────
-  const poll = useCallback(() => {
+  // ── Subscribe to SSE for real-time Party B detection ─────────
+  useEffect(() => {
     if (!agreementId || counterpartyConnected) return;
-    dispatch(pollPresenceThunk(agreementId));
+
+    // Unsubscribe previous if any
+    unsubscribeRef.current?.();
+
+    const unsubscribe = subscribePresence(
+      agreementId,
+      (presence) => {
+        dispatch(applyPresenceUpdate(presence));
+      },
+      () => {
+        // SSE error: fall back to polling (handled inside subscribePresence)
+      },
+    );
+
+    unsubscribeRef.current = unsubscribe;
+
+    return () => {
+      unsubscribe();
+    };
   }, [agreementId, counterpartyConnected, dispatch]);
 
+  // ── Stop SSE once counterparty connected ─────────────────────
   useEffect(() => {
-    if (counterpartyConnected) return; // stop once connected
-    poll(); // immediate first poll
-    const iv = setInterval(poll, POLL_INTERVAL_MS);
-    return () => clearInterval(iv);
-  }, [poll, counterpartyConnected]);
+    if (counterpartyConnected) {
+      unsubscribeRef.current?.();
+      unsubscribeRef.current = null;
+    }
+  }, [counterpartyConnected]);
 
   function handleCopy() {
     if (!shareLink) return;
@@ -133,12 +166,10 @@ export default function ScreenShareLink() {
           </h2>
           <p style={{ color: "var(--grey-1)", fontSize: 14 }}>
             Send this link to {editedTerms?.partyB || "them"}. They'll review
-            the terms and connect their wallet. This page polls automatically —
-            no refresh needed.
+            the terms and connect their wallet. This page updates in real-time.
           </p>
         </div>
 
-        {/* Registration error */}
         {registrationError && (
           <div
             style={{
@@ -155,7 +186,7 @@ export default function ScreenShareLink() {
           </div>
         )}
 
-        {/* Agreement ID badge */}
+        {/* Agreement ID */}
         {agreementId && (
           <div
             className="animate-fade-up delay-1"
@@ -250,118 +281,53 @@ export default function ScreenShareLink() {
             marginBottom: 28,
           }}
         >
-          {/* Party A status */}
-          <div
-            style={{
-              background: "var(--black-2)",
-              border: "1px solid #22c55e40",
-              borderRadius: "var(--radius-sm)",
-              padding: "14px 16px",
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-            }}
-          >
-            <span
-              style={{
-                width: 10,
-                height: 10,
-                borderRadius: "50%",
-                background: presenceRegistered ? "#22c55e" : "var(--yellow)",
-                display: "inline-block",
-                flexShrink: 0,
-              }}
-            />
-            <div>
-              <div
-                style={{
-                  fontSize: 12,
-                  fontWeight: 600,
-                  color: presenceRegistered ? "#22c55e" : "var(--yellow)",
-                }}
-              >
-                {presenceRegistered
-                  ? "✅ You're registered (Party A)"
-                  : "⏳ Registering..."}
-              </div>
-              <div
-                style={{
-                  fontSize: 11,
-                  fontFamily: "var(--font-mono)",
-                  color: "var(--grey-1)",
-                  marginTop: 2,
-                }}
-              >
-                {walletAddress}
-              </div>
-            </div>
-          </div>
+          {/* Party A */}
+          <StatusCard
+            connected={presenceRegistered}
+            activeLabel="✅ You're registered (Party A)"
+            waitingLabel="⏳ Registering..."
+            address={walletAddress}
+            showPulse={false}
+          />
 
-          {/* Party B status */}
-          <div
-            style={{
-              background: "var(--black-2)",
-              border: `1px solid ${counterpartyConnected ? "#22c55e40" : "var(--black-4)"}`,
-              borderRadius: "var(--radius-sm)",
-              padding: "14px 16px",
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-            }}
-          >
-            {/* Animated dot */}
-            <span
-              style={{
-                width: 10,
-                height: 10,
-                borderRadius: "50%",
-                background: counterpartyConnected ? "#22c55e" : "var(--grey-3)",
-                display: "inline-block",
-                flexShrink: 0,
-                animation: counterpartyConnected
-                  ? "none"
-                  : "pulse-yellow 1.5s ease-in-out infinite",
-              }}
-            />
-            <div style={{ flex: 1 }}>
-              <div
-                style={{
-                  fontSize: 12,
-                  fontWeight: 600,
-                  color: counterpartyConnected ? "#22c55e" : "var(--grey-1)",
-                }}
-              >
-                {counterpartyConnected
-                  ? `✅ ${editedTerms?.partyB || "Counterparty"} connected`
-                  : `Waiting for ${editedTerms?.partyB || "counterparty"}...`}
-              </div>
-              {counterpartyConnected && counterpartyWallet ? (
-                <div
-                  style={{
-                    fontSize: 11,
-                    fontFamily: "var(--font-mono)",
-                    color: "var(--grey-2)",
-                    marginTop: 2,
-                  }}
-                >
-                  {counterpartyWallet.slice(0, 8)}...
-                  {counterpartyWallet.slice(-6)}
-                </div>
-              ) : (
-                <div
-                  style={{ fontSize: 11, color: "var(--grey-2)", marginTop: 2 }}
-                >
-                  Share the link above — polling every {POLL_INTERVAL_MS / 1000}
-                  s
-                </div>
-              )}
-            </div>
-            {/* Live polling indicator */}
-            {!counterpartyConnected && <LivePulse />}
-          </div>
+          {/* Party B */}
+          <StatusCard
+            connected={counterpartyConnected}
+            activeLabel={`✅ ${editedTerms?.partyB || "Counterparty"} connected`}
+            waitingLabel={`Waiting for ${editedTerms?.partyB || "counterparty"}...`}
+            address={counterpartyConnected ? counterpartyWallet : null}
+            showPulse={!counterpartyConnected}
+            waitingSubtext={`Share the link above — live updates via SSE`}
+          />
         </div>
 
-        {/* Proceed button — only appears when both are ready */}
+        {/* What Party B sees info box */}
+        {presenceRegistered && !counterpartyConnected && (
+          <div
+            className="animate-fade-up"
+            style={{
+              background: "var(--black-2)",
+              border: "1px solid var(--black-4)",
+              borderRadius: 10,
+              padding: "14px 16px",
+              marginBottom: 20,
+              display: "flex",
+              gap: 10,
+              fontSize: 12,
+              color: "var(--grey-1)",
+              lineHeight: 1.7,
+            }}
+          >
+            <span>💡</span>
+            <span>
+              When {editedTerms?.partyB || "they"} open the link, they'll see
+              the agreement terms and be asked to connect their wallet. The page
+              will update here automatically when they join.
+            </span>
+          </div>
+        )}
+
+        {/* Proceed button */}
         {counterpartyConnected ? (
           <button
             onClick={() => dispatch(setScreen("lock-funds"))}
@@ -404,7 +370,6 @@ export default function ScreenShareLink() {
           </div>
         )}
 
-        {/* How it works note */}
         <p
           style={{
             marginTop: 20,
@@ -416,14 +381,88 @@ export default function ScreenShareLink() {
           }}
         >
           When {editedTerms?.partyB || "they"} open the link and connect their
-          wallet, this page will update automatically.
+          wallet, this page updates automatically.
         </p>
       </div>
     </div>
   );
 }
 
-// Animated live indicator
+// ── Sub-components ────────────────────────────────────────────
+
+function StatusCard({
+  connected,
+  activeLabel,
+  waitingLabel,
+  address,
+  showPulse,
+  waitingSubtext,
+}: {
+  connected: boolean;
+  activeLabel: string;
+  waitingLabel: string;
+  address: string | null;
+  showPulse: boolean;
+  waitingSubtext?: string;
+}) {
+  return (
+    <div
+      style={{
+        background: "var(--black-2)",
+        border: `1px solid ${connected ? "#22c55e40" : "var(--black-4)"}`,
+        borderRadius: "var(--radius-sm)",
+        padding: "14px 16px",
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+      }}
+    >
+      <span
+        style={{
+          width: 10,
+          height: 10,
+          borderRadius: "50%",
+          background: connected ? "#22c55e" : "var(--grey-3)",
+          display: "inline-block",
+          flexShrink: 0,
+          animation:
+            !connected && showPulse
+              ? "pulse-yellow 1.5s ease-in-out infinite"
+              : "none",
+        }}
+      />
+      <div style={{ flex: 1 }}>
+        <div
+          style={{
+            fontSize: 12,
+            fontWeight: 600,
+            color: connected ? "#22c55e" : "var(--grey-1)",
+          }}
+        >
+          {connected ? activeLabel : waitingLabel}
+        </div>
+        {address ? (
+          <div
+            style={{
+              fontSize: 10,
+              fontFamily: "var(--font-mono)",
+              color: "var(--grey-2)",
+              marginTop: 2,
+            }}
+          >
+            {address.slice(0, 8)}...{address.slice(-6)}
+          </div>
+        ) : waitingSubtext ? (
+          <div style={{ fontSize: 11, color: "var(--grey-2)", marginTop: 2 }}>
+            {waitingSubtext}
+          </div>
+        ) : null}
+      </div>
+      {!connected && showPulse && <LivePulse />}
+    </div>
+  );
+}
+
 function LivePulse() {
   return (
     <span

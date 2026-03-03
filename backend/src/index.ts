@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import parseRouter from "./routes/parse";
+import agreementRouter from "./routes/agreement";
 
 dotenv.config();
 
@@ -13,6 +14,7 @@ app.use(express.json());
 
 // ── Routes ────────────────────────────────────────────────────
 app.use("/api/parse", parseRouter);
+app.use("/api/agreement", agreementRouter);
 
 // ── Root health check ─────────────────────────────────────────
 app.get("/", (_req, res) => {

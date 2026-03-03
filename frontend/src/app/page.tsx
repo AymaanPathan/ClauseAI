@@ -1,5 +1,7 @@
 "use client";
-import { useAppSelector } from "@/store/hooks";
+import { useEffect } from "react";
+import { useAppDispatch, useAppSelector } from "@/store/hooks";
+import { rehydrateSession } from "@/store/slices/agreementSlice";
 import ScreenLanding from "@/components/screens/ScreenLanding";
 import ScreenSelectType from "@/components/screens/ScreenSelectType";
 import ScreenDescribe from "@/components/screens/ScreenDescribe";
@@ -12,8 +14,14 @@ import ScreenOutcome from "@/components/screens/ScreenOutcome";
 import Topbar from "@/components/ui/Topbar";
 
 export default function Home() {
+  const dispatch = useAppDispatch();
   const screen = useAppSelector((s) => s.agreement.currentScreen);
   const showTopbar = screen !== "landing";
+
+  // Restore wallet session on mount (handles page refreshes)
+  useEffect(() => {
+    dispatch(rehydrateSession());
+  }, [dispatch]);
 
   return (
     <div style={{ minHeight: "100vh", background: "var(--black)" }}>

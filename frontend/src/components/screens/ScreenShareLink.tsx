@@ -1,41 +1,85 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
   setScreen,
   generateShareLink,
-  setCounterpartyConnected,
-} from "../../store/slices/agreementSlice";
+  registerPresenceThunk,
+  pollPresenceThunk,
+} from "@/store/slices/agreementSlice";
+import { hashTerms } from "../../api/PresenceaApi";
+
+const POLL_INTERVAL_MS = 3_000; // Poll every 3s for snappy UX
 
 export default function ScreenShareLink() {
   const dispatch = useAppDispatch();
-  const { shareLink, agreementId, walletAddress, editedTerms } = useAppSelector(
-    (s) => s.agreement,
-  );
-  const [copied, setCopied] = useState(false);
-  const [mockWaiting, setMockWaiting] = useState(false);
-  const [counterpartyJoined, setCounterpartyJoined] = useState(false);
+  const {
+    shareLink,
+    agreementId,
+    walletAddress,
+    editedTerms,
+    counterpartyConnected,
+    counterpartyWallet,
+    presenceRegistered,
+    isPartyB,
+  } = useAppSelector((s) => s.agreement);
 
+  const [copied, setCopied] = useState(false);
+  const [registrationError, setRegistrationError] = useState<string | null>(
+    null,
+  );
+
+  // ── Generate share link on mount ─────────────────────────────
   useEffect(() => {
     if (!shareLink) dispatch(generateShareLink());
   }, []);
+
+  // ── Register Party A's presence once we have all the pieces ──
+  useEffect(() => {
+    if (!agreementId || !walletAddress || presenceRegistered || isPartyB)
+      return;
+
+    const termsHash = editedTerms ? hashTerms(editedTerms) : undefined;
+
+    dispatch(
+      registerPresenceThunk({
+        agreementId,
+        role: "partyA",
+        address: walletAddress,
+        termsHash,
+      }),
+    ).then((result) => {
+      if (!registerPresenceThunk.fulfilled.match(result)) {
+        setRegistrationError("Failed to register presence. Please refresh.");
+      }
+    });
+  }, [
+    agreementId,
+    walletAddress,
+    presenceRegistered,
+    isPartyB,
+    editedTerms,
+    dispatch,
+  ]);
+
+  // ── Poll for Party B ──────────────────────────────────────────
+  const poll = useCallback(() => {
+    if (!agreementId || counterpartyConnected) return;
+    dispatch(pollPresenceThunk(agreementId));
+  }, [agreementId, counterpartyConnected, dispatch]);
+
+  useEffect(() => {
+    if (counterpartyConnected) return; // stop once connected
+    poll(); // immediate first poll
+    const iv = setInterval(poll, POLL_INTERVAL_MS);
+    return () => clearInterval(iv);
+  }, [poll, counterpartyConnected]);
 
   function handleCopy() {
     if (!shareLink) return;
     navigator.clipboard.writeText(shareLink).catch(() => {});
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  }
-
-  function simulateCounterparty() {
-    setMockWaiting(true);
-    setTimeout(() => {
-      const mockAddr =
-        "SP" + Math.random().toString(36).substring(2, 10).toUpperCase();
-      dispatch(setCounterpartyConnected(mockAddr));
-      setCounterpartyJoined(true);
-      setMockWaiting(false);
-    }, 2000);
   }
 
   return (
@@ -49,6 +93,7 @@ export default function ScreenShareLink() {
       }}
     >
       <div style={{ maxWidth: 520, width: "100%" }}>
+        {/* Header */}
         <div className="animate-fade-up" style={{ marginBottom: 36 }}>
           <button
             onClick={() => dispatch(setScreen("connect-wallet"))}
@@ -87,10 +132,28 @@ export default function ScreenShareLink() {
             Share with {editedTerms?.partyB || "the other party"}
           </h2>
           <p style={{ color: "var(--grey-1)", fontSize: 14 }}>
-            Send this link to {editedTerms?.partyB || "them"}. They&apos;ll
-            review the terms and connect their wallet.
+            Send this link to {editedTerms?.partyB || "them"}. They'll review
+            the terms and connect their wallet. This page polls automatically —
+            no refresh needed.
           </p>
         </div>
+
+        {/* Registration error */}
+        {registrationError && (
+          <div
+            style={{
+              background: "#7f1d1d20",
+              border: "1px solid #7f1d1d",
+              borderRadius: 8,
+              padding: "10px 14px",
+              fontSize: 13,
+              color: "#fca5a5",
+              marginBottom: 16,
+            }}
+          >
+            ⚠️ {registrationError}
+          </div>
+        )}
 
         {/* Agreement ID badge */}
         {agreementId && (
@@ -204,14 +267,22 @@ export default function ScreenShareLink() {
                 width: 10,
                 height: 10,
                 borderRadius: "50%",
-                background: "#22c55e",
+                background: presenceRegistered ? "#22c55e" : "var(--yellow)",
                 display: "inline-block",
                 flexShrink: 0,
               }}
             />
             <div>
-              <div style={{ fontSize: 12, fontWeight: 600, color: "#22c55e" }}>
-                ✅ You&apos;re connected
+              <div
+                style={{
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: presenceRegistered ? "#22c55e" : "var(--yellow)",
+                }}
+              >
+                {presenceRegistered
+                  ? "✅ You're registered (Party A)"
+                  : "⏳ Registering..."}
               </div>
               <div
                 style={{
@@ -230,7 +301,7 @@ export default function ScreenShareLink() {
           <div
             style={{
               background: "var(--black-2)",
-              border: `1px solid ${counterpartyJoined ? "#22c55e40" : "var(--black-4)"}`,
+              border: `1px solid ${counterpartyConnected ? "#22c55e40" : "var(--black-4)"}`,
               borderRadius: "var(--radius-sm)",
               padding: "14px 16px",
               display: "flex",
@@ -238,17 +309,18 @@ export default function ScreenShareLink() {
               gap: 12,
             }}
           >
+            {/* Animated dot */}
             <span
               style={{
                 width: 10,
                 height: 10,
                 borderRadius: "50%",
-                background: counterpartyJoined ? "#22c55e" : "var(--grey-2)",
+                background: counterpartyConnected ? "#22c55e" : "var(--grey-3)",
                 display: "inline-block",
                 flexShrink: 0,
-                ...(mockWaiting
-                  ? { animation: "pulse-yellow 1s infinite" }
-                  : {}),
+                animation: counterpartyConnected
+                  ? "none"
+                  : "pulse-yellow 1.5s ease-in-out infinite",
               }}
             />
             <div style={{ flex: 1 }}>
@@ -256,52 +328,41 @@ export default function ScreenShareLink() {
                 style={{
                   fontSize: 12,
                   fontWeight: 600,
-                  color: counterpartyJoined ? "#22c55e" : "var(--grey-1)",
+                  color: counterpartyConnected ? "#22c55e" : "var(--grey-1)",
                 }}
               >
-                {counterpartyJoined
+                {counterpartyConnected
                   ? `✅ ${editedTerms?.partyB || "Counterparty"} connected`
-                  : mockWaiting
-                    ? "Waiting for counterparty..."
-                    : `Waiting for ${editedTerms?.partyB || "counterparty"}...`}
+                  : `Waiting for ${editedTerms?.partyB || "counterparty"}...`}
               </div>
-              {!counterpartyJoined && !mockWaiting && (
+              {counterpartyConnected && counterpartyWallet ? (
+                <div
+                  style={{
+                    fontSize: 11,
+                    fontFamily: "var(--font-mono)",
+                    color: "var(--grey-2)",
+                    marginTop: 2,
+                  }}
+                >
+                  {counterpartyWallet.slice(0, 8)}...
+                  {counterpartyWallet.slice(-6)}
+                </div>
+              ) : (
                 <div
                   style={{ fontSize: 11, color: "var(--grey-2)", marginTop: 2 }}
                 >
-                  Share the link above
+                  Share the link above — polling every {POLL_INTERVAL_MS / 1000}
+                  s
                 </div>
               )}
             </div>
+            {/* Live polling indicator */}
+            {!counterpartyConnected && <LivePulse />}
           </div>
         </div>
 
-        {/* Simulate for demo */}
-        {!counterpartyJoined && (
-          <button
-            onClick={simulateCounterparty}
-            disabled={mockWaiting}
-            style={{
-              width: "100%",
-              padding: "13px",
-              background: "transparent",
-              color: "var(--grey-1)",
-              border: "1px dashed var(--black-5)",
-              borderRadius: "var(--radius)",
-              fontSize: 13,
-              cursor: "pointer",
-              marginBottom: 12,
-              fontFamily: "var(--font-mono)",
-              transition: "all var(--transition)",
-            }}
-          >
-            {mockWaiting
-              ? "⏳ Waiting..."
-              : "🧪 Simulate counterparty joining (demo)"}
-          </button>
-        )}
-
-        {counterpartyJoined && (
+        {/* Proceed button — only appears when both are ready */}
+        {counterpartyConnected ? (
           <button
             onClick={() => dispatch(setScreen("lock-funds"))}
             style={{
@@ -319,8 +380,74 @@ export default function ScreenShareLink() {
           >
             Both Connected → Lock Funds →
           </button>
+        ) : (
+          <div
+            style={{
+              width: "100%",
+              padding: "16px",
+              background: "var(--black-3)",
+              border: "1px dashed var(--black-5)",
+              borderRadius: "var(--radius)",
+              fontSize: 14,
+              fontWeight: 600,
+              color: "var(--grey-2)",
+              textAlign: "center",
+              cursor: "default",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 10,
+            }}
+          >
+            <LivePulse />
+            Waiting for counterparty to join...
+          </div>
         )}
+
+        {/* How it works note */}
+        <p
+          style={{
+            marginTop: 20,
+            fontSize: 12,
+            color: "var(--grey-2)",
+            textAlign: "center",
+            fontFamily: "var(--font-mono)",
+            lineHeight: 1.6,
+          }}
+        >
+          When {editedTerms?.partyB || "they"} open the link and connect their
+          wallet, this page will update automatically.
+        </p>
       </div>
     </div>
+  );
+}
+
+// Animated live indicator
+function LivePulse() {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        fontSize: 10,
+        fontFamily: "var(--font-mono)",
+        color: "var(--yellow)",
+        flexShrink: 0,
+      }}
+    >
+      <span
+        style={{
+          width: 6,
+          height: 6,
+          borderRadius: "50%",
+          background: "var(--yellow)",
+          display: "inline-block",
+          animation: "pulse-yellow 1s ease-in-out infinite",
+        }}
+      />
+      LIVE
+    </span>
   );
 }

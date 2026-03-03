@@ -1,20 +1,33 @@
 "use client";
+import { useState } from "react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
-import { setScreen } from "@/store/slices/agreementSlice";
-import { connectWalletThunk } from "@/store/slices/agreementSlice";
+import {
+  setScreen,
+  connectWalletThunk,
+  registerPresenceThunk,
+} from "@/store/slices/agreementSlice";
 
 export default function ScreenConnectWallet() {
   const dispatch = useAppDispatch();
-  const { walletConnected, walletAddress } = useAppSelector((s) => s.agreement);
-  const connecting = useAppSelector(
-    (s) => s.agreement.walletAddress === null && false, // use thunk loading state below
-  );
+  const { walletConnected, walletAddress, agreementId, editedTerms } =
+    useAppSelector((s) => s.agreement);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // Track thunk loading via local state driven by dispatch
   async function handleConnect() {
-    const result = await dispatch(connectWalletThunk());
-    if (connectWalletThunk.fulfilled.match(result)) {
-      dispatch(setScreen("share-link"));
+    setIsConnecting(true);
+    setError(null);
+    try {
+      const result = await dispatch(connectWalletThunk());
+      if (connectWalletThunk.fulfilled.match(result)) {
+        dispatch(setScreen("share-link"));
+      } else {
+        setError((result.payload as string) ?? "Wallet connect failed");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Connection failed");
+    } finally {
+      setIsConnecting(false);
     }
   }
 
@@ -56,10 +69,9 @@ export default function ScreenConnectWallet() {
               justifyContent: "center",
               fontSize: 36,
               margin: "0 auto 28px",
-              animation: "pulse-yellow 2s infinite",
             }}
           >
-            {walletConnected ? "✅" : "₿"}
+            {walletConnected ? "✅" : isConnecting ? "⏳" : "₿"}
           </div>
 
           <span
@@ -94,10 +106,27 @@ export default function ScreenConnectWallet() {
             }}
           >
             {walletConnected
-              ? `Connected as ${walletAddress}`
-              : "Connect your Hiro Wallet to sign and lock sBTC on the Stacks blockchain."}
+              ? `Connected: ${walletAddress?.slice(0, 10)}...${walletAddress?.slice(-6)}`
+              : "Connect your Leather wallet to sign and lock sBTC on the Stacks blockchain."}
           </p>
         </div>
+
+        {error && (
+          <div
+            style={{
+              background: "#7f1d1d20",
+              border: "1px solid #7f1d1d",
+              borderRadius: 8,
+              padding: "10px 14px",
+              fontSize: 13,
+              color: "#fca5a5",
+              marginBottom: 16,
+              textAlign: "left",
+            }}
+          >
+            ❌ {error}
+          </div>
+        )}
 
         <div
           className="animate-fade-up delay-2"
@@ -123,20 +152,31 @@ export default function ScreenConnectWallet() {
           ) : (
             <button
               onClick={handleConnect}
+              disabled={isConnecting}
               style={{
                 width: "100%",
                 padding: "16px",
-                background: "var(--yellow)",
-                color: "var(--black)",
+                background: isConnecting ? "var(--black-4)" : "var(--yellow)",
+                color: isConnecting ? "var(--grey-2)" : "var(--black)",
                 border: "none",
                 borderRadius: "var(--radius)",
                 fontSize: 15,
                 fontWeight: 700,
-                cursor: "pointer",
+                cursor: isConnecting ? "not-allowed" : "pointer",
                 transition: "all var(--transition)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 10,
               }}
             >
-              Connect Hiro Wallet
+              {isConnecting ? (
+                <>
+                  <Spinner /> Connecting to Leather...
+                </>
+              ) : (
+                "Connect Leather Wallet"
+              )}
             </button>
           )}
 
@@ -147,7 +187,7 @@ export default function ScreenConnectWallet() {
               fontFamily: "var(--font-mono)",
             }}
           >
-            Don't have Hiro Wallet?{" "}
+            Don't have Leather?{" "}
             <a
               href="https://wallet.hiro.so"
               target="_blank"
@@ -187,5 +227,21 @@ export default function ScreenConnectWallet() {
         </div>
       </div>
     </div>
+  );
+}
+
+function Spinner() {
+  return (
+    <span
+      style={{
+        width: 16,
+        height: 16,
+        border: "2px solid var(--grey-2)",
+        borderTopColor: "transparent",
+        borderRadius: "50%",
+        animation: "spin 0.7s linear infinite",
+        display: "inline-block",
+      }}
+    />
   );
 }

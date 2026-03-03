@@ -28,10 +28,12 @@ export default function ScreenDescribe() {
   const dispatch = useAppDispatch();
   const { agreementType, parseLoading } = useAppSelector((s) => s.agreement);
 
-  const [text, setText] = useState("");
-  const [partyA, setPartyA] = useState("");
-  const [partyB, setPartyB] = useState("");
-  const [arbitrator, setArbitrator] = useState("");
+  const [text, setText] = useState(
+    "Bob will design a logo for Aymaan by March 15. He pays $200 on delivery.",
+  );
+  const [partyA, setPartyA] = useState("Aymaan");
+  const [partyB, setPartyB] = useState("Bob");
+  const [arbitrator, setArbitrator] = useState("TBD");
   const [focused, setFocused] = useState<string | null>(null);
 
   const canParse = text.trim().length > 10 && partyA.trim() && partyB.trim();

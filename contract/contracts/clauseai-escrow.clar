@@ -70,7 +70,7 @@
     agreement (ok
       (and
         (is-eq (get state agreement) STATE-ACTIVE)
-        (>= block-height (get deadline-block agreement))
+        (>= stacks-block-height (get deadline-block agreement))
       )
     )
     ERR-NOT-FOUND
@@ -83,7 +83,7 @@
       (and
         (is-eq (get state agreement) STATE-DISPUTED)
         (> (get dispute-block agreement) u0)
-        (>= block-height (+ (get dispute-block agreement) ARB-TIMEOUT-BLOCKS))
+        (>= stacks-block-height (+ (get dispute-block agreement) ARB-TIMEOUT-BLOCKS))
       )
     )
     ERR-NOT-FOUND
@@ -170,7 +170,7 @@
       (if (and (get party-a-deposited updated) (get party-b-deposited updated))
         (map-set agreements id (merge updated {
           state:          STATE-ACTIVE,
-          deadline-block: (+ block-height TIMEOUT-BLOCKS)
+          deadline-block: (+ stacks-block-height TIMEOUT-BLOCKS)
         }))
         false
       )
@@ -255,7 +255,7 @@
   )
     (asserts! (is-eq (get state agreement) STATE-ACTIVE)      ERR-WRONG-STATE)
     (asserts! (is-eq tx-sender (get party-b agreement))       ERR-NOT-AUTHORIZED)
-    (asserts! (< block-height (get deadline-block agreement)) ERR-TIMEOUT-ACTIVE)
+    (asserts! (< stacks-block-height (get deadline-block agreement)) ERR-TIMEOUT-ACTIVE)
     (asserts! (> bal u0)                                      ERR-ZERO-BALANCE)
 
     (try! (as-contract (stx-transfer? bal tx-sender (get party-a agreement))))
@@ -309,7 +309,7 @@
     (bal       (get total-deposited agreement))
   )
     (asserts! (is-eq (get state agreement) STATE-ACTIVE)        ERR-WRONG-STATE)
-    (asserts! (>= block-height (get deadline-block agreement))  ERR-TIMEOUT-NOT-MET)
+    (asserts! (>= stacks-block-height (get deadline-block agreement))  ERR-TIMEOUT-NOT-MET)
     (asserts! (> bal u0)                                        ERR-ZERO-BALANCE)
 
     (try! (as-contract (stx-transfer? bal tx-sender (get party-b agreement))))
@@ -341,7 +341,7 @@
 
     (map-set agreements id (merge agreement {
       state:         STATE-DISPUTED,
-      dispute-block: block-height
+      dispute-block: stacks-block-height
     }))
 
     (print {
@@ -417,7 +417,7 @@
   )
     (asserts! (is-eq (get state agreement) STATE-DISPUTED) ERR-WRONG-STATE)
     (asserts!
-      (>= block-height (+ (get dispute-block agreement) ARB-TIMEOUT-BLOCKS))
+      (>= stacks-block-height (+ (get dispute-block agreement) ARB-TIMEOUT-BLOCKS))
       ERR-TIMEOUT-NOT-MET
     )
     (asserts! (> bal u0) ERR-ZERO-BALANCE)

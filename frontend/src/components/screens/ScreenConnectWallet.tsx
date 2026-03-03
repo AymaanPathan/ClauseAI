@@ -1,24 +1,21 @@
 "use client";
-import { useState } from "react";
-import { useAppDispatch } from "@/store/hooks";
-import {
-  connectWallet,
-  setScreen,
-} from "../../../useAppSelector/slices/agreementSlice";
+import { useAppDispatch, useAppSelector } from "@/store/hooks";
+import { setScreen } from "@/store/slices/agreementSlice";
+import { connectWalletThunk } from "@/store/slices/agreementSlice";
 
 export default function ScreenConnectWallet() {
   const dispatch = useAppDispatch();
-  const [connecting, setConnecting] = useState(false);
+  const { walletConnected, walletAddress } = useAppSelector((s) => s.agreement);
+  const connecting = useAppSelector(
+    (s) => s.agreement.walletAddress === null && false, // use thunk loading state below
+  );
 
-  function handleConnect() {
-    setConnecting(true);
-    // Mock wallet connection — replace with Hiro wallet SDK on Day 6
-    setTimeout(() => {
-      const mockAddr =
-        "SP" + Math.random().toString(36).substring(2, 10).toUpperCase();
-      dispatch(connectWallet(mockAddr));
+  // Track thunk loading via local state driven by dispatch
+  async function handleConnect() {
+    const result = await dispatch(connectWalletThunk());
+    if (connectWalletThunk.fulfilled.match(result)) {
       dispatch(setScreen("share-link"));
-    }, 1400);
+    }
   }
 
   return (
@@ -32,7 +29,7 @@ export default function ScreenConnectWallet() {
       }}
     >
       <div style={{ maxWidth: 480, width: "100%", textAlign: "center" }}>
-        <div className="animate-fade-up" style={{ marginBottom: 40 }}>
+        <div className="animate-fade-up">
           <button
             onClick={() => dispatch(setScreen("parsed-terms"))}
             style={{
@@ -47,14 +44,13 @@ export default function ScreenConnectWallet() {
             ← Back
           </button>
 
-          {/* Bitcoin icon */}
           <div
             style={{
               width: 80,
               height: 80,
               borderRadius: "50%",
-              background: "var(--yellow-dim)",
-              border: "1px solid var(--yellow)",
+              background: walletConnected ? "#22c55e15" : "var(--yellow-dim)",
+              border: `1px solid ${walletConnected ? "#22c55e" : "var(--yellow)"}`,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -63,7 +59,7 @@ export default function ScreenConnectWallet() {
               animation: "pulse-yellow 2s infinite",
             }}
           >
-            ₿
+            {walletConnected ? "✅" : "₿"}
           </div>
 
           <span
@@ -87,11 +83,19 @@ export default function ScreenConnectWallet() {
               marginBottom: 12,
             }}
           >
-            Connect your wallet
+            {walletConnected ? "Wallet Connected" : "Connect your wallet"}
           </h2>
-          <p style={{ color: "var(--grey-1)", fontSize: 14, lineHeight: 1.7 }}>
-            Connect your Hiro Wallet to sign and lock sBTC on the Stacks
-            blockchain. Your funds stay in your control until both parties sign.
+          <p
+            style={{
+              color: "var(--grey-1)",
+              fontSize: 14,
+              lineHeight: 1.7,
+              marginBottom: 32,
+            }}
+          >
+            {walletConnected
+              ? `Connected as ${walletAddress}`
+              : "Connect your Hiro Wallet to sign and lock sBTC on the Stacks blockchain."}
           </p>
         </div>
 
@@ -99,45 +103,42 @@ export default function ScreenConnectWallet() {
           className="animate-fade-up delay-2"
           style={{ display: "flex", flexDirection: "column", gap: 12 }}
         >
-          <button
-            onClick={handleConnect}
-            disabled={connecting}
-            style={{
-              width: "100%",
-              padding: "16px",
-              background: connecting ? "var(--black-4)" : "var(--yellow)",
-              color: connecting ? "var(--grey-2)" : "var(--black)",
-              border: "none",
-              borderRadius: "var(--radius)",
-              fontSize: 15,
-              fontWeight: 700,
-              cursor: connecting ? "not-allowed" : "pointer",
-              transition: "all var(--transition)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 10,
-            }}
-          >
-            {connecting ? (
-              <>
-                <span
-                  style={{
-                    width: 16,
-                    height: 16,
-                    border: "2px solid var(--grey-2)",
-                    borderTopColor: "transparent",
-                    borderRadius: "50%",
-                    animation: "spin 0.7s linear infinite",
-                    display: "inline-block",
-                  }}
-                />
-                Connecting...
-              </>
-            ) : (
-              "Connect Hiro Wallet"
-            )}
-          </button>
+          {walletConnected ? (
+            <button
+              onClick={() => dispatch(setScreen("share-link"))}
+              style={{
+                width: "100%",
+                padding: "16px",
+                background: "var(--yellow)",
+                color: "var(--black)",
+                border: "none",
+                borderRadius: "var(--radius)",
+                fontSize: 15,
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              Continue →
+            </button>
+          ) : (
+            <button
+              onClick={handleConnect}
+              style={{
+                width: "100%",
+                padding: "16px",
+                background: "var(--yellow)",
+                color: "var(--black)",
+                border: "none",
+                borderRadius: "var(--radius)",
+                fontSize: 15,
+                fontWeight: 700,
+                cursor: "pointer",
+                transition: "all var(--transition)",
+              }}
+            >
+              Connect Hiro Wallet
+            </button>
+          )}
 
           <div
             style={{
@@ -146,7 +147,7 @@ export default function ScreenConnectWallet() {
               fontFamily: "var(--font-mono)",
             }}
           >
-            Don&apos;t have Hiro Wallet?{" "}
+            Don't have Hiro Wallet?{" "}
             <a
               href="https://wallet.hiro.so"
               target="_blank"

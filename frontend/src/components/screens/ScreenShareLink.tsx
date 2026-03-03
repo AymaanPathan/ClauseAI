@@ -5,7 +5,7 @@ import {
   setScreen,
   generateShareLink,
   setCounterpartyConnected,
-} from "../../../useAppSelector/slices/agreementSlice";
+} from "../../store/slices/agreementSlice";
 
 export default function ScreenShareLink() {
   const dispatch = useAppDispatch();
@@ -87,8 +87,8 @@ export default function ScreenShareLink() {
             Share with {editedTerms?.partyB || "the other party"}
           </h2>
           <p style={{ color: "var(--grey-1)", fontSize: 14 }}>
-            Send this link to {editedTerms?.partyB || "them"}. They&apos;ll review
-            the terms and connect their wallet.
+            Send this link to {editedTerms?.partyB || "them"}. They&apos;ll
+            review the terms and connect their wallet.
           </p>
         </div>
 

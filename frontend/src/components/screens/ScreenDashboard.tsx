@@ -1,8 +1,16 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
-import { markComplete, openDispute } from "../../../useAppSelector/slices/agreementSlice";
+import {
+  completeThunk,
+  disputeThunk,
+  timeoutThunk,
+  pollAgreementThunk,
+} from "@/store/slices/agreementSlice";
+import { CONTRACT_STATE } from "@/lib/stacksConfig";
+import { explorerTxUrl } from "@/lib/stacksConfig";
 
+const POLL_INTERVAL_MS = 12_000; // ~1 Stacks block
 
 export default function ScreenDashboard() {
   const dispatch = useAppDispatch();
@@ -13,23 +21,60 @@ export default function ScreenDashboard() {
     counterpartyWallet,
     amountLocked,
     fundState,
+    onChainData,
+    blockHeight,
+    deadlineBlock,
+    txComplete,
+    txDispute,
+    txTimeout,
   } = useAppSelector((s) => s.agreement);
-  const [blockHeight, setBlockHeight] = useState(847231);
+
   const [showDisputeConfirm, setShowDisputeConfirm] = useState(false);
+  const [lastPolled, setLastPolled] = useState<string>("—");
 
-  // Simulate block height ticking
+  // ── Polling ───────────────────────────────────────────────────
+  const poll = useCallback(() => {
+    if (!agreementId) return;
+    dispatch(pollAgreementThunk(agreementId));
+    setLastPolled(new Date().toLocaleTimeString());
+  }, [agreementId, dispatch]);
+
   useEffect(() => {
-    const iv = setInterval(() => setBlockHeight((h) => h + 1), 8000);
+    poll(); // immediate first poll
+    const iv = setInterval(poll, POLL_INTERVAL_MS);
     return () => clearInterval(iv);
-  }, []);
+  }, [poll]);
 
+  // ── Derive display values ─────────────────────────────────────
   const sbtcAmount = amountLocked
     ? (parseFloat(amountLocked) / 67000).toFixed(6)
-    : "0.000000";
+    : onChainData?.totalDeposited
+      ? (Number(onChainData.totalDeposited) / 1_000_000 / 67).toFixed(6)
+      : "0.000000";
 
-  const statusColor = fundState === "locked" ? "var(--yellow)" : "#22c55e";
-  const statusLabel =
-    fundState === "locked" ? "🟡 Active — Funds Locked" : "🟢 " + fundState;
+  const isTimedOut =
+    deadlineBlock && blockHeight > 0 ? blockHeight >= deadlineBlock : false;
+
+  const isBusyComplete = txComplete.status === "pending";
+  const isBusyDispute = txDispute.status === "pending";
+  const isBusyTimeout = txTimeout.status === "pending";
+
+  // On-chain state display
+  const onChainState = onChainData ? onChainData.state : null;
+  const stateLabels: Record<number, { label: string; color: string }> = {
+    0: { label: "⏳ Pending deposits", color: "#94a3b8" },
+    1: { label: "🟡 Active — Funds Locked", color: "var(--yellow)" },
+    2: { label: "✅ Complete", color: "#22c55e" },
+    3: { label: "↩️ Refunded", color: "#60a5fa" },
+    4: { label: "⚖️ Disputed", color: "#f59e0b" },
+  };
+  const stateDisplay =
+    onChainState !== null
+      ? (stateLabels[onChainState] ?? {
+          label: "Unknown",
+          color: "var(--grey-1)",
+        })
+      : { label: "🟡 Active — Funds Locked", color: "var(--yellow)" };
 
   return (
     <div style={{ minHeight: "calc(100vh - 56px)", padding: "40px 24px" }}>
@@ -57,22 +102,63 @@ export default function ScreenDashboard() {
                 border: "1px solid var(--yellow)",
                 borderRadius: 99,
                 padding: "4px 14px",
-                color: "var(--yellow)",
+                color: stateDisplay.color,
               }}
             >
-              {statusLabel}
+              {stateDisplay.label}
             </div>
           </div>
-          <p
+          <div
             style={{
-              fontSize: 12,
+              display: "flex",
+              gap: 20,
+              fontSize: 11,
               fontFamily: "var(--font-mono)",
               color: "var(--grey-1)",
             }}
           >
-            Block #{blockHeight} · Stacks Testnet
-          </p>
+            <span>Block #{blockHeight || "..."}</span>
+            {deadlineBlock && <span>Deadline block: #{deadlineBlock}</span>}
+            <span style={{ color: "var(--grey-2)" }}>Polled: {lastPolled}</span>
+          </div>
         </div>
+
+        {/* Timeout warning banner */}
+        {isTimedOut && (
+          <div
+            className="animate-fade-up"
+            style={{
+              background: "#f59e0b15",
+              border: "1px solid #f59e0b",
+              borderRadius: "var(--radius-sm)",
+              padding: "12px 16px",
+              marginBottom: 20,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}
+          >
+            <span style={{ fontSize: 13, color: "#f59e0b" }}>
+              ⏱ Deadline passed — timeout can be triggered
+            </span>
+            <button
+              onClick={() => agreementId && dispatch(timeoutThunk(agreementId))}
+              disabled={isBusyTimeout}
+              style={{
+                background: "#f59e0b",
+                color: "var(--black)",
+                border: "none",
+                borderRadius: 6,
+                padding: "6px 14px",
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              {isBusyTimeout ? "..." : "Trigger Timeout"}
+            </button>
+          </div>
+        )}
 
         {/* Parties row */}
         <div
@@ -85,52 +171,26 @@ export default function ScreenDashboard() {
             alignItems: "center",
           }}
         >
-          <div
-            style={{
-              background: "var(--black-2)",
-              border: "1px solid #22c55e40",
-              borderRadius: "var(--radius-sm)",
-              padding: "14px 16px",
-            }}
-          >
-            <div
-              style={{
-                fontSize: 10,
-                fontFamily: "var(--font-mono)",
-                color: "var(--grey-1)",
-                textTransform: "uppercase",
-                marginBottom: 4,
-              }}
-            >
-              Party A
-            </div>
-            <div style={{ fontSize: 14, fontWeight: 700 }}>
-              {editedTerms?.partyA ?? "—"}
-            </div>
-            <div
-              style={{
-                fontSize: 10,
-                fontFamily: "var(--font-mono)",
-                color: "#22c55e",
-                marginTop: 4,
-              }}
-            >
-              ✅ Signed
-            </div>
-            <div
-              style={{
-                fontSize: 10,
-                fontFamily: "var(--font-mono)",
-                color: "var(--grey-2)",
-                marginTop: 2,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-              }}
-            >
-              {walletAddress}
-            </div>
-          </div>
-
+          {[
+            {
+              label: "Party A",
+              name: editedTerms?.partyA,
+              wallet: walletAddress,
+              deposited: onChainData?.partyADeposited ?? true,
+            },
+            {
+              label: "Party B",
+              name: editedTerms?.partyB,
+              wallet: counterpartyWallet,
+              deposited: onChainData?.partyBDeposited ?? true,
+            },
+          ].map((party, i) =>
+            i === 0 ? (
+              <PartyCard key={i} {...party} />
+            ) : (
+              <PartyCard key={i} {...party} />
+            ),
+          )}
           <div
             style={{
               textAlign: "center",
@@ -140,55 +200,15 @@ export default function ScreenDashboard() {
           >
             ⇄
           </div>
-
-          <div
-            style={{
-              background: "var(--black-2)",
-              border: "1px solid #22c55e40",
-              borderRadius: "var(--radius-sm)",
-              padding: "14px 16px",
-            }}
-          >
-            <div
-              style={{
-                fontSize: 10,
-                fontFamily: "var(--font-mono)",
-                color: "var(--grey-1)",
-                textTransform: "uppercase",
-                marginBottom: 4,
-              }}
-            >
-              Party B
-            </div>
-            <div style={{ fontSize: 14, fontWeight: 700 }}>
-              {editedTerms?.partyB ?? "—"}
-            </div>
-            <div
-              style={{
-                fontSize: 10,
-                fontFamily: "var(--font-mono)",
-                color: "#22c55e",
-                marginTop: 4,
-              }}
-            >
-              ✅ Signed
-            </div>
-            <div
-              style={{
-                fontSize: 10,
-                fontFamily: "var(--font-mono)",
-                color: "var(--grey-2)",
-                marginTop: 2,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-              }}
-            >
-              {counterpartyWallet}
-            </div>
-          </div>
+          <PartyCard
+            label="Party B"
+            name={editedTerms?.partyB}
+            wallet={counterpartyWallet}
+            deposited={onChainData?.partyBDeposited ?? true}
+          />
         </div>
 
-        {/* Locked funds big display */}
+        {/* Locked funds */}
         <div
           className="animate-fade-up delay-2"
           style={{
@@ -210,7 +230,7 @@ export default function ScreenDashboard() {
               marginBottom: 12,
             }}
           >
-            🔒 Funds Locked
+            🔒 Funds Locked on Stacks
           </div>
           <div
             style={{
@@ -223,8 +243,21 @@ export default function ScreenDashboard() {
             {sbtcAmount} sBTC
           </div>
           <div style={{ fontSize: 16, color: "var(--grey-1)", marginTop: 4 }}>
-            ≈ ${amountLocked} USD
+            ≈ ${amountLocked ?? "—"} USD
           </div>
+          {onChainData && (
+            <div
+              style={{
+                marginTop: 8,
+                fontSize: 11,
+                fontFamily: "var(--font-mono)",
+                color: "var(--grey-2)",
+              }}
+            >
+              {Number(onChainData.totalDeposited).toLocaleString()} microSTX
+              on-chain
+            </div>
+          )}
         </div>
 
         {/* Agreement details */}
@@ -281,34 +314,43 @@ export default function ScreenDashboard() {
           ))}
         </div>
 
+        {/* Pending tx banners */}
+        <TxBanner tx={txComplete} label="Completing agreement" />
+        <TxBanner tx={txDispute} label="Opening dispute" />
+        <TxBanner tx={txTimeout} label="Triggering timeout" />
+
         {/* Action buttons */}
         <div
           className="animate-fade-up delay-3"
           style={{ display: "flex", flexDirection: "column", gap: 12 }}
         >
           <button
-            onClick={() => dispatch(markComplete())}
+            onClick={() => agreementId && dispatch(completeThunk(agreementId))}
+            disabled={isBusyComplete || isBusyDispute}
             style={{
               padding: "16px",
-              background: "var(--yellow)",
-              color: "var(--black)",
+              background: isBusyComplete ? "var(--black-4)" : "var(--yellow)",
+              color: isBusyComplete ? "var(--grey-2)" : "var(--black)",
               border: "none",
               borderRadius: "var(--radius)",
               fontSize: 15,
               fontWeight: 700,
-              cursor: "pointer",
+              cursor:
+                isBusyComplete || isBusyDispute ? "not-allowed" : "pointer",
               transition: "all var(--transition)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
             }}
-            onMouseEnter={(e) =>
-              ((e.currentTarget as HTMLElement).style.background =
-                "var(--yellow-hover)")
-            }
-            onMouseLeave={(e) =>
-              ((e.currentTarget as HTMLElement).style.background =
-                "var(--yellow)")
-            }
           >
-            ✅ Mark as Complete — Release Funds
+            {isBusyComplete ? (
+              <>
+                <Spinner /> Waiting for wallet...
+              </>
+            ) : (
+              "✅ Mark as Complete — Release Funds"
+            )}
           </button>
 
           {!showDisputeConfirm ? (
@@ -323,7 +365,6 @@ export default function ScreenDashboard() {
                 fontSize: 14,
                 fontWeight: 600,
                 cursor: "pointer",
-                transition: "all var(--transition)",
               }}
             >
               ⚠️ Open Dispute
@@ -345,8 +386,8 @@ export default function ScreenDashboard() {
                   lineHeight: 1.6,
                 }}
               >
-                This will lock the contract and notify the arbitrator. Are you
-                sure?
+                This will lock the contract and notify the arbitrator (
+                {editedTerms?.arbitrator ?? "TBD"}). Are you sure?
               </p>
               <div style={{ display: "flex", gap: 10 }}>
                 <button
@@ -365,9 +406,11 @@ export default function ScreenDashboard() {
                   Cancel
                 </button>
                 <button
-                  onClick={() =>
-                    dispatch(openDispute(walletAddress ?? "unknown"))
-                  }
+                  onClick={() => {
+                    if (agreementId) dispatch(disputeThunk(agreementId));
+                    setShowDisputeConfirm(false);
+                  }}
+                  disabled={isBusyDispute}
                   style={{
                     flex: 2,
                     padding: "12px",
@@ -380,7 +423,7 @@ export default function ScreenDashboard() {
                     fontSize: 13,
                   }}
                 >
-                  Confirm — Open Dispute
+                  {isBusyDispute ? "Opening..." : "Confirm — Open Dispute"}
                 </button>
               </div>
             </div>
@@ -388,5 +431,138 @@ export default function ScreenDashboard() {
         </div>
       </div>
     </div>
+  );
+}
+
+// ── Sub-components ────────────────────────────────────────────
+
+function PartyCard({
+  label,
+  name,
+  wallet,
+  deposited,
+}: {
+  label: string;
+  name?: string | null;
+  wallet?: string | null;
+  deposited: boolean;
+}) {
+  return (
+    <div
+      style={{
+        background: "var(--black-2)",
+        border: `1px solid ${deposited ? "#22c55e40" : "var(--black-4)"}`,
+        borderRadius: "var(--radius-sm)",
+        padding: "14px 16px",
+      }}
+    >
+      <div
+        style={{
+          fontSize: 10,
+          fontFamily: "var(--font-mono)",
+          color: "var(--grey-1)",
+          textTransform: "uppercase",
+          marginBottom: 4,
+        }}
+      >
+        {label}
+      </div>
+      <div style={{ fontSize: 14, fontWeight: 700 }}>{name ?? "—"}</div>
+      <div
+        style={{
+          fontSize: 10,
+          fontFamily: "var(--font-mono)",
+          color: deposited ? "#22c55e" : "var(--grey-2)",
+          marginTop: 4,
+        }}
+      >
+        {deposited ? "✅ Deposited" : "⏳ Pending deposit"}
+      </div>
+      {wallet && (
+        <div
+          style={{
+            fontSize: 10,
+            fontFamily: "var(--font-mono)",
+            color: "var(--grey-2)",
+            marginTop: 2,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {wallet.slice(0, 8)}...{wallet.slice(-6)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TxBanner({
+  tx,
+  label,
+}: {
+  tx: {
+    status: string;
+    txId: string | null;
+    txUrl: string | null;
+    error: string | null;
+  };
+  label: string;
+}) {
+  if (tx.status === "idle") return null;
+  return (
+    <div
+      style={{
+        marginBottom: 12,
+        padding: "12px 16px",
+        background: tx.status === "failed" ? "#7f1d1d20" : "#f59e0b10",
+        border: `1px solid ${tx.status === "failed" ? "#7f1d1d" : "#f59e0b40"}`,
+        borderRadius: "var(--radius-sm)",
+        fontSize: 12,
+        fontFamily: "var(--font-mono)",
+      }}
+    >
+      {tx.status === "pending" && (
+        <span style={{ color: "#f59e0b" }}>
+          ⏳ {label} — waiting for wallet signature...
+        </span>
+      )}
+      {tx.status === "confirming" && (
+        <span style={{ color: "#f59e0b" }}>
+          ⏳ {label} — confirming on-chain...{" "}
+          {tx.txUrl && (
+            <a
+              href={tx.txUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: "var(--yellow)" }}
+            >
+              View ↗
+            </a>
+          )}
+        </span>
+      )}
+      {tx.status === "failed" && (
+        <span style={{ color: "#f87171" }}>
+          ❌ {label} failed: {tx.error}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function Spinner() {
+  return (
+    <span
+      style={{
+        width: 16,
+        height: 16,
+        border: "2px solid var(--black)",
+        borderTopColor: "transparent",
+        borderRadius: "50%",
+        animation: "spin 0.7s linear infinite",
+        display: "inline-block",
+      }}
+    />
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
-import { resetAll, setScreen } from "../../../useAppSelector/slices/agreementSlice";
+import { resetAll, setScreen } from "../../store/slices/agreementSlice";
 
 const OUTCOMES = {
   complete: {

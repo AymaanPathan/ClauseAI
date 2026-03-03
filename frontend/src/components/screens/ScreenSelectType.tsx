@@ -1,6 +1,6 @@
 "use client";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
-import { setScreen, setAgreementType } from "../../../useAppSelector/slices/agreementSlice";
+import { setScreen, setAgreementType } from "../../store/slices/agreementSlice";
 import { AgreementType } from "@/api/parseApi";
 
 const TYPES: {

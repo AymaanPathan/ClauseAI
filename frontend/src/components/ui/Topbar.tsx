@@ -1,6 +1,6 @@
 "use client";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
-import { setScreen, resetAll } from "../../../useAppSelector/slices/agreementSlice";
+import { setScreen, resetAll } from "../../store/slices/agreementSlice";
 
 const STEPS = [
   { id: "select-type", label: "Type" },

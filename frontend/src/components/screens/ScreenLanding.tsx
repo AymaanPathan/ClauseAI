@@ -1,6 +1,6 @@
 "use client";
 import { useAppDispatch } from "@/store/hooks";
-import { setScreen } from "../../../useAppSelector/slices/agreementSlice";
+import { setScreen } from "../../store/slices/agreementSlice";
 
 export default function ScreenLanding() {
   const dispatch = useAppDispatch();

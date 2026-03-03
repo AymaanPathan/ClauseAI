@@ -1,27 +1,77 @@
 "use client";
 import { useState } from "react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
-import { setScreen, lockFunds } from "../../../useAppSelector/slices/agreementSlice";
+import { setScreen } from "@/store/slices/agreementSlice";
+import {
+  createAgreementThunk,
+  depositThunk,
+} from "@/store/slices/agreementSlice";
+
+type Step = "create" | "deposit" | "done";
 
 export default function ScreenLockFunds() {
   const dispatch = useAppDispatch();
-  const { editedTerms, walletAddress, counterpartyWallet, agreementId } =
-    useAppSelector((s) => s.agreement);
-  const [signing, setSigning] = useState(false);
-  const [signed, setSigned] = useState(false);
+  const {
+    editedTerms,
+    walletAddress,
+    counterpartyWallet,
+    agreementId,
+    txCreate,
+    txDeposit,
+  } = useAppSelector((s) => s.agreement);
+
+  const [step, setStep] = useState<Step>("create");
 
   const sbtcAmount = editedTerms?.amount_usd
     ? (parseFloat(editedTerms.amount_usd) / 67000).toFixed(6)
     : "0.000000";
 
-  function handleLock() {
-    setSigning(true);
-    setTimeout(() => {
-      setSigned(true);
-      setSigning(false);
-      dispatch(lockFunds());
-    }, 1800);
+  const amountUsd = parseFloat(editedTerms?.amount_usd ?? "0");
+
+  // ── Step 1: Create agreement on chain ────────────────────────
+  async function handleCreate() {
+    if (!agreementId || !walletAddress || !counterpartyWallet || !editedTerms)
+      return;
+
+    const arbitrator =
+      editedTerms.arbitrator && editedTerms.arbitrator !== "TBD"
+        ? editedTerms.arbitrator
+        : walletAddress; // fallback: self as arbitrator for demo
+
+    const result = await dispatch(
+      createAgreementThunk({
+        agreementId,
+        partyA: walletAddress,
+        partyB: counterpartyWallet,
+        arbitrator,
+        amountUsd,
+      }),
+    );
+
+    if (createAgreementThunk.fulfilled.match(result)) {
+      setStep("deposit");
+    }
   }
+
+  // ── Step 2: Deposit your share ────────────────────────────────
+  async function handleDeposit() {
+    if (!agreementId || !walletAddress) return;
+
+    const result = await dispatch(
+      depositThunk({
+        agreementId,
+        amountUsd,
+        senderAddress: walletAddress,
+      }),
+    );
+
+    if (depositThunk.fulfilled.match(result)) {
+      setStep("done");
+    }
+  }
+
+  const isBusy =
+    txCreate.status === "pending" || txDeposit.status === "pending";
 
   return (
     <div
@@ -34,6 +84,7 @@ export default function ScreenLockFunds() {
       }}
     >
       <div style={{ maxWidth: 540, width: "100%" }}>
+        {/* Header */}
         <div className="animate-fade-up" style={{ marginBottom: 36 }}>
           <button
             onClick={() => dispatch(setScreen("share-link"))}
@@ -77,7 +128,7 @@ export default function ScreenLockFunds() {
           </p>
         </div>
 
-        {/* Agreement summary card */}
+        {/* Agreement summary */}
         <div
           className="animate-fade-up delay-1"
           style={{
@@ -111,7 +162,7 @@ export default function ScreenLockFunds() {
             </span>
           </div>
 
-          <div style={{ padding: "20px" }}>
+          <div style={{ padding: 20 }}>
             {[
               {
                 label: "From (Party A)",
@@ -167,7 +218,6 @@ export default function ScreenLockFunds() {
             ))}
           </div>
 
-          {/* Amount highlight */}
           <div
             style={{
               background: "var(--yellow-dim)",
@@ -188,7 +238,7 @@ export default function ScreenLockFunds() {
                   letterSpacing: "0.1em",
                 }}
               >
-                Total Locked
+                Your Deposit
               </div>
               <div
                 style={{
@@ -221,6 +271,120 @@ export default function ScreenLockFunds() {
           </div>
         </div>
 
+        {/* Progress steps */}
+        <div
+          className="animate-fade-up delay-2"
+          style={{
+            background: "var(--black-2)",
+            border: "1px solid var(--black-4)",
+            borderRadius: "var(--radius-sm)",
+            padding: "16px 20px",
+            marginBottom: 20,
+          }}
+        >
+          {[
+            { id: "create", label: "Deploy contract on-chain", tx: txCreate },
+            {
+              id: "deposit",
+              label: "Lock your funds (deposit)",
+              tx: txDeposit,
+            },
+            { id: "done", label: "Contract active", tx: null },
+          ].map((s, i) => {
+            const isDone =
+              (s.id === "create" && (step === "deposit" || step === "done")) ||
+              (s.id === "deposit" && step === "done") ||
+              (s.id === "done" && step === "done");
+            const isActive = s.id === step;
+            return (
+              <div
+                key={s.id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 12,
+                  padding: "8px 0",
+                  borderBottom: i < 2 ? "1px solid var(--black-4)" : "none",
+                }}
+              >
+                <div
+                  style={{
+                    width: 24,
+                    height: 24,
+                    borderRadius: "50%",
+                    flexShrink: 0,
+                    background: isDone
+                      ? "#22c55e"
+                      : isActive
+                        ? "var(--yellow)"
+                        : "var(--black-4)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: 11,
+                    fontWeight: 700,
+                    color:
+                      isDone || isActive ? "var(--black)" : "var(--grey-2)",
+                  }}
+                >
+                  {isDone ? "✓" : i + 1}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div
+                    style={{
+                      fontSize: 13,
+                      fontWeight: 600,
+                      color: isDone
+                        ? "#22c55e"
+                        : isActive
+                          ? "var(--yellow)"
+                          : "var(--grey-2)",
+                    }}
+                  >
+                    {s.label}
+                  </div>
+                  {s.tx?.txId && (
+                    <a
+                      href={s.tx.txUrl ?? "#"}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        fontSize: 10,
+                        fontFamily: "var(--font-mono)",
+                        color: "var(--yellow)",
+                        textDecoration: "none",
+                      }}
+                    >
+                      {s.tx.txId.slice(0, 12)}...{s.tx.txId.slice(-6)} ↗
+                    </a>
+                  )}
+                  {s.tx?.error && (
+                    <div
+                      style={{ fontSize: 11, color: "#ef4444", marginTop: 2 }}
+                    >
+                      {s.tx.error}
+                    </div>
+                  )}
+                </div>
+                {isActive && s.tx?.status === "confirming" && (
+                  <span
+                    style={{
+                      fontSize: 11,
+                      fontFamily: "var(--font-mono)",
+                      color: "#f59e0b",
+                      background: "#f59e0b15",
+                      borderRadius: 4,
+                      padding: "2px 8px",
+                    }}
+                  >
+                    confirming...
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
         {/* Timeout info */}
         <div
           className="animate-fade-up delay-2"
@@ -239,28 +403,27 @@ export default function ScreenLockFunds() {
         >
           <span>⏱</span>
           <span>
-            If no action is taken within{" "}
-            <strong style={{ color: "var(--white)" }}>72 hours</strong> of the
-            deadline, funds auto-refund to {editedTerms?.partyB ?? "Party B"}.
+            72hr auto-refund after deadline if no action. 48hr arbitrator
+            fallback on dispute.
           </span>
         </div>
 
-        {/* Sign button */}
-        {!signed ? (
+        {/* Action button */}
+        {step === "create" && (
           <button
-            onClick={handleLock}
-            disabled={signing}
+            onClick={handleCreate}
+            disabled={isBusy}
             className="animate-fade-up delay-3"
             style={{
               width: "100%",
               padding: "18px",
-              background: signing ? "var(--black-4)" : "var(--yellow)",
-              color: signing ? "var(--grey-2)" : "var(--black)",
+              background: isBusy ? "var(--black-4)" : "var(--yellow)",
+              color: isBusy ? "var(--grey-2)" : "var(--black)",
               border: "none",
               borderRadius: "var(--radius)",
               fontSize: 15,
               fontWeight: 700,
-              cursor: signing ? "not-allowed" : "pointer",
+              cursor: isBusy ? "not-allowed" : "pointer",
               transition: "all var(--transition)",
               display: "flex",
               alignItems: "center",
@@ -268,26 +431,48 @@ export default function ScreenLockFunds() {
               gap: 10,
             }}
           >
-            {signing ? (
+            {isBusy ? (
               <>
-                <span
-                  style={{
-                    width: 18,
-                    height: 18,
-                    border: "2px solid var(--grey-2)",
-                    borderTopColor: "transparent",
-                    borderRadius: "50%",
-                    animation: "spin 0.7s linear infinite",
-                    display: "inline-block",
-                  }}
-                />
-                Signing with wallet...
+                <Spinner /> Waiting for wallet...
               </>
             ) : (
-              `🔐 Lock ${sbtcAmount} sBTC & Sign`
+              "Step 1 — Deploy Agreement On-Chain →"
             )}
           </button>
-        ) : (
+        )}
+
+        {step === "deposit" && (
+          <button
+            onClick={handleDeposit}
+            disabled={isBusy}
+            className="animate-fade-up"
+            style={{
+              width: "100%",
+              padding: "18px",
+              background: isBusy ? "var(--black-4)" : "var(--yellow)",
+              color: isBusy ? "var(--grey-2)" : "var(--black)",
+              border: "none",
+              borderRadius: "var(--radius)",
+              fontSize: 15,
+              fontWeight: 700,
+              cursor: isBusy ? "not-allowed" : "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 10,
+            }}
+          >
+            {isBusy ? (
+              <>
+                <Spinner /> Signing deposit...
+              </>
+            ) : (
+              `Step 2 — Lock ${sbtcAmount} sBTC →`
+            )}
+          </button>
+        )}
+
+        {step === "done" && (
           <div
             className="animate-fade-up"
             style={{ display: "flex", flexDirection: "column", gap: 12 }}
@@ -303,7 +488,7 @@ export default function ScreenLockFunds() {
                 fontWeight: 700,
               }}
             >
-              ✅ Funds locked. Contract deployed on Stacks.
+              ✅ Funds locked. Contract active on Stacks testnet.
             </div>
             <button
               onClick={() => dispatch(setScreen("dashboard"))}
@@ -323,7 +508,39 @@ export default function ScreenLockFunds() {
             </button>
           </div>
         )}
+
+        {(txCreate.error || txDeposit.error) && (
+          <div
+            style={{
+              marginTop: 12,
+              padding: "12px 16px",
+              background: "#7f1d1d20",
+              border: "1px solid #7f1d1d",
+              borderRadius: 8,
+              fontSize: 13,
+              color: "#fca5a5",
+            }}
+          >
+            ❌ {txCreate.error || txDeposit.error}
+          </div>
+        )}
       </div>
     </div>
+  );
+}
+
+function Spinner() {
+  return (
+    <span
+      style={{
+        width: 16,
+        height: 16,
+        border: "2px solid var(--grey-2)",
+        borderTopColor: "transparent",
+        borderRadius: "50%",
+        animation: "spin 0.7s linear infinite",
+        display: "inline-block",
+      }}
+    />
   );
 }

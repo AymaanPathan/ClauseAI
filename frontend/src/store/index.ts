@@ -3,7 +3,7 @@
 // ============================================================
 
 import { configureStore } from "@reduxjs/toolkit";
-import agreementReducer from "../../useAppSelector/slices/agreementSlice";
+import agreementReducer from "./slices/agreementSlice";
 
 export const store = configureStore({
   reducer: {

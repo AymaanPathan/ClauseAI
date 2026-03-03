@@ -2,7 +2,7 @@
 import type { Metadata } from "next";
 
 import "./globals.css";
-import { ReduxProvider } from "../../useAppSelector/ReduxProvider";
+import { ReduxProvider } from "../store/ReduxProvider";
 
 export const metadata: Metadata = {
   title: "ClauseAi — Bitcoin-Enforced Smart Contracts",

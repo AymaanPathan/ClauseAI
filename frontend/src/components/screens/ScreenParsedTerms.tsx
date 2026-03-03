@@ -5,7 +5,7 @@ import {
   setScreen,
   updateEditedTerms,
   approveTerms,
-} from "../../../useAppSelector/slices/agreementSlice";
+} from "../../store/slices/agreementSlice";
 
 const FIELD_META: {
   key: string;
@@ -174,7 +174,8 @@ export default function ScreenParsedTerms() {
         >
           {FIELD_META.map((field) => {
             const value =
-              (editedTerms as unknown as Record<string, string>)[field.key] ?? "";
+              (editedTerms as unknown as Record<string, string>)[field.key] ??
+              "";
             const isEmpty = !value || value === "TBD";
             const isEditing = editing === field.key;
 

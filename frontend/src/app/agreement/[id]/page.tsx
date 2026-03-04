@@ -12,7 +12,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { useAppSelector } from "@/store/hooks";
+import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
   fetchTermsForPartyBThunk,
   rehydratePartyBThunk,
@@ -869,7 +869,10 @@ function DepositState({
 
         <button
           className="animate-fade-up delay-3"
-          onClick={() => (window.location.href = "/dashboard")}
+          onClick={() => {
+            dispatch(setAsPartyB({ agreementId, address: walletAddress! }));
+            dispatch(setScreen("dashboard"));
+          }}
           style={{
             width: "100%",
             padding: "16px",
@@ -995,10 +998,4 @@ function Spinner({
       }}
     />
   );
-}
-
-// Add to component (needed for dispatch)
-function useAppDispatch() {
-  const { useAppDispatch: _useAppDispatch } = require("@/store/hooks");
-  return _useAppDispatch();
 }

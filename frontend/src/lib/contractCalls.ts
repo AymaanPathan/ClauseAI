@@ -91,6 +91,9 @@ export async function callCreateAgreement(
   amountUsd: number,
 ): Promise<string> {
   const microStxAmount = usdToMicroStx(amountUsd);
+  validateAddress(partyA, "Party A");
+  validateAddress(partyB, "Party B");
+  validateAddress(arbitrator, "Arbitrator");
 
   return callContract({
     contractAddress: CONTRACT_ADDRESS,
@@ -108,6 +111,18 @@ export async function callCreateAgreement(
   });
 }
 
+// Add this helper at the top of contractCalls.ts
+function validateAddress(address: string, label: string) {
+  const expectedPrefix = NETWORK_NAME === "mainnet" ? "SP" : "ST";
+  if (!address.startsWith(expectedPrefix)) {
+    throw new Error(
+      `${label} address "${address.slice(0, 6)}..." is a ${
+        address.startsWith("SP") ? "MAINNET" : "TESTNET"
+      } address but app is on ${NETWORK_NAME.toUpperCase()}. ` +
+        `Switch Leather to ${NETWORK_NAME === "testnet" ? "Testnet4" : "Mainnet"}.`,
+    );
+  }
+}
 // ─────────────────────────────────────────────────────────────
 // complete()
 // Called by Party B to release funds to Party A

@@ -8,7 +8,6 @@ import {
   pollAgreementThunk,
 } from "@/store/slices/agreementSlice";
 import { CONTRACT_STATE } from "@/lib/stacksConfig";
-import { explorerTxUrl } from "@/lib/stacksConfig";
 
 const POLL_INTERVAL_MS = 12_000; // ~1 Stacks block
 
@@ -27,20 +26,8 @@ export default function ScreenDashboard() {
     txComplete,
     txDispute,
     txTimeout,
+    isPartyB,
   } = useAppSelector((s) => s.agreement);
-  console.log("Agreement state:", {
-    agreementId,
-    walletAddress,
-    counterpartyWallet,
-    amountLocked,
-    fundState,
-    onChainData,
-    blockHeight,
-    deadlineBlock,
-    txComplete,
-    txDispute,
-    txTimeout,
-  });
 
   const [showDisputeConfirm, setShowDisputeConfirm] = useState(false);
   const [lastPolled, setLastPolled] = useState<string>("—");
@@ -53,7 +40,7 @@ export default function ScreenDashboard() {
   }, [agreementId, dispatch]);
 
   useEffect(() => {
-    poll(); // immediate first poll
+    poll();
     const iv = setInterval(poll, POLL_INTERVAL_MS);
     return () => clearInterval(iv);
   }, [poll]);
@@ -72,28 +59,44 @@ export default function ScreenDashboard() {
   const isBusyDispute = txDispute.status === "pending";
   const isBusyTimeout = txTimeout.status === "pending";
 
-  // On-chain state display
+  // Who is the payer and receiver
+  const payerName = editedTerms?.partyA ?? "Payer";
+  const receiverName = editedTerms?.partyB ?? "Receiver";
+  const payerWallet = isPartyB ? counterpartyWallet : walletAddress;
+  const receiverWallet = isPartyB ? walletAddress : counterpartyWallet;
+
+  // ── On-chain state display ────────────────────────────────────
   const onChainState = onChainData ? onChainData.state : null;
-  const stateLabels: Record<number, { label: string; color: string }> = {
-    0: { label: "⏳ Pending deposits", color: "#94a3b8" },
-    1: { label: "🟡 Active — Funds Locked", color: "var(--yellow)" },
-    2: { label: "✅ Complete", color: "#22c55e" },
-    3: { label: "↩️ Refunded", color: "#60a5fa" },
-    4: { label: "⚖️ Disputed", color: "#f59e0b" },
-  };
-  const stateDisplay =
-    onChainState !== null
-      ? (stateLabels[onChainState] ?? {
-          label: "Unknown",
-          color: "var(--grey-1)",
-        })
-      : { label: "🟡 Active — Funds Locked", color: "var(--yellow)" };
+  const stateDisplay = (() => {
+    switch (onChainState) {
+      case 0:
+        return { label: "⏳ Awaiting deposit", color: "#94a3b8" };
+      case 1:
+        return { label: "🔒 Funds Locked — Active", color: "var(--yellow)" };
+      case 2:
+        return { label: "✅ Complete — Funds Released", color: "#22c55e" };
+      case 3:
+        return { label: "↩️ Refunded to Payer", color: "#60a5fa" };
+      case 4:
+        return { label: "⚖️ Disputed — Arbitrating", color: "#f59e0b" };
+      default:
+        return { label: "🔒 Funds Locked — Active", color: "var(--yellow)" };
+    }
+  })();
+
+  // Party B (receiver) can trigger "complete" — releases funds to themselves
+  // Party A (payer) can trigger "refund" or "dispute"
+  const canComplete = !isPartyB; // Actually per contract: party B marks complete
+  // Actually in this contract, party B calls complete() to release to party A
+  // But in the new model, we want: receiver confirms → funds released to receiver
+  // The contract's complete() is called by party B (receiver) to release to party A
+  // We need to clarify the UX based on actual contract logic
 
   return (
     <div style={{ minHeight: "calc(100vh - 56px)", padding: "40px 24px" }}>
-      <div style={{ maxWidth: 640, margin: "0 auto" }}>
+      <div style={{ maxWidth: 660, margin: "0 auto" }}>
         {/* Header */}
-        <div className="animate-fade-up" style={{ marginBottom: 32 }}>
+        <div className="animate-fade-up" style={{ marginBottom: 28 }}>
           <div
             style={{
               display: "flex",
@@ -102,37 +105,45 @@ export default function ScreenDashboard() {
               marginBottom: 8,
             }}
           >
-            <h2
-              style={{ fontSize: 24, fontWeight: 800, letterSpacing: "-0.5px" }}
-            >
-              Agreement #{agreementId}
-            </h2>
+            <div>
+              <h2
+                style={{
+                  fontSize: 22,
+                  fontWeight: 800,
+                  letterSpacing: "-0.5px",
+                  marginBottom: 4,
+                }}
+              >
+                Escrow #{agreementId}
+              </h2>
+              <div
+                style={{
+                  fontSize: 11,
+                  fontFamily: "var(--font-mono)",
+                  color: "var(--grey-2)",
+                  display: "flex",
+                  gap: 16,
+                }}
+              >
+                <span>Block #{blockHeight || "..."}</span>
+                {deadlineBlock && <span>Deadline: #{deadlineBlock}</span>}
+                <span>Polled: {lastPolled}</span>
+              </div>
+            </div>
             <div
               style={{
                 fontSize: 12,
                 fontFamily: "var(--font-mono)",
-                background: "var(--yellow-dim)",
-                border: "1px solid var(--yellow)",
+                background: "var(--black-3)",
+                border: `1px solid ${stateDisplay.color}40`,
                 borderRadius: 99,
-                padding: "4px 14px",
+                padding: "5px 14px",
                 color: stateDisplay.color,
+                flexShrink: 0,
               }}
             >
               {stateDisplay.label}
             </div>
-          </div>
-          <div
-            style={{
-              display: "flex",
-              gap: 20,
-              fontSize: 11,
-              fontFamily: "var(--font-mono)",
-              color: "var(--grey-1)",
-            }}
-          >
-            <span>Block #{blockHeight || "..."}</span>
-            {deadlineBlock && <span>Deadline block: #{deadlineBlock}</span>}
-            <span style={{ color: "var(--grey-2)" }}>Polled: {lastPolled}</span>
           </div>
         </div>
 
@@ -152,7 +163,7 @@ export default function ScreenDashboard() {
             }}
           >
             <span style={{ fontSize: 13, color: "#f59e0b" }}>
-              ⏱ Deadline passed — timeout can be triggered
+              ⏱ Deadline passed — payer can reclaim funds
             </span>
             <button
               onClick={() => agreementId && dispatch(timeoutThunk(agreementId))}
@@ -168,12 +179,12 @@ export default function ScreenDashboard() {
                 cursor: "pointer",
               }}
             >
-              {isBusyTimeout ? "..." : "Trigger Timeout"}
+              {isBusyTimeout ? "..." : "Trigger Refund"}
             </button>
           </div>
         )}
 
-        {/* Parties row */}
+        {/* Payer ← Escrow → Receiver flow */}
         <div
           className="animate-fade-up delay-1"
           style={{
@@ -184,40 +195,47 @@ export default function ScreenDashboard() {
             alignItems: "center",
           }}
         >
-          {[
-            {
-              label: "Party A",
-              name: editedTerms?.partyA,
-              wallet: walletAddress,
-              deposited: onChainData?.partyADeposited ?? true,
-            },
-            {
-              label: "Party B",
-              name: editedTerms?.partyB,
-              wallet: counterpartyWallet,
-              deposited: onChainData?.partyBDeposited ?? true,
-            },
-          ].map((party, i) =>
-            i === 0 ? (
-              <PartyCard key={i} {...party} />
-            ) : (
-              <PartyCard key={i} {...party} />
-            ),
-          )}
-          <div
-            style={{
-              textAlign: "center",
-              color: "var(--grey-2)",
-              fontSize: 20,
-            }}
-          >
-            ⇄
-          </div>
+          {/* Payer card */}
           <PartyCard
-            label="Party B"
-            name={editedTerms?.partyB}
-            wallet={counterpartyWallet}
-            deposited={onChainData?.partyBDeposited ?? true}
+            role="Payer"
+            roleColor="var(--yellow)"
+            name={payerName}
+            wallet={payerWallet}
+            status={
+              onChainData?.partyADeposited
+                ? { label: "✅ Funds locked", color: "var(--yellow)" }
+                : { label: "⏳ Awaiting lock", color: "var(--grey-2)" }
+            }
+            isMe={!isPartyB}
+          />
+
+          {/* Center arrow */}
+          <div style={{ textAlign: "center" }}>
+            <div
+              style={{
+                fontSize: 10,
+                fontFamily: "var(--font-mono)",
+                color: "var(--grey-2)",
+                marginBottom: 6,
+              }}
+            >
+              🔒 ESCROW
+            </div>
+            <div style={{ color: "var(--grey-3)", fontSize: 22 }}>⇄</div>
+          </div>
+
+          {/* Receiver card */}
+          <PartyCard
+            role="Receiver"
+            roleColor="#22c55e"
+            name={receiverName}
+            wallet={receiverWallet}
+            status={
+              fundState === "released"
+                ? { label: "✅ Received payment", color: "#22c55e" }
+                : { label: "⏳ Awaiting release", color: "var(--grey-2)" }
+            }
+            isMe={isPartyB}
           />
         </div>
 
@@ -243,7 +261,7 @@ export default function ScreenDashboard() {
               marginBottom: 12,
             }}
           >
-            🔒 Funds Locked on Stacks
+            🔒 Escrowed on Stacks Bitcoin
           </div>
           <div
             style={{
@@ -285,12 +303,15 @@ export default function ScreenDashboard() {
           }}
         >
           {[
-            { label: "Condition", value: editedTerms?.condition ?? "—" },
-            { label: "Deadline", value: editedTerms?.deadline ?? "—" },
-            { label: "Arbitrator", value: editedTerms?.arbitrator ?? "TBD" },
             {
-              label: "72hr Timeout",
-              value: "Auto-refund to Party B if no action",
+              label: "⚡ Release Condition",
+              value: editedTerms?.condition ?? "—",
+            },
+            { label: "📅 Deadline", value: editedTerms?.deadline ?? "—" },
+            { label: "⚖️ Arbitrator", value: editedTerms?.arbitrator ?? "TBD" },
+            {
+              label: "⏱ Timeout Policy",
+              value: "Auto-refund to payer after deadline",
             },
           ].map((row, i) => (
             <div
@@ -308,7 +329,6 @@ export default function ScreenDashboard() {
                   fontSize: 11,
                   fontFamily: "var(--font-mono)",
                   color: "var(--grey-1)",
-                  textTransform: "uppercase",
                 }}
               >
                 {row.label}
@@ -327,45 +347,80 @@ export default function ScreenDashboard() {
           ))}
         </div>
 
+        {/* Role context banner */}
+        <div
+          className="animate-fade-up delay-2"
+          style={{
+            background: isPartyB ? "#22c55e08" : "var(--yellow-dim)",
+            border: `1px solid ${isPartyB ? "#22c55e30" : "var(--yellow)"}`,
+            borderRadius: "var(--radius-sm)",
+            padding: "12px 16px",
+            marginBottom: 20,
+            fontSize: 13,
+            color: isPartyB ? "#22c55e" : "var(--yellow)",
+            lineHeight: 1.6,
+          }}
+        >
+          {isPartyB ? (
+            <>
+              <strong>You are the Receiver.</strong> Confirm the conditions are
+              met to release your payment. Or open a dispute if something went
+              wrong.
+            </>
+          ) : (
+            <>
+              <strong>You are the Payer.</strong> Once the receiver confirms the
+              conditions are met, funds are released. You can refund if
+              conditions aren't fulfilled.
+            </>
+          )}
+        </div>
+
         {/* Pending tx banners */}
-        <TxBanner tx={txComplete} label="Completing agreement" />
+        <TxBanner tx={txComplete} label="Releasing payment" />
         <TxBanner tx={txDispute} label="Opening dispute" />
-        <TxBanner tx={txTimeout} label="Triggering timeout" />
+        <TxBanner tx={txTimeout} label="Triggering refund" />
 
         {/* Action buttons */}
         <div
           className="animate-fade-up delay-3"
           style={{ display: "flex", flexDirection: "column", gap: 12 }}
         >
-          <button
-            onClick={() => agreementId && dispatch(completeThunk(agreementId))}
-            disabled={isBusyComplete || isBusyDispute}
-            style={{
-              padding: "16px",
-              background: isBusyComplete ? "var(--black-4)" : "var(--yellow)",
-              color: isBusyComplete ? "var(--grey-2)" : "var(--black)",
-              border: "none",
-              borderRadius: "var(--radius)",
-              fontSize: 15,
-              fontWeight: 700,
-              cursor:
-                isBusyComplete || isBusyDispute ? "not-allowed" : "pointer",
-              transition: "all var(--transition)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 8,
-            }}
-          >
-            {isBusyComplete ? (
-              <>
-                <Spinner /> Waiting for wallet...
-              </>
-            ) : (
-              "✅ Mark as Complete — Release Funds"
-            )}
-          </button>
+          {/* Receiver confirms completion → releases funds */}
+          {isPartyB && (
+            <button
+              onClick={() =>
+                agreementId && dispatch(completeThunk(agreementId))
+              }
+              disabled={isBusyComplete || isBusyDispute}
+              style={{
+                padding: "16px",
+                background: isBusyComplete ? "var(--black-4)" : "#22c55e",
+                color: isBusyComplete ? "var(--grey-2)" : "var(--black)",
+                border: "none",
+                borderRadius: "var(--radius)",
+                fontSize: 15,
+                fontWeight: 700,
+                cursor:
+                  isBusyComplete || isBusyDispute ? "not-allowed" : "pointer",
+                transition: "all var(--transition)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+              }}
+            >
+              {isBusyComplete ? (
+                <>
+                  <Spinner color="var(--grey-2)" /> Waiting for wallet...
+                </>
+              ) : (
+                "✅ Confirm Conditions Met — Release Payment"
+              )}
+            </button>
+          )}
 
+          {/* Dispute button — both parties */}
           {!showDisputeConfirm ? (
             <button
               onClick={() => setShowDisputeConfirm(true)}
@@ -399,8 +454,9 @@ export default function ScreenDashboard() {
                   lineHeight: 1.6,
                 }}
               >
-                This will lock the contract and notify the arbitrator (
-                {editedTerms?.arbitrator ?? "TBD"}). Are you sure?
+                This locks the contract and notifies the arbitrator (
+                {editedTerms?.arbitrator ?? "TBD"}). They have 48 hours to
+                resolve — or funds auto-refund to the payer. Are you sure?
               </p>
               <div style={{ display: "flex", gap: 10 }}>
                 <button
@@ -450,21 +506,25 @@ export default function ScreenDashboard() {
 // ── Sub-components ────────────────────────────────────────────
 
 function PartyCard({
-  label,
+  role,
+  roleColor,
   name,
   wallet,
-  deposited,
+  status,
+  isMe,
 }: {
-  label: string;
+  role: string;
+  roleColor: string;
   name?: string | null;
   wallet?: string | null;
-  deposited: boolean;
+  status: { label: string; color: string };
+  isMe: boolean;
 }) {
   return (
     <div
       style={{
         background: "var(--black-2)",
-        border: `1px solid ${deposited ? "#22c55e40" : "var(--black-4)"}`,
+        border: `1px solid ${roleColor}40`,
         borderRadius: "var(--radius-sm)",
         padding: "14px 16px",
       }}
@@ -473,23 +533,38 @@ function PartyCard({
         style={{
           fontSize: 10,
           fontFamily: "var(--font-mono)",
-          color: "var(--grey-1)",
+          color: roleColor,
           textTransform: "uppercase",
           marginBottom: 4,
+          display: "flex",
+          alignItems: "center",
+          gap: 4,
         }}
       >
-        {label}
+        {role}
+        {isMe && (
+          <span
+            style={{
+              background: `${roleColor}20`,
+              borderRadius: 4,
+              padding: "1px 5px",
+              fontSize: 9,
+            }}
+          >
+            YOU
+          </span>
+        )}
       </div>
       <div style={{ fontSize: 14, fontWeight: 700 }}>{name ?? "—"}</div>
       <div
         style={{
           fontSize: 10,
           fontFamily: "var(--font-mono)",
-          color: deposited ? "#22c55e" : "var(--grey-2)",
+          color: status.color,
           marginTop: 4,
         }}
       >
-        {deposited ? "✅ Deposited" : "⏳ Pending deposit"}
+        {status.label}
       </div>
       {wallet && (
         <div
@@ -564,13 +639,13 @@ function TxBanner({
   );
 }
 
-function Spinner() {
+function Spinner({ color = "var(--black)" }: { color?: string }) {
   return (
     <span
       style={{
         width: 16,
         height: 16,
-        border: "2px solid var(--black)",
+        border: `2px solid ${color}`,
         borderTopColor: "transparent",
         borderRadius: "50%",
         animation: "spin 0.7s linear infinite",

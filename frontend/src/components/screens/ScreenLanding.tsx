@@ -2,6 +2,24 @@
 import { useAppDispatch } from "@/store/hooks";
 import { setScreen } from "../../store/slices/agreementSlice";
 
+const USE_CASES = [
+  {
+    icon: "🌾",
+    title: "Agricultural Trade",
+    desc: "Farmer delivers crops, buyer's payment auto-releases. No intermediaries.",
+  },
+  {
+    icon: "📷",
+    title: "Equipment Rental",
+    desc: "Deposit locked in escrow. Refunded on safe return, or arbitrated on damage.",
+  },
+  {
+    icon: "💼",
+    title: "Freelance Work",
+    desc: "Client locks payment upfront. Freelancer gets paid on delivery. No trust needed.",
+  },
+];
+
 export default function ScreenLanding() {
   const dispatch = useAppDispatch();
 
@@ -76,8 +94,8 @@ export default function ScreenLanding() {
             color: "var(--grey-1)",
           }}
         >
-          <span>How it works</span>
-          <span>Docs</span>
+          <span style={{ cursor: "pointer" }}>How it works</span>
+          <span style={{ cursor: "pointer" }}>Docs</span>
           <span style={{ color: "var(--yellow)", fontWeight: 600 }}>
             Testnet
           </span>
@@ -138,19 +156,18 @@ export default function ScreenLanding() {
             marginBottom: 24,
           }}
         >
-          Agreements enforced{" "}
+          Conditional escrow{" "}
           <span
             style={{
               color: "var(--yellow)",
-              WebkitTextStroke: "0px",
               textShadow: "0 0 40px rgba(245,196,0,0.3)",
             }}
           >
-            by Bitcoin
+            on Bitcoin
           </span>
           .
           <br />
-          Not by trust.
+          No lawyers. No banks.
         </h1>
 
         <p
@@ -158,14 +175,38 @@ export default function ScreenLanding() {
           style={{
             fontSize: 18,
             color: "var(--grey-1)",
-            maxWidth: 520,
+            maxWidth: 560,
             lineHeight: 1.7,
-            marginBottom: 48,
+            marginBottom: 20,
           }}
         >
-          Turn plain English agreements into Bitcoin-enforced smart contracts in
-          under 60 seconds. No lawyers. No banks. No trust required.
+          Lock payment in a Bitcoin-secured smart contract. Funds release
+          automatically when conditions are met — or refund if they aren't. In
+          under 60 seconds.
         </p>
+
+        {/* Escrow flow pill */}
+        <div
+          className="animate-fade-up delay-2"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 12,
+            background: "var(--black-2)",
+            border: "1px solid var(--black-4)",
+            borderRadius: 99,
+            padding: "10px 24px",
+            marginBottom: 40,
+            fontSize: 13,
+            fontFamily: "var(--font-mono)",
+          }}
+        >
+          <span style={{ color: "var(--yellow)" }}>💸 Payer locks funds</span>
+          <span style={{ color: "var(--grey-3)" }}>→</span>
+          <span style={{ color: "var(--grey-1)" }}>🔒 Bitcoin escrow</span>
+          <span style={{ color: "var(--grey-3)" }}>→</span>
+          <span style={{ color: "#22c55e" }}>🎯 Receiver gets paid</span>
+        </div>
 
         <div
           className="animate-fade-up delay-3"
@@ -174,6 +215,7 @@ export default function ScreenLanding() {
             gap: 12,
             flexWrap: "wrap",
             justifyContent: "center",
+            marginBottom: 64,
           }}
         >
           <button
@@ -208,7 +250,7 @@ export default function ScreenLanding() {
                 "0 0 0 0 rgba(245,196,0,0.4)";
             }}
           >
-            Create an Agreement →
+            Create an Escrow →
           </button>
 
           <button
@@ -236,21 +278,68 @@ export default function ScreenLanding() {
           </button>
         </div>
 
-        {/* Stats */}
+        {/* Use case cards */}
         <div
           className="animate-fade-up delay-4"
           style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+            gap: 12,
+            width: "100%",
+            maxWidth: 720,
+            marginBottom: 64,
+          }}
+        >
+          {USE_CASES.map((uc) => (
+            <div
+              key={uc.title}
+              style={{
+                background: "var(--black-2)",
+                border: "1px solid var(--black-4)",
+                borderRadius: 12,
+                padding: "18px 16px",
+                textAlign: "left",
+              }}
+            >
+              <div style={{ fontSize: 24, marginBottom: 8 }}>{uc.icon}</div>
+              <div
+                style={{
+                  fontSize: 13,
+                  fontWeight: 700,
+                  marginBottom: 6,
+                  color: "var(--white)",
+                }}
+              >
+                {uc.title}
+              </div>
+              <p
+                style={{
+                  fontSize: 12,
+                  color: "var(--grey-1)",
+                  lineHeight: 1.6,
+                  margin: 0,
+                }}
+              >
+                {uc.desc}
+              </p>
+            </div>
+          ))}
+        </div>
+
+        {/* Stats */}
+        <div
+          className="animate-fade-up delay-5"
+          style={{
             display: "flex",
             gap: 48,
-            marginTop: 80,
             borderTop: "1px solid var(--black-4)",
             paddingTop: 40,
           }}
         >
           {[
             { value: "1.4B", label: "Unbanked people" },
-            { value: "60s", label: "To deploy a contract" },
-            { value: "100%", label: "On-chain enforcement" },
+            { value: "60s", label: "To deploy escrow" },
+            { value: "0", label: "Lawyers needed" },
           ].map((stat) => (
             <div key={stat.label} style={{ textAlign: "center" }}>
               <div

@@ -114,7 +114,7 @@ export default function JoinPage() {
   useEffect(() => {
     if (myDepositDone && step === "depositing") {
       // Small delay for UX
-      setTimeout(() => router.push("/dashboard"), 1500);
+      setTimeout(() => router.push("/"), 1500);
     }
   }, [myDepositDone, step, router]);
 
@@ -704,235 +704,197 @@ function DepositState({
   myDepositDone: boolean;
   dispatch: ReturnType<typeof useAppDispatch>;
 }) {
-  const { depositThunk } = require("@/store/slices/agreementSlice");
   const amountUsd = parseFloat(String(editedTerms?.amount_usd ?? "0"));
-  const sbtcAmount = amountUsd ? (amountUsd / 67000).toFixed(6) : "0.000000";
-  const isBusy = txDeposit.status === "pending";
 
-  async function handleDeposit() {
-    if (!agreementId || !walletAddress) return;
-    await dispatch(
-      depositThunk({
-        agreementId,
-        amountUsd,
-        senderAddress: walletAddress,
-      }),
-    );
-  }
-
+  // Receiver never deposits — just wait for payer and go to dashboard
   return (
     <CenterLayout>
-      <div style={{ maxWidth: 520, width: "100%" }}>
+      <div style={{ maxWidth: 520, width: "100%", textAlign: "center" }}>
         <div className="animate-fade-up" style={{ marginBottom: 32 }}>
+          <div
+            style={{
+              width: 80,
+              height: 80,
+              borderRadius: "50%",
+              background: "#22c55e15",
+              border: "1px solid #22c55e",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 36,
+              margin: "0 auto 24px",
+            }}
+          >
+            ✅
+          </div>
           <span
             style={{
               fontSize: 12,
               fontFamily: "var(--font-mono)",
-              color: "var(--yellow)",
+              color: "#22c55e",
               letterSpacing: "0.15em",
               textTransform: "uppercase",
               display: "block",
               marginBottom: 12,
             }}
           >
-            Final step
+            You're in
           </span>
           <h2
             style={{
               fontSize: 28,
               fontWeight: 800,
               letterSpacing: "-0.5px",
-              marginBottom: 8,
+              marginBottom: 12,
             }}
           >
-            Lock your deposit
+            Wallet connected
           </h2>
-          <p style={{ color: "var(--grey-1)", fontSize: 14 }}>
-            Party A has already deployed the contract. Deposit your share to
-            activate the agreement.
+          <p style={{ color: "var(--grey-1)", fontSize: 14, lineHeight: 1.7 }}>
+            You've joined the agreement. You don't need to deposit anything —
+            only the payer locks funds.
           </p>
         </div>
 
-        {/* Deposit card */}
+        {/* Role clarification */}
         <div
           className="animate-fade-up delay-1"
           style={{
             background: "var(--black-2)",
-            border: "1px solid var(--yellow)",
+            border: "1px solid var(--black-4)",
             borderRadius: 16,
-            padding: "24px",
+            overflow: "hidden",
             marginBottom: 20,
-            textAlign: "center",
           }}
         >
           <div
             style={{
-              fontSize: 11,
-              fontFamily: "var(--font-mono)",
-              color: "var(--yellow)",
-              textTransform: "uppercase",
-              letterSpacing: "0.15em",
-              marginBottom: 12,
+              padding: "14px 20px",
+              borderBottom: "1px solid var(--black-4)",
+              fontSize: 13,
+              fontWeight: 700,
+              textAlign: "left",
             }}
           >
-            Your deposit
+            What happens next
           </div>
-          <div
-            style={{
-              fontSize: 36,
-              fontWeight: 800,
-              color: "var(--yellow)",
-              letterSpacing: "-1px",
-            }}
-          >
-            {sbtcAmount} sBTC
-          </div>
-          <div style={{ fontSize: 14, color: "var(--grey-1)", marginTop: 4 }}>
-            ≈ ${(editedTerms?.amount_usd as string) ?? "—"} USD
-          </div>
+          {[
+            {
+              icon: "💸",
+              label: "Payer locks funds",
+              desc: `The payer deploys the contract and locks $${amountUsd} USD.`,
+              color: "#f59e0b",
+            },
+            {
+              icon: "📋",
+              label: "Conditions must be met",
+              desc: String(editedTerms?.condition ?? "Delivery confirmed."),
+              color: "var(--white)",
+            },
+            {
+              icon: "🎯",
+              label: "You get paid",
+              desc: "Once the payer confirms, funds release directly to your wallet.",
+              color: "#22c55e",
+            },
+          ].map((item, i, arr) => (
+            <div
+              key={i}
+              style={{
+                display: "flex",
+                gap: 14,
+                padding: "14px 20px",
+                borderBottom:
+                  i < arr.length - 1 ? "1px solid var(--black-4)" : "none",
+                textAlign: "left",
+              }}
+            >
+              <span style={{ fontSize: 20, flexShrink: 0 }}>{item.icon}</span>
+              <div>
+                <div
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 700,
+                    color: item.color,
+                    marginBottom: 2,
+                  }}
+                >
+                  {item.label}
+                </div>
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: "var(--grey-1)",
+                    lineHeight: 1.5,
+                  }}
+                >
+                  {item.desc}
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
 
-        {/* Parties */}
+        {/* Your wallet */}
         <div
           className="animate-fade-up delay-2"
           style={{
-            display: "grid",
-            gridTemplateColumns: "1fr auto 1fr",
-            gap: 12,
-            marginBottom: 20,
-            alignItems: "center",
-          }}
-        >
-          <MiniPartyCard
-            label="Party A"
-            name={String(editedTerms?.partyA ?? "—")}
-            wallet={counterpartyWallet}
-            deposited={true}
-          />
-          <div
-            style={{
-              textAlign: "center",
-              color: "var(--grey-2)",
-              fontSize: 20,
-            }}
-          >
-            ⇄
-          </div>
-          <MiniPartyCard
-            label="Party B (You)"
-            name={String(editedTerms?.partyB ?? "—")}
-            wallet={walletAddress}
-            deposited={myDepositDone}
-          />
-        </div>
-
-        {/* Tx status */}
-        {txDeposit.status !== "idle" && (
-          <div
-            style={{
-              marginBottom: 16,
-              padding: "12px 16px",
-              background:
-                txDeposit.status === "failed" ? "#7f1d1d20" : "#f59e0b10",
-              border: `1px solid ${txDeposit.status === "failed" ? "#7f1d1d" : "#f59e0b40"}`,
-              borderRadius: 8,
-              fontSize: 12,
-              fontFamily: "var(--font-mono)",
-            }}
-          >
-            {txDeposit.status === "pending" && (
-              <span style={{ color: "#f59e0b" }}>
-                ⏳ Waiting for wallet signature...
-              </span>
-            )}
-            {txDeposit.status === "confirming" && (
-              <span style={{ color: "#f59e0b" }}>
-                ⏳ Confirming on-chain...{" "}
-                {txDeposit.txUrl && (
-                  <a
-                    href={txDeposit.txUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={{ color: "var(--yellow)" }}
-                  >
-                    View ↗
-                  </a>
-                )}
-              </span>
-            )}
-            {txDeposit.status === "failed" && (
-              <span style={{ color: "#f87171" }}>
-                ❌ Deposit failed: {txDeposit.error}
-              </span>
-            )}
-          </div>
-        )}
-
-        {myDepositDone ? (
-          <div
-            style={{
-              background: "#22c55e15",
-              border: "1px solid #22c55e",
-              borderRadius: "var(--radius)",
-              padding: "16px",
-              textAlign: "center",
-              color: "#22c55e",
-              fontWeight: 700,
-              fontSize: 14,
-            }}
-          >
-            ✅ Deposit locked! Redirecting to dashboard...
-          </div>
-        ) : (
-          <button
-            onClick={handleDeposit}
-            disabled={isBusy}
-            style={{
-              width: "100%",
-              padding: "18px",
-              background: isBusy ? "var(--black-4)" : "var(--yellow)",
-              color: isBusy ? "var(--grey-2)" : "var(--black)",
-              border: "none",
-              borderRadius: "var(--radius)",
-              fontSize: 15,
-              fontWeight: 700,
-              cursor: isBusy ? "not-allowed" : "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 10,
-            }}
-          >
-            {isBusy ? (
-              <>
-                <Spinner size={16} /> Signing deposit...
-              </>
-            ) : (
-              `Lock ${sbtcAmount} sBTC →`
-            )}
-          </button>
-        )}
-
-        <div
-          style={{
-            marginTop: 16,
-            padding: "12px 16px",
             background: "var(--black-2)",
-            border: "1px solid var(--black-4)",
-            borderRadius: 8,
+            border: "1px solid #22c55e40",
+            borderRadius: 10,
+            padding: "12px 16px",
             display: "flex",
+            alignItems: "center",
             gap: 10,
-            fontSize: 12,
-            color: "var(--grey-1)",
-            lineHeight: 1.6,
+            marginBottom: 20,
+            textAlign: "left",
           }}
         >
-          <span>⏱</span>
-          <span>
-            72hr auto-refund if no action after deadline. 48hr arbitrator
-            fallback on dispute.
-          </span>
+          <span style={{ color: "#22c55e", fontSize: 18 }}>🎯</span>
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: "#22c55e" }}>
+              Receiver (You)
+            </div>
+            <div
+              style={{
+                fontSize: 10,
+                fontFamily: "var(--font-mono)",
+                color: "var(--grey-2)",
+              }}
+            >
+              {walletAddress}
+            </div>
+          </div>
         </div>
+
+        <button
+          className="animate-fade-up delay-3"
+          onClick={() => (window.location.href = "/dashboard")}
+          style={{
+            width: "100%",
+            padding: "16px",
+            background: "var(--yellow)",
+            color: "var(--black)",
+            border: "none",
+            borderRadius: "var(--radius)",
+            fontSize: 15,
+            fontWeight: 700,
+            cursor: "pointer",
+          }}
+        >
+          Go to Dashboard →
+        </button>
+
+        <p
+          style={{
+            marginTop: 12,
+            fontSize: 12,
+            color: "var(--grey-2)",
+            fontFamily: "var(--font-mono)",
+          }}
+        >
+          You'll be notified when the payer activates the escrow.
+        </p>
       </div>
     </CenterLayout>
   );

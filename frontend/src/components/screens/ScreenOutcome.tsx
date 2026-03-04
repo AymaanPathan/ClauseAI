@@ -8,16 +8,16 @@ const OUTCOMES = {
     color: "#22c55e",
     bgColor: "#22c55e15",
     borderColor: "#22c55e40",
-    title: "Agreement Complete",
-    subtitle: "Funds released successfully",
+    title: "Payment Released",
+    subtitle: "Conditions met — funds sent to receiver",
   },
   timeout: {
     icon: "⏱",
     color: "var(--yellow)",
     bgColor: "var(--yellow-dim)",
     borderColor: "var(--yellow)",
-    title: "Agreement Expired",
-    subtitle: "Auto-refund triggered",
+    title: "Escrow Expired",
+    subtitle: "Deadline passed — funds auto-refunded to payer",
   },
   dispute: {
     icon: "⚖️",
@@ -38,6 +38,7 @@ export default function ScreenOutcome() {
     amountLocked,
     walletAddress,
     disputeOpenedBy,
+    isPartyB,
   } = useAppSelector((s) => s.agreement);
 
   const type = currentScreen as "complete" | "timeout" | "dispute";
@@ -46,6 +47,9 @@ export default function ScreenOutcome() {
   const sbtcAmount = amountLocked
     ? (parseFloat(amountLocked) / 67000).toFixed(6)
     : "0.000000";
+
+  const payerName = editedTerms?.partyA ?? "Payer";
+  const receiverName = editedTerms?.partyB ?? "Receiver";
 
   return (
     <div
@@ -119,70 +123,76 @@ export default function ScreenOutcome() {
                 color: "var(--grey-1)",
               }}
             >
-              Agreement #{agreementId}
+              Escrow #{agreementId}
             </span>
           </div>
 
           <div style={{ padding: "20px" }}>
             {type === "complete" && (
               <>
+                <Row label="💸 Payer" value={payerName} />
                 <Row
-                  label="Released to"
-                  value={editedTerms?.partyA ?? "Party A"}
+                  label="🎯 Receiver (paid)"
+                  value={receiverName}
+                  highlight
                 />
                 <Row
-                  label="Amount"
+                  label="Amount Released"
                   value={`${sbtcAmount} sBTC ≈ $${amountLocked}`}
                   highlight
                 />
                 <Row
-                  label="Condition met"
+                  label="Condition Met"
                   value={editedTerms?.condition ?? "—"}
                 />
               </>
             )}
             {type === "timeout" && (
               <>
+                <Row label="💸 Payer (refunded)" value={payerName} highlight />
+                <Row label="🎯 Receiver" value={receiverName} />
                 <Row
-                  label="Refunded to"
-                  value={editedTerms?.partyB ?? "Party B"}
-                />
-                <Row
-                  label="Amount"
+                  label="Amount Refunded"
                   value={`${sbtcAmount} sBTC ≈ $${amountLocked}`}
                   highlight
                 />
                 <Row
                   label="Reason"
-                  value="72hr deadline passed with no action"
+                  value="Deadline passed without completion"
                 />
               </>
             )}
             {type === "dispute" && (
               <>
                 <Row
-                  label="Dispute by"
-                  value={disputeOpenedBy ?? walletAddress ?? "—"}
+                  label="Dispute Opened By"
+                  value={
+                    disputeOpenedBy
+                      ? `${disputeOpenedBy.slice(0, 8)}...`
+                      : walletAddress
+                        ? `${walletAddress.slice(0, 8)}...`
+                        : "—"
+                  }
                 />
                 <Row
-                  label="Arbitrator"
+                  label="⚖️ Arbitrator"
                   value={editedTerms?.arbitrator ?? "TBD"}
                 />
                 <Row
-                  label="Funds"
-                  value={`${sbtcAmount} sBTC locked pending resolution`}
+                  label="Escrowed Funds"
+                  value={`${sbtcAmount} sBTC — locked pending resolution`}
                   highlight
                 />
                 <Row
-                  label="Timeout"
-                  value="Auto-resolve in 48hrs if arbitrator inactive"
+                  label="Auto-Resolution"
+                  value="Refund to payer in 48hrs if no action"
                 />
               </>
             )}
           </div>
         </div>
 
-        {/* Dispute specific info */}
+        {/* Dispute-specific next steps */}
         {type === "dispute" && (
           <div
             className="animate-fade-up delay-3"
@@ -200,28 +210,23 @@ export default function ScreenOutcome() {
                 fontSize: 13,
                 fontWeight: 600,
                 color: "#f59e0b",
-                marginBottom: 8,
+                marginBottom: 10,
               }}
             >
               ⚖️ What happens next
             </div>
-            <ul
-              style={{
-                fontSize: 13,
-                color: "var(--grey-1)",
-                lineHeight: 2,
-                paddingLeft: 20,
-              }}
+            <div
+              style={{ fontSize: 13, color: "var(--grey-1)", lineHeight: 2 }}
             >
-              <li>Arbitrator reviews the dispute</li>
-              <li>They can release to Party A or refund to Party B</li>
-              <li>If no action in 48hrs → auto-refund to Party B</li>
-              <li>All decisions are final and on-chain</li>
-            </ul>
+              <div>→ Arbitrator reviews evidence from both parties</div>
+              <div>→ Can release funds to receiver or refund to payer</div>
+              <div>→ No action in 48hrs → auto-refund to payer</div>
+              <div>→ All decisions are final and on-chain</div>
+            </div>
           </div>
         )}
 
-        {/* Transaction hash mock */}
+        {/* Explorer link */}
         {type !== "dispute" && (
           <div className="animate-fade-up delay-3" style={{ marginBottom: 24 }}>
             <a
@@ -237,8 +242,29 @@ export default function ScreenOutcome() {
                 gap: 6,
               }}
             >
-              View on Explorer ↗
+              View on Stacks Explorer ↗
             </a>
+          </div>
+        )}
+
+        {/* Role-specific message */}
+        {type === "complete" && (
+          <div
+            className="animate-fade-up delay-3"
+            style={{
+              background: isPartyB ? "#22c55e10" : "var(--black-2)",
+              border: `1px solid ${isPartyB ? "#22c55e30" : "var(--black-4)"}`,
+              borderRadius: "var(--radius-sm)",
+              padding: "12px 16px",
+              marginBottom: 24,
+              fontSize: 13,
+              color: isPartyB ? "#22c55e" : "var(--grey-1)",
+              lineHeight: 1.6,
+            }}
+          >
+            {isPartyB
+              ? "🎉 Payment has been transferred to your wallet."
+              : `Agreement fulfilled. ${receiverName} has received payment.`}
           </div>
         )}
 
@@ -312,6 +338,7 @@ function Row({
           fontFamily: "var(--font-mono)",
           color: "var(--grey-1)",
           textTransform: "uppercase",
+          flexShrink: 0,
         }}
       >
         {label}
@@ -321,6 +348,8 @@ function Row({
           fontSize: 13,
           fontWeight: highlight ? 700 : 600,
           color: highlight ? "var(--yellow)" : "var(--white)",
+          textAlign: "right",
+          maxWidth: "60%",
         }}
       >
         {value}

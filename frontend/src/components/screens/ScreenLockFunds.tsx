@@ -1,9 +1,10 @@
 "use client";
 // ============================================================
-// ScreenLockFunds.tsx — PRODUCTION UPDATE
-// Key change: Party A creates contract + deposits.
-// Party B ONLY deposits (contract already exists).
-// Role-aware UI.
+// ScreenLockFunds.tsx — CONDITIONAL ESCROW MODEL
+// Key change: Only the PAYER (Party A) locks funds.
+// The RECEIVER (Party B) does NOT deposit — they just confirm.
+// Party A: create contract → deposit funds
+// Party B: review terms → confirm participation
 // ============================================================
 
 import { useState } from "react";
@@ -14,10 +15,7 @@ import {
   depositThunk,
 } from "@/store/slices/agreementSlice";
 
-// Party A: create → deposit
-// Party B: deposit only (contract already exists from Party A)
 type StepPartyA = "create" | "deposit" | "done";
-type StepPartyB = "deposit" | "done";
 
 export default function ScreenLockFunds() {
   const dispatch = useAppDispatch();
@@ -32,7 +30,7 @@ export default function ScreenLockFunds() {
   } = useAppSelector((s) => s.agreement);
 
   const [stepA, setStepA] = useState<StepPartyA>("create");
-  const [stepB, setStepB] = useState<StepPartyB>("deposit");
+  const [partyBConfirmed, setPartyBConfirmed] = useState(false);
 
   const sbtcAmount = editedTerms?.amount_usd
     ? (parseFloat(editedTerms.amount_usd) / 67000).toFixed(6)
@@ -55,8 +53,8 @@ export default function ScreenLockFunds() {
     const result = await dispatch(
       createAgreementThunk({
         agreementId,
-        partyA: walletAddress,
-        partyB: counterpartyWallet,
+        partyA: walletAddress, // Payer (locks funds)
+        partyB: counterpartyWallet, // Receiver (gets paid)
         arbitrator,
         amountUsd,
       }),
@@ -67,7 +65,7 @@ export default function ScreenLockFunds() {
     }
   }
 
-  // ── Deposit (both parties call this) ─────────────────────────
+  // ── Party A: Step 2 — Lock funds ─────────────────────────────
   async function handleDeposit() {
     if (!agreementId || !walletAddress) return;
 
@@ -80,16 +78,300 @@ export default function ScreenLockFunds() {
     );
 
     if (depositThunk.fulfilled.match(result)) {
-      if (isPartyB) {
-        setStepB("done");
-      } else {
-        setStepA("done");
-      }
+      setStepA("done");
     }
   }
 
-  const currentStep = isPartyB ? stepB : stepA;
+  // ── Party B view — review & confirm ──────────────────────────
+  if (isPartyB) {
+    return (
+      <div
+        style={{
+          minHeight: "calc(100vh - 56px)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: 24,
+        }}
+      >
+        <div style={{ maxWidth: 520, width: "100%" }}>
+          <div className="animate-fade-up" style={{ marginBottom: 32 }}>
+            <div
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 8,
+                background: "#22c55e15",
+                border: "1px solid #22c55e40",
+                borderRadius: 99,
+                padding: "6px 14px",
+                marginBottom: 16,
+                fontSize: 12,
+                fontFamily: "var(--font-mono)",
+                color: "#22c55e",
+              }}
+            >
+              🎯 You are the Receiver
+            </div>
+            <h2
+              style={{
+                fontSize: 32,
+                fontWeight: 800,
+                letterSpacing: "-1px",
+                marginBottom: 8,
+              }}
+            >
+              Review the escrow terms
+            </h2>
+            <p
+              style={{ color: "var(--grey-1)", fontSize: 14, lineHeight: 1.7 }}
+            >
+              The payer will lock funds into a Bitcoin-secured escrow contract.
+              You receive payment when the conditions below are fulfilled.
+            </p>
+          </div>
 
+          {/* What receiver needs to know */}
+          <div
+            className="animate-fade-up delay-1"
+            style={{
+              background: "#22c55e08",
+              border: "1px solid #22c55e30",
+              borderRadius: 12,
+              padding: "16px 20px",
+              marginBottom: 20,
+            }}
+          >
+            <div
+              style={{
+                fontSize: 12,
+                fontWeight: 700,
+                color: "#22c55e",
+                marginBottom: 12,
+                fontFamily: "var(--font-mono)",
+                textTransform: "uppercase",
+                letterSpacing: "0.1em",
+              }}
+            >
+              Your role as receiver
+            </div>
+            {[
+              "You do NOT need to deposit any funds",
+              "Funds are locked by the payer on your behalf",
+              "You receive payment when conditions are met",
+              "Dispute with arbitrator if anything goes wrong",
+            ].map((item, i) => (
+              <div
+                key={i}
+                style={{
+                  display: "flex",
+                  gap: 8,
+                  fontSize: 13,
+                  color: "var(--grey-1)",
+                  marginBottom: 8,
+                  lineHeight: 1.5,
+                }}
+              >
+                <span style={{ color: "#22c55e", flexShrink: 0 }}>✓</span>
+                {item}
+              </div>
+            ))}
+          </div>
+
+          {/* Agreement summary */}
+          <div
+            className="animate-fade-up delay-2"
+            style={{
+              background: "var(--black-2)",
+              border: "1px solid var(--black-4)",
+              borderRadius: 16,
+              overflow: "hidden",
+              marginBottom: 20,
+            }}
+          >
+            <div
+              style={{
+                padding: "14px 20px",
+                borderBottom: "1px solid var(--black-4)",
+                fontSize: 13,
+                fontWeight: 700,
+              }}
+            >
+              📋 Agreement #{agreementId}
+            </div>
+            <div style={{ padding: "0 4px" }}>
+              {[
+                {
+                  label: "💸 Payer",
+                  value: editedTerms?.partyA ?? "—",
+                  sub: counterpartyWallet,
+                },
+                {
+                  label: "🎯 You receive",
+                  value: editedTerms?.partyB ?? "—",
+                  sub: walletAddress,
+                },
+                { label: "⚡ Condition", value: editedTerms?.condition ?? "—" },
+                { label: "📅 Deadline", value: editedTerms?.deadline ?? "—" },
+                {
+                  label: "⚖️ Arbitrator",
+                  value: editedTerms?.arbitrator ?? "TBD",
+                },
+              ].map((row, i) => (
+                <div
+                  key={i}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "flex-start",
+                    padding: "12px 16px",
+                    borderBottom: i < 4 ? "1px solid var(--black-4)" : "none",
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: 12,
+                      color: "var(--grey-1)",
+                      fontFamily: "var(--font-mono)",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {row.label}
+                  </span>
+                  <div style={{ textAlign: "right", maxWidth: "60%" }}>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>
+                      {row.value}
+                    </div>
+                    {row.sub && (
+                      <div
+                        style={{
+                          fontSize: 10,
+                          fontFamily: "var(--font-mono)",
+                          color: "var(--grey-2)",
+                          marginTop: 2,
+                        }}
+                      >
+                        {row.sub.slice(0, 10)}...{row.sub.slice(-6)}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Amount highlight */}
+            <div
+              style={{
+                background: "#22c55e10",
+                borderTop: "1px solid #22c55e30",
+                padding: "16px 20px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <div>
+                <div
+                  style={{
+                    fontSize: 11,
+                    fontFamily: "var(--font-mono)",
+                    color: "#22c55e",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.1em",
+                  }}
+                >
+                  You Will Receive
+                </div>
+                <div
+                  style={{
+                    fontSize: 22,
+                    fontWeight: 800,
+                    color: "#22c55e",
+                    marginTop: 2,
+                  }}
+                >
+                  {sbtcAmount} sBTC
+                </div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+                <div
+                  style={{
+                    fontSize: 11,
+                    fontFamily: "var(--font-mono)",
+                    color: "var(--grey-1)",
+                  }}
+                >
+                  ≈ USD
+                </div>
+                <div style={{ fontSize: 18, fontWeight: 700 }}>
+                  ${editedTerms?.amount_usd ?? "—"}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Confirm button */}
+          {!partyBConfirmed ? (
+            <button
+              onClick={() => setPartyBConfirmed(true)}
+              className="animate-fade-up delay-3"
+              style={{
+                width: "100%",
+                padding: "18px",
+                background: "#22c55e",
+                color: "var(--black)",
+                border: "none",
+                borderRadius: "var(--radius)",
+                fontSize: 15,
+                fontWeight: 700,
+                cursor: "pointer",
+                transition: "all var(--transition)",
+              }}
+            >
+              ✓ I Understand & Agree to These Terms
+            </button>
+          ) : (
+            <div
+              className="animate-fade-up"
+              style={{ display: "flex", flexDirection: "column", gap: 12 }}
+            >
+              <div
+                style={{
+                  background: "#22c55e15",
+                  border: "1px solid #22c55e",
+                  borderRadius: "var(--radius)",
+                  padding: "16px",
+                  textAlign: "center",
+                  color: "#22c55e",
+                  fontWeight: 700,
+                }}
+              >
+                ✅ Terms confirmed. Waiting for payer to lock funds...
+              </div>
+              <button
+                onClick={() => dispatch(setScreen("dashboard"))}
+                style={{
+                  width: "100%",
+                  padding: "14px",
+                  background: "var(--yellow)",
+                  color: "var(--black)",
+                  border: "none",
+                  borderRadius: "var(--radius)",
+                  fontSize: 14,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                View Dashboard →
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Party A (Payer) view ──────────────────────────────────────
   return (
     <div
       style={{
@@ -103,21 +385,36 @@ export default function ScreenLockFunds() {
       <div style={{ maxWidth: 540, width: "100%" }}>
         {/* Header */}
         <div className="animate-fade-up" style={{ marginBottom: 36 }}>
-          {!isPartyB && (
-            <button
-              onClick={() => dispatch(setScreen("share-link"))}
-              style={{
-                background: "none",
-                border: "none",
-                color: "var(--grey-1)",
-                fontSize: 13,
-                cursor: "pointer",
-                marginBottom: 20,
-              }}
-            >
-              ← Back
-            </button>
-          )}
+          <button
+            onClick={() => dispatch(setScreen("share-link"))}
+            style={{
+              background: "none",
+              border: "none",
+              color: "var(--grey-1)",
+              fontSize: 13,
+              cursor: "pointer",
+              marginBottom: 20,
+            }}
+          >
+            ← Back
+          </button>
+          <div
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 8,
+              background: "var(--yellow-dim)",
+              border: "1px solid var(--yellow)",
+              borderRadius: 99,
+              padding: "6px 14px",
+              marginBottom: 16,
+              fontSize: 12,
+              fontFamily: "var(--font-mono)",
+              color: "var(--yellow)",
+            }}
+          >
+            💸 You are the Payer
+          </div>
           <span
             style={{
               fontSize: 12,
@@ -129,7 +426,7 @@ export default function ScreenLockFunds() {
               marginBottom: 12,
             }}
           >
-            {isPartyB ? "Final Step" : "Step 6 of 6"}
+            Step 6 of 6
           </span>
           <h2
             style={{
@@ -139,38 +436,16 @@ export default function ScreenLockFunds() {
               marginBottom: 8,
             }}
           >
-            {isPartyB ? "Lock your deposit" : "Review & lock funds"}
+            Lock funds in escrow
           </h2>
-          <p style={{ color: "var(--grey-1)", fontSize: 14 }}>
-            {isPartyB
-              ? "Party A has deployed the contract. Deposit your share to activate the agreement."
-              : "Both parties sign. Funds lock into the smart contract. Bitcoin enforces the rest."}
+          <p style={{ color: "var(--grey-1)", fontSize: 14, lineHeight: 1.7 }}>
+            Deploy the contract on-chain, then lock your payment. Funds are
+            released to{" "}
+            <strong style={{ color: "#22c55e" }}>
+              {editedTerms?.partyB ?? "the receiver"}
+            </strong>{" "}
+            when conditions are met — or refunded to you if not.
           </p>
-        </div>
-
-        {/* Role badge */}
-        <div
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 8,
-            background: "var(--black-2)",
-            border: "1px solid var(--black-4)",
-            borderRadius: 99,
-            padding: "6px 14px",
-            marginBottom: 20,
-            fontSize: 12,
-            fontFamily: "var(--font-mono)",
-            color: isPartyB ? "#60a5fa" : "var(--yellow)",
-          }}
-        >
-          <span>{isPartyB ? "👤" : "👑"}</span>
-          <span>
-            You are {isPartyB ? "Party B" : "Party A"}
-            {isPartyB
-              ? " — contract already deployed by Party A"
-              : " — you deploy + deposit first"}
-          </span>
         </div>
 
         {/* Agreement summary */}
@@ -207,25 +482,24 @@ export default function ScreenLockFunds() {
             </span>
           </div>
 
-          <div style={{ padding: 20 }}>
+          <div style={{ padding: "0 4px" }}>
             {[
               {
-                label: "From (Party A)",
+                label: "💸 You (Payer)",
                 value: editedTerms?.partyA ?? "—",
-                sub: isPartyB
-                  ? (counterpartyWallet ?? "")
-                  : (walletAddress ?? ""),
+                sub: walletAddress ?? "",
               },
               {
-                label: "To (Party B)",
+                label: "🎯 Receiver",
                 value: editedTerms?.partyB ?? "—",
-                sub: isPartyB
-                  ? (walletAddress ?? "")
-                  : (counterpartyWallet ?? ""),
+                sub: counterpartyWallet ?? "",
               },
-              { label: "Condition", value: editedTerms?.condition ?? "—" },
-              { label: "Deadline", value: editedTerms?.deadline ?? "—" },
-              { label: "Arbitrator", value: editedTerms?.arbitrator ?? "TBD" },
+              { label: "⚡ Condition", value: editedTerms?.condition ?? "—" },
+              { label: "📅 Deadline", value: editedTerms?.deadline ?? "—" },
+              {
+                label: "⚖️ Arbitrator",
+                value: editedTerms?.arbitrator ?? "TBD",
+              },
             ].map((row, i) => (
               <div
                 key={i}
@@ -233,7 +507,7 @@ export default function ScreenLockFunds() {
                   display: "flex",
                   justifyContent: "space-between",
                   alignItems: "flex-start",
-                  padding: "10px 0",
+                  padding: "10px 16px",
                   borderBottom: i < 4 ? "1px solid var(--black-4)" : "none",
                 }}
               >
@@ -242,11 +516,12 @@ export default function ScreenLockFunds() {
                     fontSize: 12,
                     color: "var(--grey-1)",
                     fontFamily: "var(--font-mono)",
+                    flexShrink: 0,
                   }}
                 >
                   {row.label}
                 </span>
-                <div style={{ textAlign: "right" }}>
+                <div style={{ textAlign: "right", maxWidth: "65%" }}>
                   <div style={{ fontSize: 13, fontWeight: 600 }}>
                     {row.value}
                   </div>
@@ -288,7 +563,7 @@ export default function ScreenLockFunds() {
                   letterSpacing: "0.1em",
                 }}
               >
-                Your Deposit
+                You Lock
               </div>
               <div
                 style={{
@@ -330,112 +605,108 @@ export default function ScreenLockFunds() {
             marginBottom: 20,
           }}
         >
-          {(isPartyB
-            ? [
-                {
-                  id: "deposit",
-                  label: "Lock your funds (deposit)",
-                  tx: txDeposit,
-                },
-              ]
-            : [
-                {
-                  id: "create",
-                  label: "Deploy contract on-chain",
-                  tx: txCreate,
-                },
-                {
-                  id: "deposit",
-                  label: "Lock your funds (deposit)",
-                  tx: txDeposit,
-                },
-              ]
-          ).map((s, i, arr) => {
-            const isDone =
-              (!isPartyB &&
-                ((s.id === "create" &&
-                  (stepA === "deposit" || stepA === "done")) ||
-                  (s.id === "deposit" && stepA === "done"))) ||
-              (isPartyB && s.id === "deposit" && stepB === "done");
-            const isActive = isPartyB ? s.id === stepB : s.id === stepA;
-
-            return (
+          {[
+            {
+              id: "create",
+              label: "Deploy escrow contract on-chain",
+              sublabel: "Registers agreement on Stacks",
+              tx: txCreate,
+              done: stepA === "deposit" || stepA === "done",
+              active: stepA === "create",
+            },
+            {
+              id: "deposit",
+              label: "Lock funds in escrow",
+              sublabel: `${sbtcAmount} sBTC sent to contract`,
+              tx: txDeposit,
+              done: stepA === "done",
+              active: stepA === "deposit",
+            },
+          ].map((s, i) => (
+            <div
+              key={s.id}
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                gap: 12,
+                padding: "10px 0",
+                borderBottom: i === 0 ? "1px solid var(--black-4)" : "none",
+              }}
+            >
               <div
-                key={s.id}
                 style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: "50%",
+                  flexShrink: 0,
+                  marginTop: 2,
+                  background: s.done
+                    ? "#22c55e"
+                    : s.active
+                      ? "var(--yellow)"
+                      : "var(--black-4)",
                   display: "flex",
                   alignItems: "center",
-                  gap: 12,
-                  padding: "8px 0",
-                  borderBottom:
-                    i < arr.length - 1 ? "1px solid var(--black-4)" : "none",
+                  justifyContent: "center",
+                  fontSize: 11,
+                  fontWeight: 800,
+                  color: s.done || s.active ? "var(--black)" : "var(--grey-2)",
                 }}
               >
+                {s.done ? "✓" : i + 1}
+              </div>
+              <div style={{ flex: 1 }}>
                 <div
                   style={{
-                    width: 24,
-                    height: 24,
-                    borderRadius: "50%",
-                    flexShrink: 0,
-                    background: isDone
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: s.done
                       ? "#22c55e"
-                      : isActive
+                      : s.active
                         ? "var(--yellow)"
-                        : "var(--black-4)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: 11,
-                    fontWeight: 700,
-                    color:
-                      isDone || isActive ? "var(--black)" : "var(--grey-2)",
+                        : "var(--grey-2)",
+                    marginBottom: 2,
                   }}
                 >
-                  {isDone ? "✓" : i + 1}
+                  {s.label}
                 </div>
-                <div style={{ flex: 1 }}>
-                  <div
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: "var(--grey-2)",
+                    fontFamily: "var(--font-mono)",
+                  }}
+                >
+                  {s.sublabel}
+                </div>
+                {s.tx?.txId && (
+                  <a
+                    href={s.tx.txUrl ?? "#"}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     style={{
-                      fontSize: 13,
-                      fontWeight: 600,
-                      color: isDone
-                        ? "#22c55e"
-                        : isActive
-                          ? "var(--yellow)"
-                          : "var(--grey-2)",
+                      fontSize: 10,
+                      fontFamily: "var(--font-mono)",
+                      color: "var(--yellow)",
+                      textDecoration: "none",
+                      display: "block",
+                      marginTop: 2,
                     }}
                   >
-                    {s.label}
+                    {s.tx.txId.slice(0, 12)}...{s.tx.txId.slice(-6)} ↗
+                  </a>
+                )}
+                {s.tx?.error && (
+                  <div style={{ fontSize: 11, color: "#ef4444", marginTop: 2 }}>
+                    {s.tx.error}
                   </div>
-                  {s.tx?.txId && (
-                    <a
-                      href={s.tx.txUrl ?? "#"}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      style={{
-                        fontSize: 10,
-                        fontFamily: "var(--font-mono)",
-                        color: "var(--yellow)",
-                        textDecoration: "none",
-                      }}
-                    >
-                      {s.tx.txId.slice(0, 12)}...{s.tx.txId.slice(-6)} ↗
-                    </a>
-                  )}
-                  {s.tx?.error && (
-                    <div
-                      style={{ fontSize: 11, color: "#ef4444", marginTop: 2 }}
-                    >
-                      {s.tx.error}
-                    </div>
-                  )}
-                </div>
+                )}
               </div>
-            );
-          })}
+            </div>
+          ))}
         </div>
 
-        {/* Timeout info */}
+        {/* Refund policy info */}
         <div
           className="animate-fade-up delay-2"
           style={{
@@ -451,16 +722,15 @@ export default function ScreenLockFunds() {
             lineHeight: 1.6,
           }}
         >
-          <span>⏱</span>
+          <span style={{ flexShrink: 0 }}>⚡</span>
           <span>
-            72hr auto-refund after deadline if no action. 48hr arbitrator
-            fallback on dispute.
+            Funds auto-refund to you after the deadline if conditions aren't
+            met. 48hr arbitrator window on disputes. You remain in control.
           </span>
         </div>
 
         {/* Action buttons */}
-        {/* Party A: step 1 */}
-        {!isPartyB && stepA === "create" && (
+        {stepA === "create" && (
           <button
             onClick={handleCreate}
             disabled={isBusy}
@@ -472,14 +742,12 @@ export default function ScreenLockFunds() {
                 <Spinner /> Waiting for wallet...
               </>
             ) : (
-              "Step 1 — Deploy Agreement On-Chain →"
+              "Step 1 — Deploy Escrow Contract →"
             )}
           </button>
         )}
 
-        {/* Party A + B: deposit step */}
-        {((isPartyB && stepB === "deposit") ||
-          (!isPartyB && stepA === "deposit")) && (
+        {stepA === "deposit" && (
           <button
             onClick={handleDeposit}
             disabled={isBusy}
@@ -491,13 +759,12 @@ export default function ScreenLockFunds() {
                 <Spinner /> Signing deposit...
               </>
             ) : (
-              `${isPartyB ? "Lock" : "Step 2 — Lock"} ${sbtcAmount} sBTC →`
+              `Step 2 — Lock ${sbtcAmount} sBTC in Escrow →`
             )}
           </button>
         )}
 
-        {/* Done */}
-        {currentStep === "done" && (
+        {stepA === "done" && (
           <div
             className="animate-fade-up"
             style={{ display: "flex", flexDirection: "column", gap: 12 }}
@@ -513,7 +780,7 @@ export default function ScreenLockFunds() {
                 fontWeight: 700,
               }}
             >
-              ✅ Funds locked. Contract active on Stacks testnet.
+              🔒 Funds locked. Escrow contract active on Stacks testnet.
             </div>
             <button
               onClick={() => dispatch(setScreen("dashboard"))}

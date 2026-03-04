@@ -1,10 +1,10 @@
 // ============================================================
-// api/parseApi.ts — All /api/parse calls
+// api/parseApi.ts
 // ============================================================
 
 import axiosInstance from "@/lib/axiosSetup";
 
-export type AgreementType = "freelance" | "rental" | "bet";
+export type AgreementType = "freelance" | "rental" | "trade" | "bet";
 
 export interface ParseRequest {
   type: AgreementType;
@@ -12,8 +12,8 @@ export interface ParseRequest {
 }
 
 export interface ParsedAgreement {
-  partyA: string;
-  partyB: string;
+  partyA: string; // Payer
+  partyB: string; // Receiver
   amount_usd: string;
   deadline: string;
   condition: string;
@@ -40,7 +40,6 @@ export interface ParserHealthResponse {
   config: { provider: string; model: string };
 }
 
-// POST /api/parse
 export const parseAgreement = async (
   payload: ParseRequest,
 ): Promise<ParseResponse> => {
@@ -51,7 +50,6 @@ export const parseAgreement = async (
   return data;
 };
 
-// GET /api/parse — health check
 export const getParserHealth = async (): Promise<ParserHealthResponse> => {
   const { data } = await axiosInstance.get<ParserHealthResponse>("/api/parse");
   return data;

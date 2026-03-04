@@ -1,16 +1,13 @@
 "use client";
 import { useState } from "react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
-import {
-  setScreen,
-  connectWalletThunk,
-  registerPresenceThunk,
-} from "@/store/slices/agreementSlice";
+import { setScreen, connectWalletThunk } from "@/store/slices/agreementSlice";
 
 export default function ScreenConnectWallet() {
   const dispatch = useAppDispatch();
-  const { walletConnected, walletAddress, agreementId, editedTerms } =
-    useAppSelector((s) => s.agreement);
+  const { walletConnected, walletAddress, isPartyB } = useAppSelector(
+    (s) => s.agreement,
+  );
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -107,7 +104,7 @@ export default function ScreenConnectWallet() {
           >
             {walletConnected
               ? `Connected: ${walletAddress?.slice(0, 10)}...${walletAddress?.slice(-6)}`
-              : "Connect your Leather wallet to sign and lock sBTC on the Stacks blockchain."}
+              : "Connect your Leather wallet to deploy the escrow contract and lock funds on Stacks."}
           </p>
         </div>
 
@@ -147,7 +144,7 @@ export default function ScreenConnectWallet() {
                 cursor: "pointer",
               }}
             >
-              Continue →
+              Continue → Invite Receiver
             </button>
           ) : (
             <button
@@ -199,30 +196,72 @@ export default function ScreenConnectWallet() {
           </div>
         </div>
 
+        {/* Info boxes */}
         <div
           className="animate-fade-up delay-3"
           style={{
-            marginTop: 40,
-            padding: "16px 20px",
-            background: "var(--black-2)",
-            border: "1px solid var(--black-4)",
-            borderRadius: "var(--radius-sm)",
             display: "flex",
-            gap: 12,
-            textAlign: "left",
+            flexDirection: "column",
+            gap: 10,
+            marginTop: 32,
           }}
         >
-          <span style={{ fontSize: 20 }}>🔒</span>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
-              Non-custodial
+          <div
+            style={{
+              padding: "16px 20px",
+              background: "var(--black-2)",
+              border: "1px solid var(--black-4)",
+              borderRadius: "var(--radius-sm)",
+              display: "flex",
+              gap: 12,
+              textAlign: "left",
+            }}
+          >
+            <span style={{ fontSize: 20 }}>🔒</span>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
+                Non-custodial escrow
+              </div>
+              <p
+                style={{
+                  fontSize: 12,
+                  color: "var(--grey-1)",
+                  lineHeight: 1.6,
+                }}
+              >
+                ClauseAi never holds your keys. Funds go directly into the smart
+                contract, enforced by Bitcoin.
+              </p>
             </div>
-            <p
-              style={{ fontSize: 12, color: "var(--grey-1)", lineHeight: 1.6 }}
-            >
-              ClauseAi never holds your keys. Funds go directly into the smart
-              contract, enforced by Bitcoin.
-            </p>
+          </div>
+
+          <div
+            style={{
+              padding: "16px 20px",
+              background: "var(--black-2)",
+              border: "1px solid var(--black-4)",
+              borderRadius: "var(--radius-sm)",
+              display: "flex",
+              gap: 12,
+              textAlign: "left",
+            }}
+          >
+            <span style={{ fontSize: 20 }}>💸</span>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
+                Only payers deposit
+              </div>
+              <p
+                style={{
+                  fontSize: 12,
+                  color: "var(--grey-1)",
+                  lineHeight: 1.6,
+                }}
+              >
+                The receiver (other party) doesn't need to lock any funds. Only
+                you, as the payer, deposit into escrow.
+              </p>
+            </div>
           </div>
         </div>
       </div>

@@ -12,13 +12,47 @@ const FIELD_META: {
   label: string;
   icon: string;
   editable: boolean;
+  roleColor?: string;
+  roleHint?: string;
 }[] = [
-  { key: "partyA", label: "Party A", icon: "👤", editable: true },
-  { key: "partyB", label: "Party B", icon: "👥", editable: true },
-  { key: "amount_usd", label: "Amount (USD)", icon: "💵", editable: true },
+  {
+    key: "partyA",
+    label: "Payer",
+    icon: "💸",
+    editable: true,
+    roleColor: "var(--yellow)",
+    roleHint: "Locks funds in escrow",
+  },
+  {
+    key: "partyB",
+    label: "Receiver",
+    icon: "🎯",
+    editable: true,
+    roleColor: "#22c55e",
+    roleHint: "Gets paid when conditions met",
+  },
+  {
+    key: "amount_usd",
+    label: "Amount (USD)",
+    icon: "💵",
+    editable: true,
+  },
   { key: "deadline", label: "Deadline", icon: "📅", editable: true },
-  { key: "condition", label: "Release Condition", icon: "⚡", editable: true },
-  { key: "arbitrator", label: "Arbitrator", icon: "⚖️", editable: true },
+  {
+    key: "condition",
+    label: "Release Condition",
+    icon: "⚡",
+    editable: true,
+    roleHint: "What must happen to release funds",
+  },
+  {
+    key: "arbitrator",
+    label: "Arbitrator",
+    icon: "⚖️",
+    editable: true,
+    roleColor: "#60a5fa",
+    roleHint: "Resolves disputes (optional)",
+  },
 ];
 
 export default function ScreenParsedTerms() {
@@ -80,6 +114,14 @@ export default function ScreenParsedTerms() {
     dispatch(updateEditedTerms({ [key]: value }));
   }
 
+  // Escrow flow summary
+  const partyA =
+    (editedTerms as unknown as Record<string, string>)["partyA"] || "Payer";
+  const partyB =
+    (editedTerms as unknown as Record<string, string>)["partyB"] || "Receiver";
+  const amount =
+    (editedTerms as unknown as Record<string, string>)["amount_usd"] || "—";
+
   return (
     <div
       style={{
@@ -92,7 +134,7 @@ export default function ScreenParsedTerms() {
     >
       <div style={{ maxWidth: 580, width: "100%" }}>
         {/* Header */}
-        <div className="animate-fade-up" style={{ marginBottom: 32 }}>
+        <div className="animate-fade-up" style={{ marginBottom: 28 }}>
           <button
             onClick={() => dispatch(setScreen("describe"))}
             style={{
@@ -162,6 +204,72 @@ export default function ScreenParsedTerms() {
           </p>
         </div>
 
+        {/* Escrow flow diagram */}
+        <div
+          className="animate-fade-up delay-1"
+          style={{
+            background: "var(--black-2)",
+            border: "1px solid var(--black-4)",
+            borderRadius: 12,
+            padding: "14px 20px",
+            marginBottom: 20,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 12,
+            fontSize: 13,
+          }}
+        >
+          <div style={{ textAlign: "center" }}>
+            <div
+              style={{
+                fontSize: 10,
+                color: "var(--yellow)",
+                fontFamily: "var(--font-mono)",
+                textTransform: "uppercase",
+                marginBottom: 4,
+              }}
+            >
+              Payer
+            </div>
+            <div style={{ fontWeight: 700, color: "var(--yellow)" }}>
+              {partyA}
+            </div>
+          </div>
+          <div style={{ color: "var(--grey-3)", fontSize: 18 }}>→</div>
+          <div style={{ textAlign: "center" }}>
+            <div
+              style={{
+                fontSize: 10,
+                color: "var(--grey-1)",
+                fontFamily: "var(--font-mono)",
+                textTransform: "uppercase",
+                marginBottom: 4,
+              }}
+            >
+              🔒 Escrow
+            </div>
+            <div style={{ fontWeight: 700, color: "var(--grey-1)" }}>
+              ${amount}
+            </div>
+          </div>
+          <div style={{ color: "var(--grey-3)", fontSize: 18 }}>→</div>
+          <div style={{ textAlign: "center" }}>
+            <div
+              style={{
+                fontSize: 10,
+                color: "#22c55e",
+                fontFamily: "var(--font-mono)",
+                textTransform: "uppercase",
+                marginBottom: 4,
+              }}
+            >
+              Receiver
+            </div>
+            <div style={{ fontWeight: 700, color: "#22c55e" }}>{partyB}</div>
+          </div>
+        </div>
+
         {/* Fields */}
         <div
           className="animate-fade-up delay-1"
@@ -185,7 +293,7 @@ export default function ScreenParsedTerms() {
                 onClick={() => setEditing(field.key)}
                 style={{
                   background: "var(--black-2)",
-                  border: `1px solid ${isEditing ? "var(--yellow)" : isEmpty ? "#7f1d1d50" : "var(--black-4)"}`,
+                  border: `1px solid ${isEditing ? (field.roleColor ?? "var(--yellow)") : isEmpty ? "#7f1d1d50" : "var(--black-4)"}`,
                   borderRadius: "var(--radius-sm)",
                   padding: "14px 16px",
                   cursor: "pointer",
@@ -212,19 +320,32 @@ export default function ScreenParsedTerms() {
                     style={{
                       fontSize: 10,
                       fontFamily: "var(--font-mono)",
-                      color: "var(--grey-1)",
+                      color: field.roleColor ?? "var(--grey-1)",
                       textTransform: "uppercase",
                       letterSpacing: "0.1em",
-                      marginBottom: 4,
+                      marginBottom: 2,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
                     }}
                   >
                     {field.label}
                     {isEmpty && (
-                      <span style={{ color: "#f87171", marginLeft: 8 }}>
-                        ⚠ required
-                      </span>
+                      <span style={{ color: "#f87171" }}>⚠ required</span>
                     )}
                   </div>
+                  {field.roleHint && (
+                    <div
+                      style={{
+                        fontSize: 10,
+                        color: "var(--grey-2)",
+                        fontFamily: "var(--font-mono)",
+                        marginBottom: 4,
+                      }}
+                    >
+                      {field.roleHint}
+                    </div>
+                  )}
                   {isEditing ? (
                     <input
                       autoFocus
@@ -371,7 +492,7 @@ export default function ScreenParsedTerms() {
                 "var(--yellow)")
             }
           >
-            Looks Good → Continue
+            Approve Terms → Continue
           </button>
         </div>
       </div>

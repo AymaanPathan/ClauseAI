@@ -10,38 +10,63 @@ import {
   setScreen,
 } from "../../store/slices/agreementSlice";
 
-const PLACEHOLDERS: Record<AgreementType, string> = {
+const PLACEHOLDERS: Record<string, string> = {
   freelance:
-    "e.g. I will design a logo for John by March 15th. He will pay $200 when delivered.",
+    "e.g. I'm hiring Bob to design a logo by March 15. I'll pay $200 when he delivers the final files.",
   rental:
-    "e.g. Sarah is renting my apartment for 6 months starting May 1st. Deposit is $1200.",
+    "e.g. I'm renting a camera from Sarah for 7 days. I'll leave a $300 deposit, returned when I bring it back undamaged.",
+  trade:
+    "e.g. Ahmed will buy 100kg of wheat from farmer Maria for $180. Payment released when delivery is confirmed.",
   bet: "e.g. I bet $100 that Bitcoin is above $100k by December 31. My friend Dave takes the other side.",
 };
 
-const TYPE_LABELS: Record<AgreementType, string> = {
-  freelance: "💼 Freelance Work",
-  rental: "🏠 Rental Deposit",
-  bet: "🎲 Simple Bet",
+const TYPE_LABELS: Record<
+  string,
+  { label: string; payerRole: string; receiverRole: string }
+> = {
+  freelance: {
+    label: "💼 Freelance Work",
+    payerRole: "Client (Payer)",
+    receiverRole: "Freelancer (Receiver)",
+  },
+  rental: {
+    label: "🏠 Rental / Equipment",
+    payerRole: "Renter (Payer)",
+    receiverRole: "Owner (Receiver)",
+  },
+  trade: {
+    label: "🌾 Trade & Commerce",
+    payerRole: "Buyer (Payer)",
+    receiverRole: "Seller (Receiver)",
+  },
+  bet: {
+    label: "🎲 Simple Bet",
+    payerRole: "Bettor A (Payer)",
+    receiverRole: "Bettor B (Receiver)",
+  },
 };
 
 export default function ScreenDescribe() {
   const dispatch = useAppDispatch();
   const { agreementType, parseLoading } = useAppSelector((s) => s.agreement);
 
+  const typeMeta = agreementType ? TYPE_LABELS[agreementType] : null;
+
   const [text, setText] = useState(
-    "Bob will design a logo for Aymaan by March 15. He pays $200 on delivery.",
+    "Ahmed is hiring Bob to design a logo by March 15. He pays $200 on delivery.",
   );
-  const [partyA, setPartyA] = useState("Aymaan");
-  const [partyB, setPartyB] = useState("Bob");
+  const [payer, setPayer] = useState("Ahmed");
+  const [receiver, setReceiver] = useState("Bob");
   const [arbitrator, setArbitrator] = useState("TBD");
   const [focused, setFocused] = useState<string | null>(null);
 
-  const canParse = text.trim().length > 10 && partyA.trim() && partyB.trim();
+  const canParse = text.trim().length > 10 && payer.trim() && receiver.trim();
 
   async function handleParse() {
     if (!canParse || !agreementType) return;
     dispatch(setRawText(text));
-    dispatch(setPartyNames({ partyA, partyB, arbitrator }));
+    // Map payer→partyA (funds locker), receiver→partyB (funds recipient)
+    dispatch(setPartyNames({ partyA: payer, partyB: receiver, arbitrator }));
     const result = await dispatch(
       parseAgreementThunk({ type: agreementType, text }),
     );
@@ -111,7 +136,7 @@ export default function ScreenDescribe() {
             >
               Step 2 of 6
             </span>
-            {agreementType && agreementType in TYPE_LABELS && (
+            {typeMeta && (
               <span
                 style={{
                   fontSize: 12,
@@ -122,7 +147,7 @@ export default function ScreenDescribe() {
                   color: "var(--grey-1)",
                 }}
               >
-                {TYPE_LABELS[agreementType as AgreementType]}
+                {typeMeta.label}
               </span>
             )}
           </div>
@@ -137,11 +162,44 @@ export default function ScreenDescribe() {
             Describe your agreement
           </h2>
           <p style={{ color: "var(--grey-1)", fontSize: 14 }}>
-            Fill in the party names, then describe the deal in plain English.
+            Name the payer and receiver, then describe the deal in plain
+            English.
           </p>
         </div>
 
-        {/* Party names */}
+        {/* Role explanation banner */}
+        <div
+          className="animate-fade-up delay-1"
+          style={{
+            background: "var(--black-2)",
+            border: "1px solid var(--black-4)",
+            borderRadius: "var(--radius-sm)",
+            padding: "12px 16px",
+            marginBottom: 20,
+            display: "flex",
+            gap: 20,
+            fontSize: 12,
+            color: "var(--grey-1)",
+            fontFamily: "var(--font-mono)",
+          }}
+        >
+          <span>
+            <span style={{ color: "var(--yellow)" }}>💸 Payer</span> — locks
+            funds in escrow
+          </span>
+          <span style={{ color: "var(--grey-3)" }}>→</span>
+          <span>
+            <span style={{ color: "#22c55e" }}>🎯 Receiver</span> — gets paid
+            when conditions met
+          </span>
+          <span style={{ color: "var(--grey-3)" }}>→</span>
+          <span>
+            <span style={{ color: "#60a5fa" }}>⚖️ Arbitrator</span> — resolves
+            disputes
+          </span>
+        </div>
+
+        {/* Party names — 2 columns for payer/receiver */}
         <div
           className="animate-fade-up delay-1"
           style={{
@@ -156,46 +214,66 @@ export default function ScreenDescribe() {
               style={{
                 fontSize: 11,
                 fontFamily: "var(--font-mono)",
-                color: "var(--grey-1)",
+                color: "var(--yellow)",
                 textTransform: "uppercase",
                 letterSpacing: "0.1em",
                 display: "block",
                 marginBottom: 6,
               }}
             >
-              Your Name / Wallet
+              💸 {typeMeta?.payerRole ?? "Payer"}
             </label>
             <input
-              value={partyA}
-              onChange={(e) => setPartyA(e.target.value)}
-              onFocus={() => setFocused("partyA")}
+              value={payer}
+              onChange={(e) => setPayer(e.target.value)}
+              onFocus={() => setFocused("payer")}
               onBlur={() => setFocused(null)}
-              placeholder="e.g. Alex"
-              style={inputStyle("partyA")}
+              placeholder="e.g. Ahmed"
+              style={inputStyle("payer")}
             />
+            <div
+              style={{
+                fontSize: 10,
+                color: "var(--grey-2)",
+                fontFamily: "var(--font-mono)",
+                marginTop: 4,
+              }}
+            >
+              Locks funds in escrow
+            </div>
           </div>
           <div>
             <label
               style={{
                 fontSize: 11,
                 fontFamily: "var(--font-mono)",
-                color: "var(--grey-1)",
+                color: "#22c55e",
                 textTransform: "uppercase",
                 letterSpacing: "0.1em",
                 display: "block",
                 marginBottom: 6,
               }}
             >
-              Other Party Name
+              🎯 {typeMeta?.receiverRole ?? "Receiver"}
             </label>
             <input
-              value={partyB}
-              onChange={(e) => setPartyB(e.target.value)}
-              onFocus={() => setFocused("partyB")}
+              value={receiver}
+              onChange={(e) => setReceiver(e.target.value)}
+              onFocus={() => setFocused("receiver")}
               onBlur={() => setFocused(null)}
-              placeholder="e.g. John"
-              style={inputStyle("partyB")}
+              placeholder="e.g. Bob"
+              style={inputStyle("receiver")}
             />
+            <div
+              style={{
+                fontSize: 10,
+                color: "var(--grey-2)",
+                fontFamily: "var(--font-mono)",
+                marginTop: 4,
+              }}
+            >
+              Receives payment on completion
+            </div>
           </div>
         </div>
 
@@ -204,16 +282,16 @@ export default function ScreenDescribe() {
             style={{
               fontSize: 11,
               fontFamily: "var(--font-mono)",
-              color: "var(--grey-1)",
+              color: "#60a5fa",
               textTransform: "uppercase",
               letterSpacing: "0.1em",
               display: "block",
               marginBottom: 6,
             }}
           >
-            Arbitrator{" "}
+            ⚖️ Arbitrator{" "}
             <span style={{ color: "var(--grey-2)" }}>
-              (optional — can set later)
+              (optional — can be set later)
             </span>
           </label>
           <input
@@ -248,7 +326,7 @@ export default function ScreenDescribe() {
             onBlur={() => setFocused(null)}
             placeholder={
               agreementType
-                ? PLACEHOLDERS[agreementType as AgreementType]
+                ? (PLACEHOLDERS[agreementType] ?? "Describe your agreement...")
                 : "Describe your agreement..."
             }
             rows={5}
@@ -261,10 +339,19 @@ export default function ScreenDescribe() {
           <div
             style={{
               display: "flex",
-              justifyContent: "flex-end",
+              justifyContent: "space-between",
               marginTop: 6,
             }}
           >
+            <span
+              style={{
+                fontSize: 11,
+                fontFamily: "var(--font-mono)",
+                color: "var(--grey-2)",
+              }}
+            >
+              Include: amount, deadline, and what triggers payment
+            </span>
             <span
               style={{
                 fontSize: 11,
@@ -328,7 +415,7 @@ export default function ScreenDescribe() {
               Parsing with AI...
             </>
           ) : (
-            "Parse Agreement →"
+            "Parse Agreement with AI →"
           )}
         </button>
 
@@ -342,7 +429,7 @@ export default function ScreenDescribe() {
               fontFamily: "var(--font-mono)",
             }}
           >
-            Fill in both party names and describe the agreement to continue
+            Fill in both payer and receiver names to continue
           </p>
         )}
       </div>

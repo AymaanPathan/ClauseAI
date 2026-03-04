@@ -1,6 +1,5 @@
 import { Router, Request, Response } from "express";
 import { AI_CONFIG } from "../lib/ai-config";
-
 import {
   getSystemPrompt,
   AgreementType,
@@ -10,7 +9,6 @@ import { getGroqClient } from "../lib/groq-client";
 
 const router = Router();
 
-// ── GET /api/parse — health check ────────────────────────────
 router.get("/", (_req: Request, res: Response) => {
   res.json({
     status: "ok",
@@ -21,7 +19,6 @@ router.get("/", (_req: Request, res: Response) => {
   });
 });
 
-// ── POST /api/parse ───────────────────────────────────────────
 router.post("/", async (req: Request, res: Response) => {
   const start = Date.now();
 
@@ -30,11 +27,10 @@ router.post("/", async (req: Request, res: Response) => {
     text: string;
   };
 
-  // 1. Validate
-  if (!type || !["freelance", "rental", "bet"].includes(type)) {
+  if (!type || !["freelance", "rental", "trade", "bet"].includes(type)) {
     return res.status(400).json({
       success: false,
-      error: 'type must be "freelance", "rental", or "bet"',
+      error: 'type must be "freelance", "rental", "trade", or "bet"',
     });
   }
 
@@ -45,7 +41,6 @@ router.post("/", async (req: Request, res: Response) => {
     });
   }
 
-  // 2. API Key check
   const apiKey = process.env[AI_CONFIG.apiKeyEnvVar];
   if (!apiKey) {
     return res.status(500).json({
@@ -54,7 +49,6 @@ router.post("/", async (req: Request, res: Response) => {
     });
   }
 
-  // 3. Call Groq
   let rawText = "";
 
   try {
@@ -76,7 +70,6 @@ router.post("/", async (req: Request, res: Response) => {
     return res.status(502).json({ success: false, error: msg });
   }
 
-  // 4. Parse JSON safely
   let parsed: ParsedAgreement;
 
   try {
@@ -94,7 +87,6 @@ router.post("/", async (req: Request, res: Response) => {
     });
   }
 
-  // 5. Response
   return res.json({
     success: true,
     data: parsed,

@@ -1,24 +1,21 @@
 "use client";
 // ============================================================
-// ScreenShareLink.tsx — PRODUCTION UPDATE
+// ScreenShareLink.tsx — CONDITIONAL ESCROW MODEL
 // Key changes:
-//   • Saves editedTerms as termsSnapshot in presence (so Party B can read them)
-//   • Uses SSE subscription for real-time Party B detection
-//   • Falls back to polling if SSE unavailable
+//   • Clarifies that receiver (Party B) does NOT need to deposit
+//   • Language updated to Payer/Receiver roles
+//   • Still uses SSE for real-time connection detection
 // ============================================================
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
   setScreen,
   generateShareLink,
   registerPresenceThunk,
-  pollPresenceThunk,
   applyPresenceUpdate,
 } from "@/store/slices/agreementSlice";
 import { hashTerms, subscribePresence } from "../../api/PresenceaApi";
-
-const POLL_INTERVAL_MS = 3_000;
 
 export default function ScreenShareLink() {
   const dispatch = useAppDispatch();
@@ -39,12 +36,14 @@ export default function ScreenShareLink() {
   );
   const unsubscribeRef = useRef<(() => void) | null>(null);
 
+  const receiverName = editedTerms?.partyB || "the receiver";
+
   // ── Generate share link on mount ─────────────────────────────
   useEffect(() => {
     if (!shareLink) dispatch(generateShareLink());
   }, []);
 
-  // ── Register Party A's presence (with terms snapshot) ────────
+  // ── Register Payer's presence (with terms snapshot) ──────────
   useEffect(() => {
     if (!agreementId || !walletAddress || presenceRegistered || isPartyB)
       return;
@@ -57,7 +56,6 @@ export default function ScreenShareLink() {
         role: "partyA",
         address: walletAddress,
         termsHash,
-        // ★ KEY: Save terms so Party B can read them when they open the link
         termsSnapshot: editedTerms
           ? (editedTerms as unknown as Record<string, unknown>)
           : undefined,
@@ -76,11 +74,10 @@ export default function ScreenShareLink() {
     dispatch,
   ]);
 
-  // ── Subscribe to SSE for real-time Party B detection ─────────
+  // ── SSE subscription ──────────────────────────────────────────
   useEffect(() => {
     if (!agreementId || counterpartyConnected) return;
 
-    // Unsubscribe previous if any
     unsubscribeRef.current?.();
 
     const unsubscribe = subscribePresence(
@@ -88,19 +85,15 @@ export default function ScreenShareLink() {
       (presence) => {
         dispatch(applyPresenceUpdate(presence));
       },
-      () => {
-        // SSE error: fall back to polling (handled inside subscribePresence)
-      },
+      () => {},
     );
 
     unsubscribeRef.current = unsubscribe;
-
     return () => {
       unsubscribe();
     };
   }, [agreementId, counterpartyConnected, dispatch]);
 
-  // ── Stop SSE once counterparty connected ─────────────────────
   useEffect(() => {
     if (counterpartyConnected) {
       unsubscribeRef.current?.();
@@ -162,11 +155,14 @@ export default function ScreenShareLink() {
               marginBottom: 8,
             }}
           >
-            Share with {editedTerms?.partyB || "the other party"}
+            Invite {receiverName}
           </h2>
-          <p style={{ color: "var(--grey-1)", fontSize: 14 }}>
-            Send this link to {editedTerms?.partyB || "them"}. They'll review
-            the terms and connect their wallet. This page updates in real-time.
+          <p style={{ color: "var(--grey-1)", fontSize: 14, lineHeight: 1.7 }}>
+            Send this link to{" "}
+            <strong style={{ color: "#22c55e" }}>{receiverName}</strong>.
+            They'll review the escrow terms and connect their wallet.{" "}
+            <strong>They don't need to deposit anything</strong> — only you lock
+            funds as the payer.
           </p>
         </div>
 
@@ -208,7 +204,7 @@ export default function ScreenShareLink() {
                 color: "var(--grey-1)",
               }}
             >
-              Agreement ID
+              Escrow ID
             </span>
             <span
               style={{
@@ -271,6 +267,57 @@ export default function ScreenShareLink() {
           </button>
         </div>
 
+        {/* Role breakdown */}
+        <div
+          className="animate-fade-up delay-2"
+          style={{
+            background: "var(--black-2)",
+            border: "1px solid var(--black-4)",
+            borderRadius: 12,
+            padding: "14px 16px",
+            marginBottom: 20,
+          }}
+        >
+          <div
+            style={{
+              fontSize: 11,
+              fontFamily: "var(--font-mono)",
+              color: "var(--grey-1)",
+              textTransform: "uppercase",
+              letterSpacing: "0.1em",
+              marginBottom: 10,
+            }}
+          >
+            Who does what
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", gap: 10, fontSize: 13 }}>
+              <span style={{ color: "var(--yellow)", flexShrink: 0 }}>
+                💸 You (Payer)
+              </span>
+              <span style={{ color: "var(--grey-1)" }}>
+                → Lock funds in escrow
+              </span>
+            </div>
+            <div style={{ display: "flex", gap: 10, fontSize: 13 }}>
+              <span style={{ color: "#22c55e", flexShrink: 0 }}>
+                🎯 {receiverName}
+              </span>
+              <span style={{ color: "var(--grey-1)" }}>
+                → Connect wallet, review terms
+              </span>
+            </div>
+            <div style={{ display: "flex", gap: 10, fontSize: 13 }}>
+              <span style={{ color: "#60a5fa", flexShrink: 0 }}>
+                ⚖️ Arbitrator
+              </span>
+              <span style={{ color: "var(--grey-1)" }}>
+                → Resolves disputes if needed
+              </span>
+            </div>
+          </div>
+        </div>
+
         {/* Status panels */}
         <div
           className="animate-fade-up delay-3"
@@ -281,51 +328,24 @@ export default function ScreenShareLink() {
             marginBottom: 28,
           }}
         >
-          {/* Party A */}
           <StatusCard
             connected={presenceRegistered}
-            activeLabel="✅ You're registered (Party A)"
+            activeLabel="✅ You're registered (Payer)"
             waitingLabel="⏳ Registering..."
             address={walletAddress}
+            roleColor="var(--yellow)"
             showPulse={false}
           />
-
-          {/* Party B */}
           <StatusCard
             connected={counterpartyConnected}
-            activeLabel={`✅ ${editedTerms?.partyB || "Counterparty"} connected`}
-            waitingLabel={`Waiting for ${editedTerms?.partyB || "counterparty"}...`}
+            activeLabel={`✅ ${receiverName} connected`}
+            waitingLabel={`Waiting for ${receiverName} to join...`}
             address={counterpartyConnected ? counterpartyWallet : null}
+            roleColor="#22c55e"
             showPulse={!counterpartyConnected}
-            waitingSubtext={`Share the link above — live updates via SSE`}
+            waitingSubtext="Share the link above — live updates via SSE"
           />
         </div>
-
-        {/* What Party B sees info box */}
-        {presenceRegistered && !counterpartyConnected && (
-          <div
-            className="animate-fade-up"
-            style={{
-              background: "var(--black-2)",
-              border: "1px solid var(--black-4)",
-              borderRadius: 10,
-              padding: "14px 16px",
-              marginBottom: 20,
-              display: "flex",
-              gap: 10,
-              fontSize: 12,
-              color: "var(--grey-1)",
-              lineHeight: 1.7,
-            }}
-          >
-            <span>💡</span>
-            <span>
-              When {editedTerms?.partyB || "they"} open the link, they'll see
-              the agreement terms and be asked to connect their wallet. The page
-              will update here automatically when they join.
-            </span>
-          </div>
-        )}
 
         {/* Proceed button */}
         {counterpartyConnected ? (
@@ -344,7 +364,7 @@ export default function ScreenShareLink() {
               animation: "fadeUp 0.4s ease",
             }}
           >
-            Both Connected → Lock Funds →
+            {receiverName} Connected → Lock Funds →
           </button>
         ) : (
           <div
@@ -366,7 +386,7 @@ export default function ScreenShareLink() {
             }}
           >
             <LivePulse />
-            Waiting for counterparty to join...
+            Waiting for {receiverName} to connect...
           </div>
         )}
 
@@ -380,21 +400,20 @@ export default function ScreenShareLink() {
             lineHeight: 1.6,
           }}
         >
-          When {editedTerms?.partyB || "they"} open the link and connect their
-          wallet, this page updates automatically.
+          When {receiverName} opens the link and connects their wallet, this
+          page updates automatically.
         </p>
       </div>
     </div>
   );
 }
 
-// ── Sub-components ────────────────────────────────────────────
-
 function StatusCard({
   connected,
   activeLabel,
   waitingLabel,
   address,
+  roleColor,
   showPulse,
   waitingSubtext,
 }: {
@@ -402,6 +421,7 @@ function StatusCard({
   activeLabel: string;
   waitingLabel: string;
   address: string | null;
+  roleColor: string;
   showPulse: boolean;
   waitingSubtext?: string;
 }) {
@@ -409,7 +429,7 @@ function StatusCard({
     <div
       style={{
         background: "var(--black-2)",
-        border: `1px solid ${connected ? "#22c55e40" : "var(--black-4)"}`,
+        border: `1px solid ${connected ? `${roleColor}40` : "var(--black-4)"}`,
         borderRadius: "var(--radius-sm)",
         padding: "14px 16px",
         display: "flex",
@@ -422,7 +442,7 @@ function StatusCard({
           width: 10,
           height: 10,
           borderRadius: "50%",
-          background: connected ? "#22c55e" : "var(--grey-3)",
+          background: connected ? roleColor : "var(--grey-3)",
           display: "inline-block",
           flexShrink: 0,
           animation:
@@ -436,7 +456,7 @@ function StatusCard({
           style={{
             fontSize: 12,
             fontWeight: 600,
-            color: connected ? "#22c55e" : "var(--grey-1)",
+            color: connected ? roleColor : "var(--grey-1)",
           }}
         >
           {connected ? activeLabel : waitingLabel}

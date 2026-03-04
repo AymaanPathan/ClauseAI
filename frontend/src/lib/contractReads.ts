@@ -1,7 +1,13 @@
 // ============================================================
-// lib/contractReads.ts
+// lib/contractReads.ts — CONDITIONAL ESCROW v2
 // All READ-ONLY contract calls via Stacks API.
 // These do NOT require wallet signing.
+//
+// Key changes from v1:
+//   • OnChainAgreement reflects new map shape:
+//     - deposited (bool) replaces partyADeposited / partyBDeposited
+//     - amount replaces amountPerParty
+//     - removed partyAAmount, partyBAmount
 // ============================================================
 
 import {
@@ -18,19 +24,17 @@ import {
   ContractState,
 } from "./stacksConfig";
 
-// Plain network object (not a class instance anymore)
 const STACKS_NETWORK =
   NETWORK_NAME === "mainnet" ? STACKS_MAINNET : STACKS_TESTNET;
 
 // ── Parsed agreement from chain ───────────────────────────────
 export interface OnChainAgreement {
   state: ContractState;
-  partyA: string;
-  partyB: string;
+  partyA: string; // Payer
+  partyB: string; // Receiver
   arbitrator: string;
-  amountPerParty: bigint;
-  partyADeposited: boolean;
-  partyBDeposited: boolean;
+  amount: bigint; // Amount payer locked (or will lock)
+  deposited: boolean; // Has payer deposited?
   totalDeposited: bigint;
   deadlineBlock: bigint;
   disputeBlock: bigint;
@@ -68,9 +72,8 @@ export async function getAgreement(
       partyA: v["party-a"].value,
       partyB: v["party-b"].value,
       arbitrator: v["arbitrator"].value,
-      amountPerParty: BigInt(v["amount-per-party"].value),
-      partyADeposited: v["party-a-deposited"].value === true,
-      partyBDeposited: v["party-b-deposited"].value === true,
+      amount: BigInt(v["amount"].value),
+      deposited: v["deposited"].value === true,
       totalDeposited: BigInt(v["total-deposited"].value),
       deadlineBlock: BigInt(v["deadline-block"].value),
       disputeBlock: BigInt(v["dispute-block"].value),
@@ -129,10 +132,23 @@ export async function isTimedOut(agreementId: string): Promise<boolean> {
   }
 }
 
+// ── is-arb-timed-out ─────────────────────────────────────────
+export async function isArbTimedOut(agreementId: string): Promise<boolean> {
+  try {
+    const result = await readContract("is-arb-timed-out", [
+      stringAsciiCV(agreementId),
+    ]);
+    const json = cvToJSON(result);
+    if (json.type === "err") return false;
+    return json.value.value === true;
+  } catch {
+    return false;
+  }
+}
+
 // ── Fetch current Stacks block height ─────────────────────────
 export async function getCurrentBlockHeight(): Promise<number> {
   try {
-    // STACKS_NETWORK is now a plain object with client.baseUrl
     const baseUrl = STACKS_NETWORK.client.baseUrl;
     const res = await fetch(`${baseUrl}/v2/info`);
     const data = await res.json();

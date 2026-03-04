@@ -1,14 +1,12 @@
 // ============================================================
-// lib/presenceApi.ts — PRODUCTION UPDATE
-// Adds SSE subscription on top of HTTP poll fallback.
-// NEXT_PUBLIC_BACKEND_URL must point to your backend.
+// lib/presenceApi.ts
 // ============================================================
 
 import axiosInstance from "@/lib/axiosSetup";
 
 export interface PresenceState {
-  partyA: string | null;
-  partyB: string | null;
+  partyA: string | null; // Payer address
+  partyB: string | null; // Receiver address
   partyAJoinedAt: number | null;
   partyBJoinedAt: number | null;
   termsHash: string | null;
@@ -17,7 +15,6 @@ export interface PresenceState {
   createdAt: number | null;
 }
 
-// ── Register yourself as a party ─────────────────────────────
 export async function registerParty(
   agreementId: string,
   role: "partyA" | "partyB",
@@ -32,7 +29,6 @@ export async function registerParty(
   return data;
 }
 
-// ── Poll for current presence state (HTTP fallback) ───────────
 export async function getPresence(agreementId: string): Promise<PresenceState> {
   const { data } = await axiosInstance.get<PresenceState>(
     `/api/agreement/${agreementId}`,
@@ -40,8 +36,6 @@ export async function getPresence(agreementId: string): Promise<PresenceState> {
   return data;
 }
 
-// ── Subscribe via SSE for real-time updates ───────────────────
-// Returns an unsubscribe function. Falls back to polling on error.
 export function subscribePresence(
   agreementId: string,
   onUpdate: (state: PresenceState) => void,
@@ -90,7 +84,6 @@ export function subscribePresence(
       try {
         const state = await getPresence(agreementId);
         onUpdate(state);
-        // If SSE becomes available again, switch back
         if (typeof EventSource !== "undefined" && !es) {
           clearInterval(pollFallback!);
           pollFallback = null;
@@ -102,14 +95,12 @@ export function subscribePresence(
     }, 3_000);
   }
 
-  // Start with SSE, fall back to polling if unavailable
   if (typeof EventSource !== "undefined") {
     startSSE();
   } else {
     startPollingFallback();
   }
 
-  // Return unsubscribe
   return () => {
     closed = true;
     es?.close();
@@ -117,12 +108,10 @@ export function subscribePresence(
   };
 }
 
-// ── Delete agreement presence (cleanup) ──────────────────────
 export async function deletePresence(agreementId: string): Promise<void> {
   await axiosInstance.delete(`/api/agreement/${agreementId}`);
 }
 
-// ── Simple hash of terms for verification ────────────────────
 export function hashTerms(terms: object): string {
   const str = JSON.stringify(terms, Object.keys(terms).sort());
   let hash = 0;

@@ -1,3 +1,19 @@
+// ============================================================
+// store/slices/agreementSlice.ts — MILESTONE ESCROW v3
+//
+// New state:
+//   • milestones: OnChainMilestone[] — synced from chain
+//   • milestoneInputs: MilestoneInput[] — user-defined before deploy
+//   • txMilestone: Record<number, TxState> — per-milestone tx tracking
+//
+// New thunks:
+//   • completeMilestoneThunk(id, index)
+//   • disputeMilestoneThunk(id, index)
+//   • triggerMilestoneTimeoutThunk(id, index)
+//   • triggerArbTimeoutThunk(id, index)  (now takes index)
+//   • pollAgreementThunk — now also fetches all milestones
+// ============================================================
+
 import {
   createSlice,
   createAsyncThunk,
@@ -8,21 +24,26 @@ import { parseAgreement, ParsedAgreement, AgreementType } from "@/api/parseApi";
 import {
   callCreateAgreement,
   callDeposit,
-  callComplete,
-  callDispute,
-  callTriggerTimeout,
+  callCompleteMilestone,
+  callDisputeMilestone,
+  callTriggerMilestoneTimeout,
+  callTriggerArbTimeout,
+  MilestoneInput,
+} from "@/lib/contractCalls";
+import {
   getAgreement,
+  getAllMilestones,
   getCurrentBlockHeight,
-  CONTRACT_STATE,
+  OnChainMilestone,
   OnChainAgreement,
-} from "@/api/stacksApi";
+} from "@/lib/contractReads";
 import {
   connectHiroWallet,
   disconnectHiroWallet,
   getConnectedUser,
   isWalletConnected,
 } from "@/lib/hiroWallet";
-import { explorerTxUrl } from "@/lib/stacksConfig";
+import { CONTRACT_STATE, explorerTxUrl } from "@/lib/stacksConfig";
 import {
   registerParty,
   getPresence,
@@ -85,15 +106,26 @@ export interface AgreementState {
   parseLoading: boolean;
   parseError: string | null;
   parseMeta: { provider: string; model: string; latency_ms: number } | null;
+
   walletConnected: boolean;
   walletAddress: string | null;
   counterpartyWallet: string | null;
   counterpartyConnected: boolean;
   isPartyB: boolean;
+
   agreementId: string | null;
   shareLink: string | null;
   fundState: FundState;
   amountLocked: string | null;
+
+  // ── Milestone state ──────────────────────────────────────────
+  /** User-defined milestone inputs before deployment */
+  milestoneInputs: MilestoneInput[];
+  /** Live on-chain milestone data (fetched during polling) */
+  milestones: OnChainMilestone[];
+  /** Per-milestone tx states keyed by milestone index */
+  txMilestone: Record<number, TxState>;
+
   deadlineBlock: number | null;
   disputeOpenedBy: string | null;
   myDepositDone: boolean;
@@ -102,11 +134,9 @@ export interface AgreementState {
   pollingActive: boolean;
   presenceRegistered: boolean;
   presenceError: string | null;
+
   txCreate: TxState;
   txDeposit: TxState;
-  txComplete: TxState;
-  txDispute: TxState;
-  txTimeout: TxState;
 }
 
 const initialState: AgreementState = {
@@ -130,6 +160,11 @@ const initialState: AgreementState = {
   shareLink: null,
   fundState: "idle",
   amountLocked: null,
+
+  milestoneInputs: [],
+  milestones: [],
+  txMilestone: {},
+
   deadlineBlock: null,
   disputeOpenedBy: null,
   myDepositDone: false,
@@ -138,11 +173,9 @@ const initialState: AgreementState = {
   pollingActive: false,
   presenceRegistered: false,
   presenceError: null,
+
   txCreate: emptyTx(),
   txDeposit: emptyTx(),
-  txComplete: emptyTx(),
-  txDispute: emptyTx(),
-  txTimeout: emptyTx(),
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -263,6 +296,7 @@ export const rehydratePartyBThunk = createAsyncThunk(
   },
 );
 
+// ── create-agreement (v3: includes milestones) ────────────────
 export const createAgreementThunk = createAsyncThunk(
   "agreement/createOnChain",
   async (
@@ -272,6 +306,7 @@ export const createAgreementThunk = createAsyncThunk(
       partyB: string;
       arbitrator: string;
       amountUsd: number;
+      milestones: MilestoneInput[];
     },
     { rejectWithValue },
   ) => {
@@ -282,6 +317,7 @@ export const createAgreementThunk = createAsyncThunk(
         payload.partyB,
         payload.arbitrator,
         payload.amountUsd,
+        payload.milestones,
       );
       return { txId, txUrl: explorerTxUrl(txId) };
     } catch (err: unknown) {
@@ -313,48 +349,107 @@ export const depositThunk = createAsyncThunk(
   },
 );
 
-export const completeThunk = createAsyncThunk(
-  "agreement/complete",
-  async (agreementId: string, { rejectWithValue }) => {
+// ── complete-milestone ────────────────────────────────────────
+export const completeMilestoneThunk = createAsyncThunk(
+  "agreement/completeMilestone",
+  async (
+    payload: { agreementId: string; milestoneIndex: number },
+    { rejectWithValue },
+  ) => {
     try {
-      const txId = await callComplete(agreementId);
-      return { txId, txUrl: explorerTxUrl(txId) };
+      const txId = await callCompleteMilestone(
+        payload.agreementId,
+        payload.milestoneIndex,
+      );
+      return {
+        txId,
+        txUrl: explorerTxUrl(txId),
+        milestoneIndex: payload.milestoneIndex,
+      };
     } catch (err: unknown) {
       return rejectWithValue(
-        err instanceof Error ? err.message : "Complete failed",
+        err instanceof Error ? err.message : "Complete milestone failed",
       );
     }
   },
 );
 
-export const disputeThunk = createAsyncThunk(
-  "agreement/dispute",
-  async (agreementId: string, { rejectWithValue }) => {
+// ── dispute-milestone ─────────────────────────────────────────
+export const disputeMilestoneThunk = createAsyncThunk(
+  "agreement/disputeMilestone",
+  async (
+    payload: { agreementId: string; milestoneIndex: number },
+    { rejectWithValue },
+  ) => {
     try {
-      const txId = await callDispute(agreementId);
-      return { txId, txUrl: explorerTxUrl(txId) };
+      const txId = await callDisputeMilestone(
+        payload.agreementId,
+        payload.milestoneIndex,
+      );
+      return {
+        txId,
+        txUrl: explorerTxUrl(txId),
+        milestoneIndex: payload.milestoneIndex,
+      };
     } catch (err: unknown) {
       return rejectWithValue(
-        err instanceof Error ? err.message : "Dispute failed",
+        err instanceof Error ? err.message : "Dispute milestone failed",
       );
     }
   },
 );
 
-export const timeoutThunk = createAsyncThunk(
-  "agreement/timeout",
-  async (agreementId: string, { rejectWithValue }) => {
+// ── trigger-milestone-timeout ─────────────────────────────────
+export const triggerMilestoneTimeoutThunk = createAsyncThunk(
+  "agreement/triggerMilestoneTimeout",
+  async (
+    payload: { agreementId: string; milestoneIndex: number },
+    { rejectWithValue },
+  ) => {
     try {
-      const txId = await callTriggerTimeout(agreementId);
-      return { txId, txUrl: explorerTxUrl(txId) };
+      const txId = await callTriggerMilestoneTimeout(
+        payload.agreementId,
+        payload.milestoneIndex,
+      );
+      return {
+        txId,
+        txUrl: explorerTxUrl(txId),
+        milestoneIndex: payload.milestoneIndex,
+      };
     } catch (err: unknown) {
       return rejectWithValue(
-        err instanceof Error ? err.message : "Timeout failed",
+        err instanceof Error ? err.message : "Milestone timeout failed",
       );
     }
   },
 );
 
+// ── trigger-arb-timeout (per milestone) ──────────────────────
+export const triggerArbTimeoutThunk = createAsyncThunk(
+  "agreement/triggerArbTimeout",
+  async (
+    payload: { agreementId: string; milestoneIndex: number },
+    { rejectWithValue },
+  ) => {
+    try {
+      const txId = await callTriggerArbTimeout(
+        payload.agreementId,
+        payload.milestoneIndex,
+      );
+      return {
+        txId,
+        txUrl: explorerTxUrl(txId),
+        milestoneIndex: payload.milestoneIndex,
+      };
+    } catch (err: unknown) {
+      return rejectWithValue(
+        err instanceof Error ? err.message : "Arb timeout failed",
+      );
+    }
+  },
+);
+
+// ── pollAgreementThunk — now also fetches all milestones ──────
 export const pollAgreementThunk = createAsyncThunk(
   "agreement/poll",
   async (agreementId: string, { rejectWithValue }) => {
@@ -363,7 +458,15 @@ export const pollAgreementThunk = createAsyncThunk(
         getAgreement(agreementId),
         getCurrentBlockHeight(),
       ]);
-      return { onChain, blockHeight };
+      // Fetch milestones if we know the count
+      let milestones: OnChainMilestone[] = [];
+      if (onChain && onChain.milestoneCount > 0) {
+        milestones = await getAllMilestones(
+          agreementId,
+          onChain.milestoneCount,
+        );
+      }
+      return { onChain, blockHeight, milestones };
     } catch (err: unknown) {
       return rejectWithValue(
         err instanceof Error ? err.message : "Poll failed",
@@ -416,6 +519,18 @@ const agreementSlice = createSlice({
     approveTerms(state) {
       state.parsedTerms = state.editedTerms;
     },
+
+    // ── Milestone inputs (set during lock-funds screen) ───────
+    setMilestoneInputs(state, action: PayloadAction<MilestoneInput[]>) {
+      state.milestoneInputs = action.payload;
+      if (typeof window !== "undefined") {
+        localStorage.setItem(
+          "clauseai_milestones",
+          JSON.stringify(action.payload),
+        );
+      }
+    },
+
     setWalletAddress(state, action: PayloadAction<string>) {
       state.walletConnected = true;
       state.walletAddress = action.payload;
@@ -426,7 +541,6 @@ const agreementSlice = createSlice({
       state.walletAddress = null;
     },
 
-    // ── FIX: also persist editedTerms so rehydrateSession can restore them ──
     setAsPartyB(
       state,
       action: PayloadAction<{ agreementId: string; address: string }>,
@@ -447,7 +561,6 @@ const agreementSlice = createSlice({
           "clauseai_agreement_id",
           action.payload.agreementId,
         );
-        // Persist terms so dashboard can show condition/deadline/arbitrator
         if (state.editedTerms) {
           localStorage.setItem(
             "clauseai_terms",
@@ -462,7 +575,6 @@ const agreementSlice = createSlice({
       state.counterpartyConnected = true;
     },
 
-    // ── FIX: persist terms when Party A generates share link ────────────────
     generateShareLink(state) {
       if (!state.agreementId) {
         state.agreementId = Math.random()
@@ -487,7 +599,6 @@ const agreementSlice = createSlice({
       state.shareLink = buildShareLink(action.payload);
     },
 
-    // ── FIX: restore editedTerms from localStorage ───────────────────────────
     rehydrateSession(state) {
       if (typeof window === "undefined") return;
       const address = localStorage.getItem("clauseai_wallet_address");
@@ -503,7 +614,6 @@ const agreementSlice = createSlice({
           localStorage.getItem(`clauseai_is_party_b_${agreementId}`) === "true";
         if (isPartyB) state.isPartyB = true;
       }
-      // Restore terms — this is why dashboard showed "—" for condition/deadline/arbitrator
       const termsRaw = localStorage.getItem("clauseai_terms");
       if (termsRaw) {
         try {
@@ -511,7 +621,15 @@ const agreementSlice = createSlice({
           state.editedTerms = terms;
           state.parsedTerms = terms;
         } catch {
-          // corrupted — ignore, will show "—" gracefully
+          // corrupted — ignore
+        }
+      }
+      const milestonesRaw = localStorage.getItem("clauseai_milestones");
+      if (milestonesRaw) {
+        try {
+          state.milestoneInputs = JSON.parse(milestonesRaw) as MilestoneInput[];
+        } catch {
+          // ignore
         }
       }
     },
@@ -520,7 +638,6 @@ const agreementSlice = createSlice({
       applyPresence(state, action.payload);
     },
 
-    // ── FIX: BigInt removed — all fields are plain number now ────────────────
     syncOnChainState(state, action: PayloadAction<OnChainAgreement>) {
       const data = action.payload;
       state.onChainData = data;
@@ -533,13 +650,6 @@ const agreementSlice = createSlice({
         state.fundState = "refunded";
         state.currentScreen = "timeout";
       }
-      if (data.state === CONTRACT_STATE.DISPUTED) {
-        state.fundState = "disputed";
-        state.currentScreen = "dispute";
-      }
-      // FIX: was > BigInt(0), now plain number comparison
-      if (data.deadlineBlock > 0)
-        state.deadlineBlock = Number(data.deadlineBlock);
       if (data.totalDeposited > 0) {
         const stx = Number(data.totalDeposited) / 1_000_000;
         state.amountLocked = (stx * 0.8).toFixed(2);
@@ -637,7 +747,7 @@ const agreementSlice = createSlice({
       applyPresence(state, action.payload as PresenceState);
     });
 
-    // presenceUpdated (from SSE)
+    // presenceUpdated (SSE)
     builder.addCase(presenceUpdated, (state, action) => {
       applyPresence(state, action.payload);
     });
@@ -656,7 +766,6 @@ const agreementSlice = createSlice({
           const terms = presence.termsSnapshot as unknown as ParsedAgreement;
           state.parsedTerms = terms;
           state.editedTerms = { ...terms };
-          // Persist so dashboard can rehydrate them
           if (typeof window !== "undefined") {
             localStorage.setItem("clauseai_terms", JSON.stringify(terms));
           }
@@ -747,28 +856,32 @@ const agreementSlice = createSlice({
         };
       });
 
-    // complete
+    // completeMilestone
     builder
-      .addCase(completeThunk.pending, (state) => {
-        state.txComplete = {
+      .addCase(completeMilestoneThunk.pending, (state, action) => {
+        const idx = action.meta.arg.milestoneIndex;
+        state.txMilestone[idx] = {
           status: "pending",
           txId: null,
           txUrl: null,
           error: null,
         };
       })
-      .addCase(completeThunk.fulfilled, (state, action) => {
-        state.txComplete = {
+      .addCase(completeMilestoneThunk.fulfilled, (state, action) => {
+        const idx = action.payload.milestoneIndex;
+        state.txMilestone[idx] = {
           status: "confirming",
           txId: action.payload.txId,
           txUrl: action.payload.txUrl,
           error: null,
         };
-        state.fundState = "released";
-        state.currentScreen = "complete";
+        // Optimistically update milestone status
+        const ms = state.milestones.find((m) => m.index === idx);
+        if (ms) ms.status = 2; // COMPLETE
       })
-      .addCase(completeThunk.rejected, (state, action) => {
-        state.txComplete = {
+      .addCase(completeMilestoneThunk.rejected, (state, action) => {
+        const idx = action.meta.arg.milestoneIndex;
+        state.txMilestone[idx] = {
           status: "failed",
           txId: null,
           txUrl: null,
@@ -776,28 +889,31 @@ const agreementSlice = createSlice({
         };
       });
 
-    // dispute
+    // disputeMilestone
     builder
-      .addCase(disputeThunk.pending, (state) => {
-        state.txDispute = {
+      .addCase(disputeMilestoneThunk.pending, (state, action) => {
+        const idx = action.meta.arg.milestoneIndex;
+        state.txMilestone[idx] = {
           status: "pending",
           txId: null,
           txUrl: null,
           error: null,
         };
       })
-      .addCase(disputeThunk.fulfilled, (state, action) => {
-        state.txDispute = {
+      .addCase(disputeMilestoneThunk.fulfilled, (state, action) => {
+        const idx = action.payload.milestoneIndex;
+        state.txMilestone[idx] = {
           status: "confirming",
           txId: action.payload.txId,
           txUrl: action.payload.txUrl,
           error: null,
         };
-        state.fundState = "disputed";
-        state.currentScreen = "dispute";
+        const ms = state.milestones.find((m) => m.index === idx);
+        if (ms) ms.status = 4; // DISPUTED
       })
-      .addCase(disputeThunk.rejected, (state, action) => {
-        state.txDispute = {
+      .addCase(disputeMilestoneThunk.rejected, (state, action) => {
+        const idx = action.meta.arg.milestoneIndex;
+        state.txMilestone[idx] = {
           status: "failed",
           txId: null,
           txUrl: null,
@@ -805,28 +921,31 @@ const agreementSlice = createSlice({
         };
       });
 
-    // timeout
+    // triggerMilestoneTimeout
     builder
-      .addCase(timeoutThunk.pending, (state) => {
-        state.txTimeout = {
+      .addCase(triggerMilestoneTimeoutThunk.pending, (state, action) => {
+        const idx = action.meta.arg.milestoneIndex;
+        state.txMilestone[idx] = {
           status: "pending",
           txId: null,
           txUrl: null,
           error: null,
         };
       })
-      .addCase(timeoutThunk.fulfilled, (state, action) => {
-        state.txTimeout = {
+      .addCase(triggerMilestoneTimeoutThunk.fulfilled, (state, action) => {
+        const idx = action.payload.milestoneIndex;
+        state.txMilestone[idx] = {
           status: "confirming",
           txId: action.payload.txId,
           txUrl: action.payload.txUrl,
           error: null,
         };
-        state.fundState = "refunded";
-        state.currentScreen = "timeout";
+        const ms = state.milestones.find((m) => m.index === idx);
+        if (ms) ms.status = 3; // REFUNDED
       })
-      .addCase(timeoutThunk.rejected, (state, action) => {
-        state.txTimeout = {
+      .addCase(triggerMilestoneTimeoutThunk.rejected, (state, action) => {
+        const idx = action.meta.arg.milestoneIndex;
+        state.txMilestone[idx] = {
           status: "failed",
           txId: null,
           txUrl: null,
@@ -834,10 +953,43 @@ const agreementSlice = createSlice({
         };
       });
 
-    // ── FIX: pollAgreementThunk — BigInt removed ─────────────────────────────
+    // triggerArbTimeout
+    builder
+      .addCase(triggerArbTimeoutThunk.pending, (state, action) => {
+        const idx = action.meta.arg.milestoneIndex;
+        state.txMilestone[idx] = {
+          status: "pending",
+          txId: null,
+          txUrl: null,
+          error: null,
+        };
+      })
+      .addCase(triggerArbTimeoutThunk.fulfilled, (state, action) => {
+        const idx = action.payload.milestoneIndex;
+        state.txMilestone[idx] = {
+          status: "confirming",
+          txId: action.payload.txId,
+          txUrl: action.payload.txUrl,
+          error: null,
+        };
+        const ms = state.milestones.find((m) => m.index === idx);
+        if (ms) ms.status = 3; // REFUNDED
+      })
+      .addCase(triggerArbTimeoutThunk.rejected, (state, action) => {
+        const idx = action.meta.arg.milestoneIndex;
+        state.txMilestone[idx] = {
+          status: "failed",
+          txId: null,
+          txUrl: null,
+          error: action.payload as string,
+        };
+      });
+
+    // pollAgreement — now also syncs milestones
     builder.addCase(pollAgreementThunk.fulfilled, (state, action) => {
-      const { onChain, blockHeight } = action.payload;
+      const { onChain, blockHeight, milestones } = action.payload;
       if (blockHeight) state.blockHeight = blockHeight;
+      if (milestones.length > 0) state.milestones = milestones;
       if (onChain) {
         state.onChainData = onChain;
         if (onChain.state === CONTRACT_STATE.ACTIVE) state.fundState = "locked";
@@ -855,11 +1007,10 @@ const agreementSlice = createSlice({
           state.fundState = "refunded";
           state.currentScreen = "timeout";
         }
-        if (onChain.state === CONTRACT_STATE.DISPUTED)
-          state.fundState = "disputed";
-        // FIX: was > BigInt(0) — contractReads now returns plain number
-        if (onChain.deadlineBlock > 0)
-          state.deadlineBlock = Number(onChain.deadlineBlock);
+        if (onChain.totalDeposited > 0) {
+          const stx = Number(onChain.totalDeposited) / 1_000_000;
+          state.amountLocked = (stx * 0.8).toFixed(2);
+        }
       }
     });
   },
@@ -898,6 +1049,7 @@ export const {
   setPartyNames,
   updateEditedTerms,
   approveTerms,
+  setMilestoneInputs,
   setWalletAddress,
   disconnectWallet,
   setAsPartyB,

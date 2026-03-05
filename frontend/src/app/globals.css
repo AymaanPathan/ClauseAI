@@ -1,287 +1,70 @@
-@import "tailwindcss";
-@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@300;400;500&display=swap');
-
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-/* ─── Design Tokens ───────────────────────────────────────────────── */
 :root {
-  /* Surfaces */
-  --black:   #07070A;
-  --s1:      #0C0C10;
-  --s2:      #111116;
-  --s3:      #17171E;
-  --s4:      #1E1E27;
-  --s5:      #252530;
-
-  /* White opacity scale */
-  --w100:  #F2F2F0;
-  --w70:   rgba(242,242,240,0.70);
-  --w45:   rgba(242,242,240,0.45);
-  --w25:   rgba(242,242,240,0.25);
-  --w12:   rgba(242,242,240,0.12);
-  --w07:   rgba(242,242,240,0.07);
-  --w04:   rgba(242,242,240,0.04);
-  --w02:   rgba(242,242,240,0.02);
-
-  /* Borders */
-  --border:    rgba(242,242,240,0.08);
-  --border-hi: rgba(242,242,240,0.15);
-
-  /* Semantic aliases — used across all screens */
-  --white:      var(--w100);
-  --white-dim:  var(--w70);
-  --grey-1:     var(--w45);
-  --grey-2:     var(--w25);
-  --grey-3:     var(--border);
-
-  /* Legacy surface aliases for other screens */
-  --black-2: var(--s1);
-  --black-3: var(--s2);
-  --black-4: var(--s3);
-  --black-5: var(--s4);
-
-  /* Typography */
-  --font-display: 'Instrument Serif', Georgia, serif;
-  --font-sans:    'Geist', system-ui, sans-serif;
-  --font-mono:    'Geist Mono', monospace;
-
-  /* Spacing & shape */
-  --radius:    14px;
+  --yellow: #F5C400;
+  --yellow-dim: #F5C40022;
+  --yellow-hover: #FFD700;
+  --black: #080808;
+  --black-2: #0f0f0f;
+  --black-3: #161616;
+  --black-4: #1e1e1e;
+  --black-5: #2a2a2a;
+  --white: #FAFAFA;
+  --grey-1: #888;
+  --grey-2: #555;
+  --grey-3: #333;
+  --font-display: 'Syne', sans-serif;
+  --font-mono: 'DM Mono', monospace;
+  --radius: 12px;
   --radius-sm: 8px;
-  --radius-lg: 20px;
-
-  /* Motion */
   --transition: 0.18s cubic-bezier(0.4, 0, 0.2, 1);
-  --ease-out:   cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* ─── Base ────────────────────────────────────────────────────────── */
 html { scroll-behavior: smooth; }
 
 body {
   background: var(--black);
-  color: var(--w100);
-  font-family: var(--font-sans);
+  color: var(--white);
+  font-family: var(--font-display);
   -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
   min-height: 100vh;
   overflow-x: hidden;
-  line-height: 1;
 }
 
-::selection { background: var(--w12); color: var(--w100); }
+::selection { background: var(--yellow); color: var(--black); }
 
-::-webkit-scrollbar { width: 3px; }
-::-webkit-scrollbar-track { background: var(--s1); }
-::-webkit-scrollbar-thumb { background: var(--s4); border-radius: 2px; }
-::-webkit-scrollbar-thumb:hover { background: var(--s5); }
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: var(--black-2); }
+::-webkit-scrollbar-thumb { background: var(--grey-3); border-radius: 2px; }
 
-button { font-family: var(--font-sans); cursor: pointer; }
-input, textarea, select { font-family: var(--font-sans); }
+button { font-family: var(--font-display); cursor: pointer; }
+input, textarea { font-family: var(--font-display); }
 
-/* ─── Typography helpers ─────────────────────────────────────────── */
-.display {
-  font-family: var(--font-display);
-  font-weight: 400;
-  line-height: 1.04;
-  letter-spacing: -1px;
-}
-.mono { font-family: var(--font-mono); letter-spacing: 0.02em; }
-
-/* ─── Cards ───────────────────────────────────────────────────────── */
-.card {
-  background: var(--s2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-}
-.card-hover {
-  transition: border-color 0.2s, transform 0.25s var(--ease-out), box-shadow 0.25s;
-}
-.card-hover:hover {
-  border-color: var(--border-hi);
-  transform: translateY(-3px);
-  box-shadow: 0 24px 60px rgba(0,0,0,0.55);
-}
-
-/* ─── Buttons ─────────────────────────────────────────────────────── */
-.btn-primary {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  background: var(--w100);
-  color: var(--black);
-  border: none;
-  border-radius: 99px;
-  padding: 13px 28px;
-  font-size: 14px;
-  font-weight: 600;
-  font-family: var(--font-sans);
-  cursor: pointer;
-  letter-spacing: -0.1px;
-  transition: all 0.2s var(--ease-out);
-  text-decoration: none;
-}
-.btn-primary:hover {
-  opacity: 0.88;
-  transform: translateY(-1px);
-  box-shadow: 0 8px 32px var(--w12);
-}
-
-.btn-secondary {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  background: transparent;
-  color: var(--w70);
-  border: 1px solid var(--border);
-  border-radius: 99px;
-  padding: 13px 28px;
-  font-size: 14px;
-  font-weight: 500;
-  font-family: var(--font-sans);
-  cursor: pointer;
-  transition: all 0.2s var(--ease-out);
-  text-decoration: none;
-}
-.btn-secondary:hover {
-  border-color: var(--border-hi);
-  color: var(--w100);
-  background: var(--w04);
-}
-
-/* ─── Badge / Pill ────────────────────────────────────────────────── */
-.badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  background: var(--s3);
-  border: 1px solid var(--border);
-  border-radius: 99px;
-  padding: 6px 14px;
-  font-size: 11px;
-  font-family: var(--font-mono);
-  color: var(--w45);
-  letter-spacing: 0.04em;
-}
-
-/* ─── Status dot ──────────────────────────────────────────────────── */
-.dot-live {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--w70);
-  display: inline-block;
-  flex-shrink: 0;
-  animation: blink 2.4s ease infinite;
-}
-
-/* ─── Inputs ──────────────────────────────────────────────────────── */
-.input-field {
-  background: var(--s2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 12px 16px;
-  font-size: 14px;
-  color: var(--w100);
-  outline: none;
-  width: 100%;
-  transition: border-color 0.2s, box-shadow 0.2s;
-}
-.input-field::placeholder { color: var(--w25); }
-.input-field:focus {
-  border-color: var(--border-hi);
-  box-shadow: 0 0 0 3px var(--w04);
-}
-
-/* ─── Divider ─────────────────────────────────────────────────────── */
-.divider { border: none; border-top: 1px solid var(--border); }
-
-/* ─── Section utilities ───────────────────────────────────────────── */
-.section { padding: 120px 0; }
-.section-border { border-top: 1px solid var(--border); }
-
-.section-label {
-  display: inline-block;
-  font-size: 10px;
-  font-family: var(--font-mono);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--w45);
-  border: 1px solid var(--border);
-  border-radius: 99px;
-  padding: 5px 12px;
-  margin-bottom: 20px;
-}
-
-/* ─── Marquee ─────────────────────────────────────────────────────── */
-.marquee-outer {
-  overflow: hidden;
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-  background: var(--s1);
-  padding: 16px 0;
-}
-.marquee-track {
-  display: flex;
-  gap: 52px;
-  width: max-content;
-  animation: marquee 30s linear infinite;
-}
-.marquee-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 10px;
-  font-family: var(--font-mono);
-  color: var(--w25);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-.marquee-sep {
-  width: 3px; height: 3px;
-  border-radius: 50%;
-  background: var(--w25);
-  flex-shrink: 0;
-}
-
-/* ─── Animations ──────────────────────────────────────────────────── */
 @keyframes fadeUp {
-  from { opacity: 0; transform: translateY(28px); }
+  from { opacity: 0; transform: translateY(20px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 @keyframes fadeIn {
   from { opacity: 0; }
   to   { opacity: 1; }
 }
-@keyframes blink {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0.2; }
+@keyframes pulse-yellow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245,196,0,0.3); }
+  50%       { box-shadow: 0 0 0 8px rgba(245,196,0,0); }
 }
-@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
 @keyframes shimmer {
   0%   { background-position: -200% 0; }
-  100% { background-position:  200% 0; }
-}
-@keyframes marquee {
-  from { transform: translateX(0); }
-  to   { transform: translateX(-50%); }
+  100% { background-position: 200% 0; }
 }
 
-.animate-fade-up  { animation: fadeUp 0.7s var(--ease-out) both; }
-.animate-fade-in  { animation: fadeIn 0.5s ease both; }
+.animate-fade-up { animation: fadeUp 0.5s cubic-bezier(0.4,0,0.2,1) both; }
+.animate-fade-in { animation: fadeIn 0.4s ease both; }
 
-.delay-1 { animation-delay: 0.08s; }
-.delay-2 { animation-delay: 0.16s; }
-.delay-3 { animation-delay: 0.26s; }
-.delay-4 { animation-delay: 0.36s; }
-.delay-5 { animation-delay: 0.46s; }
-.delay-6 { animation-delay: 0.58s; }
-
-/* ─── Skeleton ────────────────────────────────────────────────────── */
-.skeleton {
-  background: linear-gradient(90deg, var(--s3) 25%, var(--s4) 50%, var(--s3) 75%);
-  background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
-  border-radius: var(--radius-sm);
-}
+.delay-1 { animation-delay: 0.1s; }
+.delay-2 { animation-delay: 0.2s; }
+.delay-3 { animation-delay: 0.3s; }
+.delay-4 { animation-delay: 0.4s; }
+.delay-5 { animation-delay: 0.5s; }

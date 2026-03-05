@@ -1,14 +1,5 @@
 // ============================================================
-// lib/contractCalls.ts — CONDITIONAL ESCROW v2
-// Matches clauseai-escrow.clar v2.
-//
-// Key changes from v1:
-//   • callDeposit() — payer only, no senderAddress for party B
-//   • callComplete() — called by PAYER to release to receiver
-//   • callRefund()   — called by PAYER to reclaim funds
-//   • callResolveToReceiver() — replaces callResolveToB()
-//   • callResolveToPayer()    — replaces callResolveToA()
-//   • callCancelAgreement()   — replaces callCancelDeposit()
+// lib/contractCalls.ts — MILESTONE ESCROW v3
 // ============================================================
 
 import { openContractCall } from "@stacks/connect";
@@ -28,7 +19,17 @@ import {
 
 const NETWORK = NETWORK_NAME;
 
-// ── Helper: resolve tx promise ────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────
+
+export interface MilestoneInput {
+  /** Basis points out of 10000 (e.g. 3000 = 30%) */
+  percentage: number;
+  /** Absolute block height deadline. Pass 0 for no deadline. */
+  deadlineBlock: number;
+}
+
+// ── Helper ────────────────────────────────────────────────────
+
 function callContract(options: {
   contractAddress: string;
   contractName: string;
@@ -48,13 +49,10 @@ function callContract(options: {
   });
 }
 
-// ── STX amount helper ─────────────────────────────────────────
-// Converts USD amount to microSTX (mock rate: $0.80 per STX)
-// Replace with real price feed on mainnet
-function usdToMicroStx(usd: number): bigint {
-  return BigInt(1_000_000); // 1 STX
+function usdToMicroStx(_usd: number): bigint {
+  return BigInt(1_000_000); // 1 STX — replace with real price feed on mainnet
 }
-// ── Address validation ────────────────────────────────────────
+
 function validateAddress(address: string, label: string) {
   const expectedPrefix = NETWORK_NAME === "mainnet" ? "SP" : "ST";
   if (!address.startsWith(expectedPrefix)) {
@@ -67,23 +65,46 @@ function validateAddress(address: string, label: string) {
   }
 }
 
-// ─────────────────────────────────────────────────────────────
-// create-agreement()
-// Called once by the PAYER to register the escrow on-chain.
-// Registers payer (party-a), receiver (party-b), arbitrator, amount.
-// Does NOT transfer funds — payer deposits in a separate tx.
-// ─────────────────────────────────────────────────────────────
+function validateMilestones(milestones: MilestoneInput[]) {
+  if (milestones.length < 1 || milestones.length > 10) {
+    throw new Error("Milestones must be between 1 and 10");
+  }
+  const total = milestones.reduce((sum, m) => sum + m.percentage, 0);
+  if (total !== 10000) {
+    throw new Error(
+      `Milestone percentages must sum to 10000 (100%). Got ${total}`,
+    );
+  }
+}
+
+function padMilestones(
+  milestones: MilestoneInput[],
+): { pct: bigint; dl: bigint }[] {
+  const padded = [...milestones];
+  while (padded.length < 10) padded.push({ percentage: 0, deadlineBlock: 0 });
+  return padded.map((m) => ({
+    pct: BigInt(m.percentage),
+    dl: BigInt(m.deadlineBlock),
+  }));
+}
+
+// ── create-agreement ──────────────────────────────────────────
+
 export async function callCreateAgreement(
   agreementId: string,
-  payer: string, // party-a
-  receiver: string, // party-b
+  payer: string,
+  receiver: string,
   arbitrator: string,
   amountUsd: number,
+  milestones: MilestoneInput[],
 ): Promise<string> {
-  const microStxAmount = usdToMicroStx(amountUsd);
   validateAddress(payer, "Payer");
   validateAddress(receiver, "Receiver");
   validateAddress(arbitrator, "Arbitrator");
+  validateMilestones(milestones);
+
+  const microStxAmount = usdToMicroStx(amountUsd);
+  const p = padMilestones(milestones);
 
   return callContract({
     contractAddress: CONTRACT_ADDRESS,
@@ -95,11 +116,34 @@ export async function callCreateAgreement(
       principalCV(receiver),
       principalCV(arbitrator),
       uintCV(microStxAmount),
+      uintCV(BigInt(milestones.length)),
+      uintCV(p[0].pct),
+      uintCV(p[0].dl),
+      uintCV(p[1].pct),
+      uintCV(p[1].dl),
+      uintCV(p[2].pct),
+      uintCV(p[2].dl),
+      uintCV(p[3].pct),
+      uintCV(p[3].dl),
+      uintCV(p[4].pct),
+      uintCV(p[4].dl),
+      uintCV(p[5].pct),
+      uintCV(p[5].dl),
+      uintCV(p[6].pct),
+      uintCV(p[6].dl),
+      uintCV(p[7].pct),
+      uintCV(p[7].dl),
+      uintCV(p[8].pct),
+      uintCV(p[8].dl),
+      uintCV(p[9].pct),
+      uintCV(p[9].dl),
     ],
     postConditionMode: PostConditionMode.Allow,
     postConditions: [],
   });
 }
+
+// ── deposit ───────────────────────────────────────────────────
 
 export async function callDeposit(
   agreementId: string,
@@ -107,127 +151,116 @@ export async function callDeposit(
   payerAddress: string,
 ): Promise<string> {
   const microStxAmount = usdToMicroStx(amountUsd);
-
-  const postConditions = [
-    Pc.principal(payerAddress).willSendLte(microStxAmount).ustx(),
-  ];
-
   return callContract({
     contractAddress: CONTRACT_ADDRESS,
     contractName: CONTRACT_NAME,
     functionName: "deposit",
     functionArgs: [stringAsciiCV(agreementId)],
     postConditionMode: PostConditionMode.Allow,
-    postConditions,
+    postConditions: [
+      Pc.principal(payerAddress).willSendLte(microStxAmount).ustx(),
+    ],
   });
 }
 
-// ─────────────────────────────────────────────────────────────
-// complete()
-// Called by the PAYER (party-a) to confirm conditions are met.
-// Releases the escrowed funds to the RECEIVER (party-b).
-// ─────────────────────────────────────────────────────────────
-export async function callComplete(agreementId: string): Promise<string> {
+// ── complete-milestone ────────────────────────────────────────
+
+export async function callCompleteMilestone(
+  agreementId: string,
+  milestoneIndex: number,
+): Promise<string> {
   return callContract({
     contractAddress: CONTRACT_ADDRESS,
     contractName: CONTRACT_NAME,
-    functionName: "complete",
-    functionArgs: [stringAsciiCV(agreementId)],
+    functionName: "complete-milestone",
+    functionArgs: [stringAsciiCV(agreementId), uintCV(BigInt(milestoneIndex))],
     postConditionMode: PostConditionMode.Allow,
     postConditions: [],
   });
 }
 
-// ─────────────────────────────────────────────────────────────
-// refund()
-// Called by the PAYER (party-a) to reclaim their locked funds.
-// Use when conditions won't be met or payer wants to cancel.
-// ─────────────────────────────────────────────────────────────
-export async function callRefund(agreementId: string): Promise<string> {
+// ── dispute-milestone ─────────────────────────────────────────
+
+export async function callDisputeMilestone(
+  agreementId: string,
+  milestoneIndex: number,
+): Promise<string> {
   return callContract({
     contractAddress: CONTRACT_ADDRESS,
     contractName: CONTRACT_NAME,
-    functionName: "refund",
-    functionArgs: [stringAsciiCV(agreementId)],
+    functionName: "dispute-milestone",
+    functionArgs: [stringAsciiCV(agreementId), uintCV(BigInt(milestoneIndex))],
     postConditionMode: PostConditionMode.Allow,
     postConditions: [],
   });
 }
 
-// ─────────────────────────────────────────────────────────────
-// dispute()
-// Called by EITHER party to escalate to arbitration.
-// ─────────────────────────────────────────────────────────────
-export async function callDispute(agreementId: string): Promise<string> {
-  return callContract({
-    contractAddress: CONTRACT_ADDRESS,
-    contractName: CONTRACT_NAME,
-    functionName: "dispute",
-    functionArgs: [stringAsciiCV(agreementId)],
-    postConditionMode: PostConditionMode.Allow,
-    postConditions: [],
-  });
-}
+// ── resolve-to-receiver ───────────────────────────────────────
 
-// ─────────────────────────────────────────────────────────────
-// trigger-timeout()
-// Can be called by anyone after the 72hr deadline passes.
-// Auto-refunds locked funds to the PAYER.
-// ─────────────────────────────────────────────────────────────
-export async function callTriggerTimeout(agreementId: string): Promise<string> {
-  return callContract({
-    contractAddress: CONTRACT_ADDRESS,
-    contractName: CONTRACT_NAME,
-    functionName: "trigger-timeout",
-    functionArgs: [stringAsciiCV(agreementId)],
-    postConditionMode: PostConditionMode.Allow,
-    postConditions: [],
-  });
-}
-
-// ─────────────────────────────────────────────────────────────
-// resolve-to-receiver()
-// Called by ARBITRATOR to rule in favor of the RECEIVER.
-// Releases funds to party-b (receiver fulfilled conditions).
-// Replaces old resolve-to-b().
-// ─────────────────────────────────────────────────────────────
 export async function callResolveToReceiver(
   agreementId: string,
+  milestoneIndex: number,
 ): Promise<string> {
   return callContract({
     contractAddress: CONTRACT_ADDRESS,
     contractName: CONTRACT_NAME,
     functionName: "resolve-to-receiver",
-    functionArgs: [stringAsciiCV(agreementId)],
+    functionArgs: [stringAsciiCV(agreementId), uintCV(BigInt(milestoneIndex))],
     postConditionMode: PostConditionMode.Allow,
     postConditions: [],
   });
 }
 
-// ─────────────────────────────────────────────────────────────
-// resolve-to-payer()
-// Called by ARBITRATOR to rule in favor of the PAYER.
-// Refunds funds to party-a (receiver did not fulfill).
-// Replaces old resolve-to-a().
-// ─────────────────────────────────────────────────────────────
-export async function callResolveToPayer(agreementId: string): Promise<string> {
+// ── resolve-to-payer ─────────────────────────────────────────
+
+export async function callResolveToPayer(
+  agreementId: string,
+  milestoneIndex: number,
+): Promise<string> {
   return callContract({
     contractAddress: CONTRACT_ADDRESS,
     contractName: CONTRACT_NAME,
     functionName: "resolve-to-payer",
-    functionArgs: [stringAsciiCV(agreementId)],
+    functionArgs: [stringAsciiCV(agreementId), uintCV(BigInt(milestoneIndex))],
     postConditionMode: PostConditionMode.Allow,
     postConditions: [],
   });
 }
 
-// ─────────────────────────────────────────────────────────────
-// cancel-agreement()
-// Called by PAYER while still PENDING (before deposit).
-// Marks agreement as cancelled — no funds to return since
-// deposit hasn't happened yet.
-// Replaces old cancel-deposit() which handled the dual-deposit case.
-// ─────────────────────────────────────────────────────────────
+// ── trigger-milestone-timeout ─────────────────────────────────
+
+export async function callTriggerMilestoneTimeout(
+  agreementId: string,
+  milestoneIndex: number,
+): Promise<string> {
+  return callContract({
+    contractAddress: CONTRACT_ADDRESS,
+    contractName: CONTRACT_NAME,
+    functionName: "trigger-milestone-timeout",
+    functionArgs: [stringAsciiCV(agreementId), uintCV(BigInt(milestoneIndex))],
+    postConditionMode: PostConditionMode.Allow,
+    postConditions: [],
+  });
+}
+
+// ── trigger-arb-timeout ───────────────────────────────────────
+
+export async function callTriggerArbTimeout(
+  agreementId: string,
+  milestoneIndex: number,
+): Promise<string> {
+  return callContract({
+    contractAddress: CONTRACT_ADDRESS,
+    contractName: CONTRACT_NAME,
+    functionName: "trigger-arb-timeout",
+    functionArgs: [stringAsciiCV(agreementId), uintCV(BigInt(milestoneIndex))],
+    postConditionMode: PostConditionMode.Allow,
+    postConditions: [],
+  });
+}
+
+// ── cancel-agreement ──────────────────────────────────────────
+
 export async function callCancelAgreement(
   agreementId: string,
 ): Promise<string> {
@@ -235,24 +268,6 @@ export async function callCancelAgreement(
     contractAddress: CONTRACT_ADDRESS,
     contractName: CONTRACT_NAME,
     functionName: "cancel-agreement",
-    functionArgs: [stringAsciiCV(agreementId)],
-    postConditionMode: PostConditionMode.Allow,
-    postConditions: [],
-  });
-}
-
-// ─────────────────────────────────────────────────────────────
-// trigger-arb-timeout()
-// Can be called by anyone if arbitrator is inactive for 48hrs.
-// Refunds locked funds to the PAYER.
-// ─────────────────────────────────────────────────────────────
-export async function callTriggerArbTimeout(
-  agreementId: string,
-): Promise<string> {
-  return callContract({
-    contractAddress: CONTRACT_ADDRESS,
-    contractName: CONTRACT_NAME,
-    functionName: "trigger-arb-timeout",
     functionArgs: [stringAsciiCV(agreementId)],
     postConditionMode: PostConditionMode.Allow,
     postConditions: [],

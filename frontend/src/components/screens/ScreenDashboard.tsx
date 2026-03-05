@@ -1,4 +1,17 @@
 "use client";
+// ============================================================
+// ScreenDashboard.tsx — FIXED v2
+//
+// KEY FIX: complete() in the Clarity contract is called by
+// party-a (Payer) ONLY — not party-b. The receiver never signs.
+//
+// BEFORE (wrong):
+//   isPartyB → showed "Confirm Conditions Met" → completeThunk
+// AFTER (correct):
+//   !isPartyB (Payer) → "Release Payment" → completeThunk
+//   isPartyB  (Receiver) → informational message, no signing
+// ============================================================
+
 import { useState, useEffect, useCallback } from "react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
@@ -7,7 +20,6 @@ import {
   timeoutThunk,
   pollAgreementThunk,
 } from "@/store/slices/agreementSlice";
-import { CONTRACT_STATE } from "@/lib/stacksConfig";
 
 const POLL_INTERVAL_MS = 12_000; // ~1 Stacks block
 
@@ -84,18 +96,10 @@ export default function ScreenDashboard() {
     }
   })();
 
-  // Party B (receiver) can trigger "complete" — releases funds to themselves
-  // Party A (payer) can trigger "refund" or "dispute"
-  const canComplete = !isPartyB; // Actually per contract: party B marks complete
-  // Actually in this contract, party B calls complete() to release to party A
-  // But in the new model, we want: receiver confirms → funds released to receiver
-  // The contract's complete() is called by party B (receiver) to release to party A
-  // We need to clarify the UX based on actual contract logic
-
   return (
     <div style={{ minHeight: "calc(100vh - 56px)", padding: "40px 24px" }}>
       <div style={{ maxWidth: 660, margin: "0 auto" }}>
-        {/* Header */}
+        {/* ── Header ─────────────────────────────────────────── */}
         <div className="animate-fade-up" style={{ marginBottom: 28 }}>
           <div
             style={{
@@ -147,7 +151,7 @@ export default function ScreenDashboard() {
           </div>
         </div>
 
-        {/* Timeout warning banner */}
+        {/* ── Timeout warning banner ──────────────────────────── */}
         {isTimedOut && (
           <div
             className="animate-fade-up"
@@ -165,26 +169,30 @@ export default function ScreenDashboard() {
             <span style={{ fontSize: 13, color: "#f59e0b" }}>
               ⏱ Deadline passed — payer can reclaim funds
             </span>
-            <button
-              onClick={() => agreementId && dispatch(timeoutThunk(agreementId))}
-              disabled={isBusyTimeout}
-              style={{
-                background: "#f59e0b",
-                color: "var(--black)",
-                border: "none",
-                borderRadius: 6,
-                padding: "6px 14px",
-                fontSize: 12,
-                fontWeight: 700,
-                cursor: "pointer",
-              }}
-            >
-              {isBusyTimeout ? "..." : "Trigger Refund"}
-            </button>
+            {!isPartyB && (
+              <button
+                onClick={() =>
+                  agreementId && dispatch(timeoutThunk(agreementId))
+                }
+                disabled={isBusyTimeout}
+                style={{
+                  background: "#f59e0b",
+                  color: "var(--black)",
+                  border: "none",
+                  borderRadius: 6,
+                  padding: "6px 14px",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                {isBusyTimeout ? "..." : "Trigger Refund"}
+              </button>
+            )}
           </div>
         )}
 
-        {/* Payer ← Escrow → Receiver flow */}
+        {/* ── Payer ← Escrow → Receiver flow ─────────────────── */}
         <div
           className="animate-fade-up delay-1"
           style={{
@@ -195,21 +203,19 @@ export default function ScreenDashboard() {
             alignItems: "center",
           }}
         >
-          {/* Payer card */}
           <PartyCard
             role="Payer"
             roleColor="var(--yellow)"
             name={payerName}
             wallet={payerWallet}
             status={
-              onChainData?.partyADeposited
+              onChainData?.deposited
                 ? { label: "✅ Funds locked", color: "var(--yellow)" }
                 : { label: "⏳ Awaiting lock", color: "var(--grey-2)" }
             }
             isMe={!isPartyB}
           />
 
-          {/* Center arrow */}
           <div style={{ textAlign: "center" }}>
             <div
               style={{
@@ -224,7 +230,6 @@ export default function ScreenDashboard() {
             <div style={{ color: "var(--grey-3)", fontSize: 22 }}>⇄</div>
           </div>
 
-          {/* Receiver card */}
           <PartyCard
             role="Receiver"
             roleColor="#22c55e"
@@ -239,7 +244,7 @@ export default function ScreenDashboard() {
           />
         </div>
 
-        {/* Locked funds */}
+        {/* ── Locked funds ────────────────────────────────────── */}
         <div
           className="animate-fade-up delay-2"
           style={{
@@ -274,7 +279,7 @@ export default function ScreenDashboard() {
             {sbtcAmount} sBTC
           </div>
           <div style={{ fontSize: 16, color: "var(--grey-1)", marginTop: 4 }}>
-            ≈ ${amountLocked ?? "—"} USD
+            ≈ ${amountLocked ?? editedTerms?.amount_usd ?? "—"} USD
           </div>
           {onChainData && (
             <div
@@ -291,7 +296,7 @@ export default function ScreenDashboard() {
           )}
         </div>
 
-        {/* Agreement details */}
+        {/* ── Agreement details ───────────────────────────────── */}
         <div
           className="animate-fade-up delay-2"
           style={{
@@ -308,7 +313,10 @@ export default function ScreenDashboard() {
               value: editedTerms?.condition ?? "—",
             },
             { label: "📅 Deadline", value: editedTerms?.deadline ?? "—" },
-            { label: "⚖️ Arbitrator", value: editedTerms?.arbitrator ?? "TBD" },
+            {
+              label: "⚖️ Arbitrator",
+              value: editedTerms?.arbitrator ?? "TBD",
+            },
             {
               label: "⏱ Timeout Policy",
               value: "Auto-refund to payer after deadline",
@@ -347,7 +355,7 @@ export default function ScreenDashboard() {
           ))}
         </div>
 
-        {/* Role context banner */}
+        {/* ── Role context banner ─────────────────────────────── */}
         <div
           className="animate-fade-up delay-2"
           style={{
@@ -363,31 +371,35 @@ export default function ScreenDashboard() {
         >
           {isPartyB ? (
             <>
-              <strong>You are the Receiver.</strong> Confirm the conditions are
-              met to release your payment. Or open a dispute if something went
-              wrong.
+              <strong>You are the Receiver.</strong> You do not need to sign or
+              pay anything. The payer releases funds to you once conditions are
+              confirmed. You can open a dispute if something went wrong.
             </>
           ) : (
             <>
-              <strong>You are the Payer.</strong> Once the receiver confirms the
-              conditions are met, funds are released. You can refund if
-              conditions aren't fulfilled.
+              <strong>You are the Payer.</strong> Click "Release Payment" once
+              the receiver has fulfilled the conditions. You can also open a
+              dispute or wait for the auto-refund after the deadline.
             </>
           )}
         </div>
 
-        {/* Pending tx banners */}
+        {/* ── Pending tx banners ──────────────────────────────── */}
         <TxBanner tx={txComplete} label="Releasing payment" />
         <TxBanner tx={txDispute} label="Opening dispute" />
         <TxBanner tx={txTimeout} label="Triggering refund" />
 
-        {/* Action buttons */}
+        {/* ── Action buttons ──────────────────────────────────── */}
         <div
           className="animate-fade-up delay-3"
           style={{ display: "flex", flexDirection: "column", gap: 12 }}
         >
-          {/* Receiver confirms completion → releases funds */}
-          {isPartyB && (
+          {/*
+           * FIX: complete() in the Clarity contract asserts tx-sender === party-a.
+           * Therefore ONLY the Payer (!isPartyB) can call completeThunk.
+           * The Receiver never signs — they just wait.
+           */}
+          {!isPartyB && (
             <button
               onClick={() =>
                 agreementId && dispatch(completeThunk(agreementId))
@@ -395,7 +407,7 @@ export default function ScreenDashboard() {
               disabled={isBusyComplete || isBusyDispute}
               style={{
                 padding: "16px",
-                background: isBusyComplete ? "var(--black-4)" : "#22c55e",
+                background: isBusyComplete ? "var(--black-4)" : "var(--yellow)",
                 color: isBusyComplete ? "var(--grey-2)" : "var(--black)",
                 border: "none",
                 borderRadius: "var(--radius)",
@@ -415,12 +427,38 @@ export default function ScreenDashboard() {
                   <Spinner color="var(--grey-2)" /> Waiting for wallet...
                 </>
               ) : (
-                "✅ Confirm Conditions Met — Release Payment"
+                "✅ Release Payment to Receiver"
               )}
             </button>
           )}
 
-          {/* Dispute button — both parties */}
+          {/* Receiver: informational only — no signing required */}
+          {isPartyB && (
+            <div
+              style={{
+                padding: "16px",
+                background: "#22c55e08",
+                border: "1px solid #22c55e30",
+                borderRadius: "var(--radius)",
+                fontSize: 13,
+                color: "#22c55e",
+                lineHeight: 1.65,
+                textAlign: "center",
+              }}
+            >
+              <div style={{ fontWeight: 700, marginBottom: 6 }}>
+                ⏳ Waiting for payer to release funds
+              </div>
+              <div style={{ fontSize: 12, color: "var(--grey-1)" }}>
+                You don't need to sign anything. Once{" "}
+                <strong style={{ color: "var(--white)" }}>{payerName}</strong>{" "}
+                confirms conditions are met, funds transfer to your wallet
+                automatically.
+              </div>
+            </div>
+          )}
+
+          {/* Dispute — both parties can open */}
           {!showDisputeConfirm ? (
             <button
               onClick={() => setShowDisputeConfirm(true)}

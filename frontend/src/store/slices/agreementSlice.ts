@@ -1,13 +1,3 @@
-// ============================================================
-// store/slices/agreementSlice.ts — PRODUCTION v2
-// FIXES:
-//   1. BigInt removed everywhere — deadlineBlock/amount/totalDeposited
-//      are all plain number now (contractReads.ts also updated)
-//   2. rehydrateSession now restores editedTerms from localStorage
-//   3. generateShareLink and setAsPartyB persist editedTerms
-//   4. syncOnChainState uses number comparisons (no BigInt)
-// ============================================================
-
 import {
   createSlice,
   createAsyncThunk,
@@ -548,7 +538,8 @@ const agreementSlice = createSlice({
         state.currentScreen = "dispute";
       }
       // FIX: was > BigInt(0), now plain number comparison
-      if (data.deadlineBlock > 0) state.deadlineBlock = Number(data.deadlineBlock);
+      if (data.deadlineBlock > 0)
+        state.deadlineBlock = Number(data.deadlineBlock);
       if (data.totalDeposited > 0) {
         const stx = Number(data.totalDeposited) / 1_000_000;
         state.amountLocked = (stx * 0.8).toFixed(2);

@@ -5,10 +5,10 @@ authors = []
 telemetry = true
 cache_dir = '.\.cache'
 requirements = []
-[contracts.clauseai-escrow]
-path = 'contracts/clauseai-escrow.clar'
+[contracts.clauseai-escrow-v3]
+path = 'contracts/clauseai-escrow-v3.clar'
 clarity_version = 3
-epoch = 'latest'
+epoch = '3.2'
 [repl.analysis]
 passes = ['check_checker']
 

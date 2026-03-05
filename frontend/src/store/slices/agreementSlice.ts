@@ -1,11 +1,11 @@
 // ============================================================
 // store/slices/agreementSlice.ts — PRODUCTION v2
-// Key changes from v1:
-//   • subscribePresenceThunk — SSE-first, poll fallback
-//   • Party B full flow: fetchTermsForPartyB, rehydratePartyB
-//   • termsSnapshot stored in presence so Party B can see terms
-//   • Session keys consistent + isPartyB persisted properly
-//   • Deposit flow: Party B deposits independently after Party A
+// FIXES:
+//   1. BigInt removed everywhere — deadlineBlock/amount/totalDeposited
+//      are all plain number now (contractReads.ts also updated)
+//   2. rehydrateSession now restores editedTerms from localStorage
+//   3. generateShareLink and setAsPartyB persist editedTerms
+//   4. syncOnChainState uses number comparisons (no BigInt)
 // ============================================================
 
 import {
@@ -36,7 +36,6 @@ import { explorerTxUrl } from "@/lib/stacksConfig";
 import {
   registerParty,
   getPresence,
-  hashTerms,
   PresenceState,
 } from "../../api/PresenceaApi";
 
@@ -63,7 +62,6 @@ export type FundState =
   | "released"
   | "refunded"
   | "disputed";
-
 export type TxStatus =
   | "idle"
   | "pending"
@@ -87,51 +85,33 @@ const emptyTx = (): TxState => ({
 
 export interface AgreementState {
   currentScreen: AppScreen;
-
-  // form
   agreementType: AgreementType | null;
   rawText: string;
   partyAName: string;
   partyBName: string;
   arbitratorName: string;
-
-  // parsed
   parsedTerms: ParsedAgreement | null;
   editedTerms: ParsedAgreement | null;
   parseLoading: boolean;
   parseError: string | null;
   parseMeta: { provider: string; model: string; latency_ms: number } | null;
-
-  // wallet
   walletConnected: boolean;
   walletAddress: string | null;
   counterpartyWallet: string | null;
   counterpartyConnected: boolean;
-
-  // role
   isPartyB: boolean;
-
-  // agreement lifecycle
   agreementId: string | null;
   shareLink: string | null;
   fundState: FundState;
   amountLocked: string | null;
   deadlineBlock: number | null;
   disputeOpenedBy: string | null;
-
-  // Party B: tracks whether THIS user has deposited
   myDepositDone: boolean;
-
-  // on-chain data
   onChainData: OnChainAgreement | null;
   blockHeight: number;
   pollingActive: boolean;
-
-  // presence
   presenceRegistered: boolean;
   presenceError: string | null;
-
-  // tx states
   txCreate: TxState;
   txDeposit: TxState;
   txComplete: TxState;
@@ -216,7 +196,6 @@ export const connectWalletThunk = createAsyncThunk(
   },
 );
 
-// ── Register presence (Party A or B) ─────────────────────────
 export const registerPresenceThunk = createAsyncThunk(
   "agreement/registerPresence",
   async (
@@ -230,14 +209,13 @@ export const registerPresenceThunk = createAsyncThunk(
     { rejectWithValue },
   ) => {
     try {
-      const presence = await registerParty(
+      return await registerParty(
         payload.agreementId,
         payload.role,
         payload.address,
         payload.termsHash,
         payload.termsSnapshot,
       );
-      return presence;
     } catch (err: unknown) {
       return rejectWithValue(
         err instanceof Error ? err.message : "Presence registration failed",
@@ -246,7 +224,6 @@ export const registerPresenceThunk = createAsyncThunk(
   },
 );
 
-// ── Poll presence (HTTP fallback) ─────────────────────────────
 export const pollPresenceThunk = createAsyncThunk(
   "agreement/pollPresence",
   async (agreementId: string, { rejectWithValue }) => {
@@ -260,14 +237,11 @@ export const pollPresenceThunk = createAsyncThunk(
   },
 );
 
-// ── Fetch terms for Party B from presence snapshot ────────────
-// When Party B opens the link, they need to see Party A's terms.
 export const fetchTermsForPartyBThunk = createAsyncThunk(
   "agreement/fetchTermsForPartyB",
   async (agreementId: string, { rejectWithValue }) => {
     try {
-      const presence = await getPresence(agreementId);
-      return presence;
+      return await getPresence(agreementId);
     } catch (err: unknown) {
       return rejectWithValue(
         err instanceof Error ? err.message : "Failed to load agreement terms",
@@ -276,31 +250,21 @@ export const fetchTermsForPartyBThunk = createAsyncThunk(
   },
 );
 
-// ── Rehydrate Party B session from localStorage ───────────────
-// Call this in the join page on mount to restore after page refresh.
 export const rehydratePartyBThunk = createAsyncThunk(
   "agreement/rehydratePartyB",
   async (agreementId: string, { rejectWithValue }) => {
     try {
       if (typeof window === "undefined") return null;
-
       const storedAddress = localStorage.getItem("clauseai_wallet_address");
       const storedIsPartyB =
         localStorage.getItem(`clauseai_is_party_b_${agreementId}`) === "true";
-
       if (!storedAddress || !storedIsPartyB) return null;
-
-      // Re-register presence (idempotent — backend just overwrites same address)
       const presence = await registerParty(
         agreementId,
         "partyB",
         storedAddress,
       );
-
-      return {
-        address: storedAddress,
-        presence,
-      };
+      return { address: storedAddress, presence };
     } catch (err: unknown) {
       return rejectWithValue(
         err instanceof Error ? err.message : "Rehydration failed",
@@ -418,8 +382,6 @@ export const pollAgreementThunk = createAsyncThunk(
   },
 );
 
-// ── Action dispatched by SSE subscription (from component) ───
-// Components subscribe to SSE and dispatch this action on each event.
 export const presenceUpdated = createAction<PresenceState>(
   "agreement/presenceUpdated",
 );
@@ -473,6 +435,8 @@ const agreementSlice = createSlice({
       state.walletConnected = false;
       state.walletAddress = null;
     },
+
+    // ── FIX: also persist editedTerms so rehydrateSession can restore them ──
     setAsPartyB(
       state,
       action: PayloadAction<{ agreementId: string; address: string }>,
@@ -483,7 +447,6 @@ const agreementSlice = createSlice({
       state.agreementId = action.payload.agreementId;
       state.shareLink = buildShareLink(action.payload.agreementId);
       state.counterpartyConnected = false;
-      // Persist Party B session
       if (typeof window !== "undefined") {
         localStorage.setItem("clauseai_wallet_address", action.payload.address);
         localStorage.setItem(
@@ -494,12 +457,22 @@ const agreementSlice = createSlice({
           "clauseai_agreement_id",
           action.payload.agreementId,
         );
+        // Persist terms so dashboard can show condition/deadline/arbitrator
+        if (state.editedTerms) {
+          localStorage.setItem(
+            "clauseai_terms",
+            JSON.stringify(state.editedTerms),
+          );
+        }
       }
     },
+
     setCounterpartyConnected(state, action: PayloadAction<string>) {
       state.counterpartyWallet = action.payload;
       state.counterpartyConnected = true;
     },
+
+    // ── FIX: persist terms when Party A generates share link ────────────────
     generateShareLink(state) {
       if (!state.agreementId) {
         state.agreementId = Math.random()
@@ -508,11 +481,23 @@ const agreementSlice = createSlice({
           .toUpperCase();
       }
       state.shareLink = buildShareLink(state.agreementId);
+      if (typeof window !== "undefined") {
+        localStorage.setItem("clauseai_agreement_id", state.agreementId);
+        if (state.editedTerms) {
+          localStorage.setItem(
+            "clauseai_terms",
+            JSON.stringify(state.editedTerms),
+          );
+        }
+      }
     },
+
     setAgreementId(state, action: PayloadAction<string>) {
       state.agreementId = action.payload;
       state.shareLink = buildShareLink(action.payload);
     },
+
+    // ── FIX: restore editedTerms from localStorage ───────────────────────────
     rehydrateSession(state) {
       if (typeof window === "undefined") return;
       const address = localStorage.getItem("clauseai_wallet_address");
@@ -524,16 +509,28 @@ const agreementSlice = createSlice({
       if (agreementId) {
         state.agreementId = agreementId;
         state.shareLink = buildShareLink(agreementId);
-        // Check if this was a Party B session
         const isPartyB =
           localStorage.getItem(`clauseai_is_party_b_${agreementId}`) === "true";
         if (isPartyB) state.isPartyB = true;
       }
+      // Restore terms — this is why dashboard showed "—" for condition/deadline/arbitrator
+      const termsRaw = localStorage.getItem("clauseai_terms");
+      if (termsRaw) {
+        try {
+          const terms = JSON.parse(termsRaw) as ParsedAgreement;
+          state.editedTerms = terms;
+          state.parsedTerms = terms;
+        } catch {
+          // corrupted — ignore, will show "—" gracefully
+        }
+      }
     },
-    // Called by SSE/poll handler in component
+
     applyPresenceUpdate(state, action: PayloadAction<PresenceState>) {
       applyPresence(state, action.payload);
     },
+
+    // ── FIX: BigInt removed — all fields are plain number now ────────────────
     syncOnChainState(state, action: PayloadAction<OnChainAgreement>) {
       const data = action.payload;
       state.onChainData = data;
@@ -550,13 +547,14 @@ const agreementSlice = createSlice({
         state.fundState = "disputed";
         state.currentScreen = "dispute";
       }
-      if (data.deadlineBlock > BigInt(0))
-        state.deadlineBlock = Number(data.deadlineBlock);
-      if (data.totalDeposited > BigInt(0)) {
+      // FIX: was > BigInt(0), now plain number comparison
+      if (data.deadlineBlock > 0) state.deadlineBlock = Number(data.deadlineBlock);
+      if (data.totalDeposited > 0) {
         const stx = Number(data.totalDeposited) / 1_000_000;
         state.amountLocked = (stx * 0.8).toFixed(2);
       }
     },
+
     setBlockHeight(state, action: PayloadAction<number>) {
       state.blockHeight = action.payload;
     },
@@ -583,7 +581,6 @@ const agreementSlice = createSlice({
     },
     resetAll() {
       if (typeof window !== "undefined") {
-        // Clean up all clauseai keys
         Object.keys(localStorage)
           .filter((k) => k.startsWith("clauseai_"))
           .forEach((k) => localStorage.removeItem(k));
@@ -649,12 +646,12 @@ const agreementSlice = createSlice({
       applyPresence(state, action.payload as PresenceState);
     });
 
-    // presenceUpdated (from SSE in component)
+    // presenceUpdated (from SSE)
     builder.addCase(presenceUpdated, (state, action) => {
       applyPresence(state, action.payload);
     });
 
-    // fetchTermsForPartyB — loads Party A's terms snapshot
+    // fetchTermsForPartyB
     builder
       .addCase(fetchTermsForPartyBThunk.pending, (state) => {
         state.parseLoading = true;
@@ -664,12 +661,14 @@ const agreementSlice = createSlice({
         state.parseLoading = false;
         const presence = action.payload as PresenceState;
         applyPresence(state, presence);
-
-        // Load terms snapshot if Party A saved it
         if (presence.termsSnapshot) {
           const terms = presence.termsSnapshot as unknown as ParsedAgreement;
           state.parsedTerms = terms;
           state.editedTerms = { ...terms };
+          // Persist so dashboard can rehydrate them
+          if (typeof window !== "undefined") {
+            localStorage.setItem("clauseai_terms", JSON.stringify(terms));
+          }
         }
         if (presence.partyA) {
           state.counterpartyWallet = presence.partyA;
@@ -694,6 +693,9 @@ const agreementSlice = createSlice({
         const terms = presence.termsSnapshot as unknown as ParsedAgreement;
         state.parsedTerms = terms;
         state.editedTerms = { ...terms };
+        if (typeof window !== "undefined") {
+          localStorage.setItem("clauseai_terms", JSON.stringify(terms));
+        }
       }
     });
 
@@ -841,7 +843,7 @@ const agreementSlice = createSlice({
         };
       });
 
-    // poll on-chain
+    // ── FIX: pollAgreementThunk — BigInt removed ─────────────────────────────
     builder.addCase(pollAgreementThunk.fulfilled, (state, action) => {
       const { onChain, blockHeight } = action.payload;
       if (blockHeight) state.blockHeight = blockHeight;
@@ -864,7 +866,8 @@ const agreementSlice = createSlice({
         }
         if (onChain.state === CONTRACT_STATE.DISPUTED)
           state.fundState = "disputed";
-        if (onChain.deadlineBlock > BigInt(0))
+        // FIX: was > BigInt(0) — contractReads now returns plain number
+        if (onChain.deadlineBlock > 0)
           state.deadlineBlock = Number(onChain.deadlineBlock);
       }
     });
@@ -883,16 +886,13 @@ function buildShareLink(id: string): string {
   return `${origin}/agreement/${id}`;
 }
 
-// Shared presence application logic (avoids duplication)
 function applyPresence(state: AgreementState, presence: PresenceState) {
   if (state.isPartyB) {
-    // Party B is looking for Party A
     if (presence.partyA && !state.counterpartyConnected) {
       state.counterpartyWallet = presence.partyA;
       state.counterpartyConnected = true;
     }
   } else {
-    // Party A is looking for Party B
     if (presence.partyB && !state.counterpartyConnected) {
       state.counterpartyWallet = presence.partyB;
       state.counterpartyConnected = true;

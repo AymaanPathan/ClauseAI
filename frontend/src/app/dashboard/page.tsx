@@ -3,102 +3,59 @@ import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
-  completeThunk,
-  disputeThunk,
-  timeoutThunk,
-  pollAgreementThunk,
-  rehydrateSession,
-  resetAll,
+  completeThunk, disputeThunk, timeoutThunk,
+  pollAgreementThunk, rehydrateSession, resetAll,
 } from "@/store/slices/agreementSlice";
 
 const POLL_MS = 12_000;
-
-const STATE_META: Record<
-  number,
-  { label: string; color: string; icon: string; pulse: boolean }
-> = {
-  0: {
-    label: "Awaiting Deposit",
-    color: "text-slate-400",
-    icon: "⏳",
-    pulse: false,
-  },
-  1: {
-    label: "Funds Locked — Active",
-    color: "text-yellow-400",
-    icon: "🔒",
-    pulse: true,
-  },
-  2: {
-    label: "Complete — Released",
-    color: "text-green-400",
-    icon: "✅",
-    pulse: false,
-  },
-  3: {
-    label: "Refunded to Payer",
-    color: "text-blue-400",
-    icon: "↩️",
-    pulse: false,
-  },
-  4: {
-    label: "Disputed — Arbitrating",
-    color: "text-amber-400",
-    icon: "⚖️",
-    pulse: true,
-  },
+const STATE_META: Record<number,{label:string;color:string;icon:string;pulse:boolean}> = {
+  0:{label:"Awaiting Deposit",color:"#94a3b8",icon:"⏳",pulse:false},
+  1:{label:"Funds Locked — Active",color:"#f5c400",icon:"🔒",pulse:true},
+  2:{label:"Complete — Released",color:"#22c55e",icon:"✅",pulse:false},
+  3:{label:"Refunded to Payer",color:"#60a5fa",icon:"↩️",pulse:false},
+  4:{label:"Disputed — Arbitrating",color:"#f59e0b",icon:"⚖️",pulse:true},
 };
 
-function fmtWallet(addr?: string | null) {
-  if (!addr) return "—";
-  return `${addr.slice(0, 8)}…${addr.slice(-6)}`;
-}
-function fmtSbtc(usd?: string | null, microStx?: number | null) {
-  if (usd) return (parseFloat(usd) / 67_000).toFixed(6);
-  if (microStx) return (microStx / 1_000_000 / 67).toFixed(6);
-  return "0.000000";
-}
+function fmtWallet(addr?:string|null){if(!addr)return"—";return`${addr.slice(0,8)}…${addr.slice(-6)}`;}
+function fmtSbtc(usd?:string|null,microStx?:number|null){if(usd)return(parseFloat(usd)/67_000).toFixed(6);if(microStx)return(microStx/1_000_000/67).toFixed(6);return"0.000000";}
 
 export default function DashboardPage() {
   const router = useRouter();
   const dispatch = useAppDispatch();
-  const {
-    editedTerms,
-    agreementId,
-    walletAddress,
-    counterpartyWallet,
-    amountLocked,
-    fundState,
-    onChainData,
-    blockHeight,
-    deadlineBlock,
-    txComplete,
-    txDispute,
-    txTimeout,
-    isPartyB,
-  } = useAppSelector((s) => s.agreement);
+  const {editedTerms,agreementId,walletAddress,counterpartyWallet,amountLocked,fundState,onChainData,blockHeight,deadlineBlock,txComplete,txDispute,txTimeout,isPartyB} = useAppSelector((s)=>s.agreement);
 
+  // ── No timer, no didInit ref — just a simple flag ─────────────
+  // rehydrateSession is synchronous (it reads localStorage and dispatches
+  // a plain action). We call it once, then immediately show the dashboard.
   const [ready, setReady] = useState(false);
   const [lastPolled, setLastPolled] = useState("—");
   const [disputeModal, setDisputeModal] = useState(false);
 
+  // ── Single effect: rehydrate then show ───────────────────────
+  // We do NOT use a timer or a ref. React Strict Mode double-invokes
+  // effects but that's fine here — rehydrateSession is idempotent and
+  // setReady(true) is safe to call twice.
   useEffect(() => {
     dispatch(rehydrateSession());
     setReady(true);
   }, [dispatch]);
 
+  // ── Redirect if no agreementId after rehydration ─────────────
   useEffect(() => {
     if (!ready) return;
-    if (!agreementId) router.replace("/");
+    if (!agreementId) {
+      router.replace("/");
+    }
   }, [ready, agreementId, router]);
 
+  // ── Polling ───────────────────────────────────────────────────
   const poll = useCallback(() => {
     if (!agreementId) return;
     dispatch(pollAgreementThunk(agreementId))
       .unwrap()
       .then(() => setLastPolled(new Date().toLocaleTimeString()))
       .catch((e: unknown) => {
-        console.warn("[dashboard] poll failed:", e);
+        console.warn("[dashboard] poll failed (non-fatal):", e);
         setLastPolled(`${new Date().toLocaleTimeString()} (no on-chain data)`);
       });
   }, [agreementId, dispatch]);
@@ -110,412 +67,154 @@ export default function DashboardPage() {
     return () => clearInterval(iv);
   }, [ready, agreementId, poll]);
 
+  // ── Derived ───────────────────────────────────────────────────
   const onChainState = onChainData?.state ?? 1;
   const meta = STATE_META[onChainState] ?? STATE_META[1];
-  const sbtcAmount = fmtSbtc(
-    amountLocked,
-    onChainData?.totalDeposited as number | undefined,
-  );
+  const sbtcAmount = fmtSbtc(amountLocked, onChainData?.totalDeposited as number|undefined);
   const usdAmount = amountLocked ?? editedTerms?.amount_usd ?? "—";
-  const isTimedOut = !!(
-    deadlineBlock &&
-    blockHeight > 0 &&
-    blockHeight >= deadlineBlock
-  );
-  const blocksLeft =
-    deadlineBlock && blockHeight > 0
-      ? Math.max(0, deadlineBlock - blockHeight)
-      : null;
-  const busy = {
-    complete: txComplete.status === "pending",
-    dispute: txDispute.status === "pending",
-    timeout: txTimeout.status === "pending",
-  };
+  const isTimedOut = !!(deadlineBlock && blockHeight > 0 && blockHeight >= deadlineBlock);
+  const blocksLeft = deadlineBlock && blockHeight > 0 ? Math.max(0, deadlineBlock - blockHeight) : null;
+  const busy = {complete:txComplete.status==="pending",dispute:txDispute.status==="pending",timeout:txTimeout.status==="pending"};
   const anyBusy = busy.complete || busy.dispute || busy.timeout;
   const payerName = editedTerms?.partyA ?? "Payer";
   const receiverName = editedTerms?.partyB ?? "Receiver";
   const payerWallet = isPartyB ? counterpartyWallet : walletAddress;
   const receiverWallet = isPartyB ? walletAddress : counterpartyWallet;
   const isFinished = onChainState === 2 || onChainState === 3;
+  const roleColor = isPartyB ? "#22c55e" : "#f5c400";
 
+  // ── Splash only shows for the single render before useEffect fires ─
   if (!ready) {
     return (
-      <div className="min-h-screen bg-black flex flex-col items-center justify-center">
-        <div className="w-20 h-20 rounded-full border border-yellow-400/20 bg-yellow-400/5 flex items-center justify-center text-4xl mb-5 animate-pulse">
-          🔍
-        </div>
-        <p className="font-mono text-slate-500 text-sm mb-5 tracking-wider">
-          Loading dashboard…
-        </p>
-        <div className="flex gap-2">
-          {[0, 1, 2].map((i) => (
-            <span
-              key={i}
-              className="w-2 h-2 rounded-full bg-yellow-400 animate-bounce"
-              style={{ animationDelay: `${i * 0.18}s` }}
-            />
-          ))}
-        </div>
+      <div className="detect-wrap">
+        <div className="detect-orb">🔍</div>
+        <p className="detect-label">Loading dashboard…</p>
+        <div className="dot-row">{[0,1,2].map((i)=><span key={i} className="dot" style={{animationDelay:`${i*0.18}s`}}/>)}</div>
+        <style>{splashCSS}</style>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-black text-slate-100 flex flex-col font-sans">
-      {/* ── Top bar ── */}
-      <header className="sticky top-0 z-40 flex flex-wrap items-center justify-between gap-2 px-6 py-3 bg-[#0d0d0d] border-b border-white/5">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => router.push("/")}
-            className="flex items-center bg-transparent border-none cursor-pointer p-0"
-          >
-            <span className="text-lg font-black text-yellow-400">Clause</span>
-            <span className="text-lg font-black text-white">Ai</span>
-          </button>
-          <span className="font-mono text-xs text-slate-500 bg-[#161616] border border-white/10 rounded-full px-3 py-0.5">
-            #{agreementId ?? "—"}
-          </span>
+    <div className="db-root">
+      <style>{css}</style>
+      <header className="db-topbar">
+        <div className="db-topbar-left">
+          <button className="db-logo-btn" onClick={()=>router.push("/")}><span className="logo-clause">Clause</span><span className="logo-ai">Ai</span></button>
+          <span className="escrow-badge">#{agreementId ?? "—"}</span>
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Role chip */}
-          <span
-            className={`font-mono text-xs font-bold border rounded-full px-3 py-1 ${isPartyB ? "text-green-400 border-green-400/30 bg-green-400/10" : "text-yellow-400 border-yellow-400/30 bg-yellow-400/10"}`}
-          >
-            {isPartyB ? "🎯 Receiver" : "💸 Payer"}
-          </span>
-          {/* State chip */}
-          <span
-            className={`font-mono text-xs border rounded-full px-3 py-1 bg-[#111] flex items-center gap-1.5 ${meta.color} border-current/40`}
-          >
-            {meta.pulse && (
-              <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
-            )}
-            {meta.icon} {meta.label}
-          </span>
+        <div className="db-topbar-right">
+          <div className="role-chip" style={{color:roleColor,borderColor:`${roleColor}50`,background:`${roleColor}10`}}>{isPartyB?"🎯 Receiver":"💸 Payer"}</div>
+          <div className="state-chip" style={{color:meta.color,borderColor:`${meta.color}40`}}>{meta.pulse&&<span className="pulse-dot" style={{background:meta.color}}/>}{meta.icon} {meta.label}</div>
         </div>
       </header>
 
-      {/* ── Main grid ── */}
-      <main className="flex-1 grid grid-cols-1 lg:grid-cols-[340px_1fr] gap-5 p-6 max-w-6xl mx-auto w-full">
-        {/* ── LEFT column ── */}
-        <section className="flex flex-col gap-3">
-          {/* Role card */}
-          <div
-            className={`rounded-2xl border p-5 ${isPartyB ? "bg-green-400/5 border-green-400/20" : "bg-yellow-400/5 border-yellow-400/20"}`}
-          >
-            <div
-              className={`font-mono text-xs uppercase tracking-widest mb-2 ${isPartyB ? "text-green-400" : "text-yellow-400"}`}
-            >
-              {isPartyB ? "🎯 You are the Receiver" : "💸 You are the Payer"}
-            </div>
-            <div className="text-xl font-black">
-              {isPartyB ? receiverName : payerName}
-            </div>
-            <div className="font-mono text-xs text-slate-500 mt-1">
-              {fmtWallet(walletAddress)}
-            </div>
+      <main className="db-grid">
+        <section className="db-left">
+          <div className="role-card" style={{background:`${roleColor}08`,borderColor:`${roleColor}25`}}>
+            <div className="role-card-tag" style={{color:roleColor}}>{isPartyB?"🎯 You are the Receiver":"💸 You are the Payer"}</div>
+            <div className="role-card-name">{isPartyB?receiverName:payerName}</div>
+            <div className="role-card-wallet">{fmtWallet(walletAddress)}</div>
           </div>
 
-          {/* Timeout banner */}
-          {isTimedOut && !isFinished && (
-            <div className="bg-amber-400/5 border border-amber-400 rounded-xl p-3 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <span className="text-xl">⏱</span>
-                <div>
-                  <div className="text-sm font-bold text-amber-400">
-                    Deadline passed
-                  </div>
-                  <div className="text-xs text-slate-400 mt-0.5">
-                    Payer can now trigger a refund
-                  </div>
-                </div>
+          {isTimedOut&&!isFinished&&(
+            <div className="timeout-banner">
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:20}}>⏱</span>
+                <div><div className="timeout-title">Deadline passed</div><div className="timeout-sub">Payer can now trigger a refund</div></div>
               </div>
-              {!isPartyB && (
-                <button
-                  disabled={busy.timeout}
-                  onClick={() =>
-                    agreementId && dispatch(timeoutThunk(agreementId))
-                  }
-                  className="bg-amber-400 text-black text-xs font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
-                >
-                  {busy.timeout ? <Spin /> : "Trigger Refund"}
-                </button>
-              )}
+              {!isPartyB&&<button className="timeout-btn" disabled={busy.timeout} onClick={()=>agreementId&&dispatch(timeoutThunk(agreementId))}>{busy.timeout?<Spin/>:"Trigger Refund"}</button>}
             </div>
           )}
 
-          {/* TX banners */}
-          <TxBanner tx={txComplete} label="Releasing payment" />
-          <TxBanner tx={txDispute} label="Opening dispute" />
-          <TxBanner tx={txTimeout} label="Triggering refund" />
+          <TxBanner tx={txComplete} label="Releasing payment"/>
+          <TxBanner tx={txDispute} label="Opening dispute"/>
+          <TxBanner tx={txTimeout} label="Triggering refund"/>
 
-          {/* Payer actions */}
-          {!isPartyB && !isFinished && (
-            <div className="flex flex-col gap-2">
-              <div className="font-mono text-[10px] text-slate-500 uppercase tracking-widest">
-                Your Actions
+          {!isPartyB&&!isFinished&&(
+            <div className="actions-section">
+              <div className="actions-title">Your Actions</div>
+              <div className="info-box" style={{color:"#f5c400",borderColor:"#f5c40025",background:"#f5c40008"}}>
+                <strong>You are the Payer.</strong> Funds release once the receiver confirms conditions are met.
               </div>
-              <div className="border border-yellow-400/20 bg-yellow-400/5 rounded-lg p-3 text-xs text-yellow-400 leading-relaxed">
-                <strong>You are the Payer.</strong> Funds release once the
-                receiver confirms conditions are met.
-              </div>
-              <button
-                disabled={anyBusy}
-                onClick={() => setDisputeModal(true)}
-                className="w-full py-3 px-4 bg-transparent text-red-400 border border-red-900 rounded-xl text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed hover:bg-red-900/20 transition-colors"
-              >
-                ⚠️ Open Dispute
-              </button>
+              <DangerBtn disabled={anyBusy} onClick={()=>setDisputeModal(true)}>⚠️ Open Dispute</DangerBtn>
             </div>
           )}
 
-          {/* Receiver actions */}
-          {isPartyB && !isFinished && (
-            <div className="flex flex-col gap-2">
-              <div className="font-mono text-[10px] text-slate-500 uppercase tracking-widest">
-                Your Actions
+          {isPartyB&&!isFinished&&(
+            <div className="actions-section">
+              <div className="actions-title">Your Actions</div>
+              <div className="info-box" style={{color:"#22c55e",borderColor:"#22c55e25",background:"#22c55e08"}}>
+                <strong>You are the Receiver.</strong> Confirm conditions are met to get paid.
               </div>
-              <div className="border border-green-400/20 bg-green-400/5 rounded-lg p-3 text-xs text-green-400 leading-relaxed">
-                <strong>You are the Receiver.</strong> Confirm conditions are
-                met to get paid.
-              </div>
-              <button
-                disabled={busy.complete || busy.dispute}
-                onClick={() =>
-                  agreementId && dispatch(completeThunk(agreementId))
-                }
-                className="w-full py-3 px-4 bg-green-500 text-black rounded-xl text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-60 disabled:cursor-not-allowed hover:bg-green-400 transition-colors"
-              >
-                {busy.complete ? (
-                  <>
-                    <Spin /> Waiting for wallet…
-                  </>
-                ) : (
-                  "✅ Confirm Conditions Met — Release Payment"
-                )}
-              </button>
-              <button
-                disabled={anyBusy}
-                onClick={() => setDisputeModal(true)}
-                className="w-full py-3 px-4 bg-transparent text-red-400 border border-red-900 rounded-xl text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed hover:bg-red-900/20 transition-colors"
-              >
-                ⚠️ Open Dispute
-              </button>
+              <PrimaryBtn disabled={busy.complete||busy.dispute} onClick={()=>agreementId&&dispatch(completeThunk(agreementId))}>
+                {busy.complete?<><Spin/> Waiting for wallet…</>:"✅ Confirm Conditions Met — Release Payment"}
+              </PrimaryBtn>
+              <DangerBtn disabled={anyBusy} onClick={()=>setDisputeModal(true)}>⚠️ Open Dispute</DangerBtn>
             </div>
           )}
 
-          {/* Finished */}
-          {isFinished && (
-            <div className="border border-white/10 rounded-2xl p-7 text-center bg-[#111]">
-              <div className="text-4xl">{onChainState === 2 ? "✅" : "↩️"}</div>
-              <div className="text-lg font-black mt-2">
-                {onChainState === 2 ? "Escrow Complete" : "Funds Refunded"}
-              </div>
-              <div className="text-sm text-slate-400 mt-1.5 leading-relaxed">
-                {onChainState === 2
-                  ? `Payment released to ${receiverName}.`
-                  : `Funds returned to ${payerName}.`}
-              </div>
-              <button
-                onClick={() => {
-                  dispatch(resetAll());
-                  router.push("/");
-                }}
-                className="mt-5 px-6 py-3 bg-yellow-400 text-black rounded-xl text-sm font-bold hover:bg-yellow-300 transition-colors"
-              >
-                + New Agreement
-              </button>
+          {isFinished&&(
+            <div className="finished-card">
+              <span className="finished-icon">{onChainState===2?"✅":"↩️"}</span>
+              <div className="finished-title">{onChainState===2?"Escrow Complete":"Funds Refunded"}</div>
+              <div className="finished-sub">{onChainState===2?`Payment released to ${receiverName}.`:`Funds returned to ${payerName}.`}</div>
+              <button className="new-agreement-btn" onClick={()=>{dispatch(resetAll());router.push("/");}}>+ New Agreement</button>
             </div>
           )}
         </section>
 
-        {/* ── RIGHT column ── */}
-        <section className="flex flex-col gap-3">
-          {/* Amount card */}
-          <div className="bg-gradient-to-br from-[#140f00] to-[#111] border border-yellow-400/10 rounded-2xl p-6 text-center">
-            <div className="font-mono text-[10px] text-yellow-400 uppercase tracking-widest mb-3">
-              🔒 Escrowed on Stacks Bitcoin
-            </div>
-            <div className="text-5xl font-black text-yellow-400 tracking-tight leading-none">
-              {sbtcAmount}
-            </div>
-            <div className="font-mono text-sm text-yellow-400 mt-1">sBTC</div>
-            <div className="text-base text-white font-semibold mt-2">
-              ≈ ${usdAmount} USD
-            </div>
-            {onChainData?.totalDeposited != null && (
-              <div className="font-mono text-[10px] text-slate-600 mt-1.5">
-                {Number(onChainData.totalDeposited).toLocaleString()} µSTX
-                on-chain
-              </div>
-            )}
+        <section className="db-right">
+          <div className="amount-card">
+            <div className="amount-label">🔒 Escrowed on Stacks Bitcoin</div>
+            <div className="amount-sbtc">{sbtcAmount}</div>
+            <div className="amount-unit">sBTC</div>
+            <div className="amount-usd">≈ ${usdAmount} USD</div>
+            {onChainData?.totalDeposited!=null&&<div className="amount-micro">{Number(onChainData.totalDeposited).toLocaleString()} µSTX on-chain</div>}
           </div>
 
-          {/* Block timeline */}
-          <div className="bg-[#111] border border-white/5 rounded-xl p-4">
-            <div className="flex justify-between items-center mb-3">
-              <span className="font-mono text-[10px] text-slate-500 uppercase tracking-widest">
-                Block Timeline
-              </span>
-              <span className="font-mono text-[9px] text-slate-700">
-                Polled {lastPolled}
-              </span>
+          <div className="timeline-card">
+            <div className="timeline-header">
+              <span className="section-label">Block Timeline</span>
+              <span className="polled-label">Polled {lastPolled}</span>
             </div>
-            {deadlineBlock && (
-              <div className="h-1 bg-slate-800 rounded-full overflow-hidden mb-3">
-                <div
-                  className="h-full rounded-full transition-all duration-500"
-                  style={{
-                    width: `${Math.min(100, (blockHeight / deadlineBlock) * 100)}%`,
-                    background: isTimedOut
-                      ? "#ef4444"
-                      : blocksLeft != null && blocksLeft < 50
-                        ? "#f59e0b"
-                        : "#f5c400",
-                  }}
-                />
-              </div>
-            )}
-            <div className="grid grid-cols-3 gap-2">
+            {deadlineBlock&&<div className="progress-track"><div className="progress-fill" style={{width:`${Math.min(100,(blockHeight/deadlineBlock)*100)}%`,background:isTimedOut?"#ef4444":blocksLeft!=null&&blocksLeft<50?"#f59e0b":"#f5c400"}}/></div>}
+            <div className="timeline-cells">
               {[
-                {
-                  label: "Current Block",
-                  value: blockHeight ? `#${blockHeight.toLocaleString()}` : "…",
-                  cls: "text-white",
-                },
-                {
-                  label: "Deadline",
-                  value: deadlineBlock
-                    ? `#${deadlineBlock.toLocaleString()}`
-                    : "N/A",
-                  cls: isTimedOut ? "text-red-400" : "text-slate-400",
-                },
-                {
-                  label: "Blocks Left",
-                  value: isTimedOut
-                    ? "EXPIRED"
-                    : (blocksLeft?.toLocaleString() ?? "—"),
-                  cls: isTimedOut
-                    ? "text-red-400"
-                    : blocksLeft != null && blocksLeft < 50
-                      ? "text-amber-400"
-                      : "text-slate-400",
-                },
-              ].map((c) => (
-                <div key={c.label} className="text-center">
-                  <div className={`font-mono text-sm font-bold ${c.cls}`}>
-                    {c.value}
-                  </div>
-                  <div className="font-mono text-[9px] text-slate-600 uppercase tracking-wider mt-0.5">
-                    {c.label}
-                  </div>
-                </div>
-              ))}
+                {label:"Current Block",value:blockHeight?`#${blockHeight.toLocaleString()}`:"…",color:"#fff"},
+                {label:"Deadline",value:deadlineBlock?`#${deadlineBlock.toLocaleString()}`:"N/A",color:isTimedOut?"#ef4444":"#94a3b8"},
+                {label:"Blocks Left",value:isTimedOut?"EXPIRED":(blocksLeft?.toLocaleString()??"—"),color:isTimedOut?"#ef4444":blocksLeft!=null&&blocksLeft<50?"#f59e0b":"#94a3b8"},
+              ].map((c)=><div key={c.label} className="timeline-cell"><div className="tc-value" style={{color:c.color}}>{c.value}</div><div className="tc-label">{c.label}</div></div>)}
             </div>
           </div>
 
-          {/* Terms */}
-          <div className="bg-[#111] border border-white/5 rounded-xl overflow-hidden">
-            <div className="px-4 py-2.5 border-b border-white/5 font-mono text-[10px] text-slate-500 uppercase tracking-widest">
-              Agreement Terms
-            </div>
+          <div className="terms-card">
+            <div className="terms-header">Agreement Terms</div>
             {[
-              { label: "⚡ Release Condition", value: editedTerms?.condition },
-              { label: "📅 Deadline", value: editedTerms?.deadline },
-              { label: "⚖️ Arbitrator", value: editedTerms?.arbitrator },
-              {
-                label: "⏱ Timeout Policy",
-                value: "Auto-refund to payer after deadline",
-              },
-            ].map((r, i) => (
-              <div
-                key={i}
-                className="flex justify-between items-start px-4 py-2.5 border-b border-white/[0.04] last:border-0 gap-3"
-              >
-                <span className="font-mono text-xs text-slate-500 shrink-0">
-                  {r.label}
-                </span>
-                <span className="text-xs font-semibold text-right leading-snug">
-                  {r.value ?? "—"}
-                </span>
-              </div>
-            ))}
+              {label:"⚡ Release Condition",value:editedTerms?.condition},
+              {label:"📅 Deadline",value:editedTerms?.deadline},
+              {label:"⚖️ Arbitrator",value:editedTerms?.arbitrator},
+              {label:"⏱ Timeout Policy",value:"Auto-refund to payer after deadline"},
+            ].map((r,i)=><div key={i} className="terms-row"><span className="terms-key">{r.label}</span><span className="terms-val">{r.value??"—"}</span></div>)}
           </div>
 
-          {/* Parties */}
-          <div className="flex items-center gap-3">
-            <PartyCard
-              role="Payer"
-              color="yellow"
-              name={payerName}
-              wallet={payerWallet}
-              status={
-                onChainData?.deposited ? "✅ Funds locked" : "⏳ Awaiting lock"
-              }
-              statusGreen={!!onChainData?.deposited}
-              isMe={!isPartyB}
-            />
-            <div className="flex flex-col items-center gap-1 shrink-0">
-              <span className="font-mono text-[9px] text-slate-700 tracking-widest">
-                ESCROW
-              </span>
-              <span className="text-lg text-slate-700">⇄</span>
-            </div>
-            <PartyCard
-              role="Receiver"
-              color="green"
-              name={receiverName}
-              wallet={receiverWallet}
-              status={
-                fundState === "released" ? "✅ Received" : "⏳ Awaiting release"
-              }
-              statusGreen={fundState === "released"}
-              isMe={isPartyB}
-            />
+          <div className="parties-row">
+            <PartyCard role="Payer" color="#f5c400" name={payerName} wallet={payerWallet} status={onChainData?.deposited?"✅ Funds locked":"⏳ Awaiting lock"} statusColor={onChainData?.deposited?"#f5c400":"#475569"} isMe={!isPartyB}/>
+            <div className="parties-arrow"><span style={{fontSize:9,color:"#334155",letterSpacing:1}}>ESCROW</span><span style={{fontSize:18,color:"#334155"}}>⇄</span></div>
+            <PartyCard role="Receiver" color="#22c55e" name={receiverName} wallet={receiverWallet} status={fundState==="released"?"✅ Received":"⏳ Awaiting release"} statusColor={fundState==="released"?"#22c55e":"#475569"} isMe={isPartyB}/>
           </div>
         </section>
       </main>
 
-      {/* ── Dispute modal ── */}
-      {disputeModal && (
-        <div
-          className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-6"
-          onClick={() => setDisputeModal(false)}
-        >
-          <div
-            className="bg-[#111] border border-red-900 rounded-2xl p-7 max-w-sm w-full text-center"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="text-4xl mb-3">⚖️</div>
-            <h3 className="text-lg font-black text-red-300 mb-2">
-              Open a Dispute?
-            </h3>
-            <p className="text-sm text-slate-400 leading-relaxed mb-5">
-              This notifies arbitrator{" "}
-              <strong className="text-white">
-                {editedTerms?.arbitrator ?? "TBD"}
-              </strong>
-              . The contract is paused for{" "}
-              <strong className="text-amber-400">48 hours</strong> — then
-              auto-refunds to payer if unresolved.
-            </p>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setDisputeModal(false)}
-                className="flex-1 py-3 bg-transparent text-slate-400 border border-white/10 rounded-xl text-sm font-semibold hover:bg-white/5 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                disabled={busy.dispute}
-                onClick={() => {
-                  if (agreementId) dispatch(disputeThunk(agreementId));
-                  setDisputeModal(false);
-                }}
-                className="flex-[2] py-3 bg-red-900 text-red-300 border border-red-800 rounded-xl font-bold text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-red-800 transition-colors"
-              >
-                {busy.dispute ? "Opening…" : "Confirm Dispute"}
-              </button>
+      {disputeModal&&(
+        <div className="modal-overlay" onClick={()=>setDisputeModal(false)}>
+          <div className="modal-box" onClick={(e)=>e.stopPropagation()}>
+            <div style={{fontSize:36,marginBottom:14}}>⚖️</div>
+            <h3 className="modal-title">Open a Dispute?</h3>
+            <p className="modal-body">This notifies arbitrator <strong style={{color:"#fff"}}>{editedTerms?.arbitrator??"TBD"}</strong>. The contract is paused for <strong style={{color:"#f59e0b"}}>48 hours</strong> — then auto-refunds to payer if unresolved.</p>
+            <div className="modal-actions">
+              <button className="modal-cancel" onClick={()=>setDisputeModal(false)}>Cancel</button>
+              <button className="modal-confirm" disabled={busy.dispute} onClick={()=>{if(agreementId)dispatch(disputeThunk(agreementId));setDisputeModal(false);}}>{busy.dispute?"Opening…":"Confirm Dispute"}</button>
             </div>
           </div>
         </div>
@@ -524,113 +223,11 @@ export default function DashboardPage() {
   );
 }
 
-// ── Sub-components ────────────────────────────────────────────
+function PartyCard({role,color,name,wallet,status,statusColor,isMe}:{role:string;color:string;name:string;wallet?:string|null;status:string;statusColor:string;isMe:boolean}){return(<div className="party-card" style={{borderColor:`${color}25`}}><div className="party-role" style={{color}}>{role}{isMe&&<span className="party-you" style={{background:`${color}20`,color}}> YOU</span>}</div><div className="party-name">{name}</div><div className="party-status" style={{color:statusColor}}>{status}</div>{wallet&&<div className="party-wallet">{fmtWallet(wallet)}</div>}</div>);}
+function TxBanner({tx,label}:{tx:{status:string;txId:string|null;txUrl:string|null;error:string|null};label:string}){if(tx.status==="idle")return null;const fail=tx.status==="failed";return(<div className="tx-banner" style={{background:fail?"#7f1d1d20":"#f59e0b08",borderColor:fail?"#7f1d1d":"#f59e0b30"}}>{tx.status==="pending"&&<span style={{color:"#f59e0b"}}>⏳ {label} — waiting for wallet…</span>}{tx.status==="confirming"&&<span style={{color:"#f59e0b"}}>⏳ {label} — confirming… {tx.txUrl&&<a href={tx.txUrl} target="_blank" rel="noopener noreferrer" style={{color:"#f5c400"}}>View ↗</a>}</span>}{fail&&<span style={{color:"#f87171"}}>❌ {label} failed: {tx.error}</span>}</div>);}
+function PrimaryBtn({children,disabled,onClick}:{children:React.ReactNode;disabled?:boolean;onClick:()=>void}){return<button className="primary-btn" disabled={disabled} onClick={onClick} style={{opacity:disabled?0.6:1,cursor:disabled?"not-allowed":"pointer"}}>{children}</button>;}
+function DangerBtn({children,disabled,onClick}:{children:React.ReactNode;disabled?:boolean;onClick:()=>void}){return<button className="danger-btn" disabled={disabled} onClick={onClick} style={{opacity:disabled?0.6:1,cursor:disabled?"not-allowed":"pointer"}}>{children}</button>;}
+function Spin(){return<span className="spinner"/>;}
 
-function PartyCard({
-  role,
-  color,
-  name,
-  wallet,
-  status,
-  statusGreen,
-  isMe,
-}: {
-  role: string;
-  color: "yellow" | "green";
-  name: string;
-  wallet?: string | null;
-  status: string;
-  statusGreen: boolean;
-  isMe: boolean;
-}) {
-  const accent =
-    color === "yellow"
-      ? {
-          border: "border-yellow-400/20",
-          tag: "text-yellow-400",
-          you: "bg-yellow-400/20 text-yellow-400",
-        }
-      : {
-          border: "border-green-400/20",
-          tag: "text-green-400",
-          you: "bg-green-400/20 text-green-400",
-        };
-  return (
-    <div className={`flex-1 bg-[#111] border ${accent.border} rounded-xl p-3`}>
-      <div
-        className={`font-mono text-[9px] uppercase tracking-widest mb-1 flex items-center gap-1 ${accent.tag}`}
-      >
-        {role}
-        {isMe && (
-          <span
-            className={`rounded px-1 py-0.5 text-[8px] font-bold ${accent.you}`}
-          >
-            YOU
-          </span>
-        )}
-      </div>
-      <div className="text-sm font-bold">{name}</div>
-      <div
-        className={`font-mono text-[10px] mt-1 ${statusGreen ? "text-green-400" : "text-slate-600"}`}
-      >
-        {status}
-      </div>
-      {wallet && (
-        <div className="font-mono text-[9px] text-slate-700 mt-0.5">
-          {fmtWallet(wallet)}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function TxBanner({
-  tx,
-  label,
-}: {
-  tx: {
-    status: string;
-    txId: string | null;
-    txUrl: string | null;
-    error: string | null;
-  };
-  label: string;
-}) {
-  if (tx.status === "idle") return null;
-  const fail = tx.status === "failed";
-  return (
-    <div
-      className={`border rounded-lg px-3 py-2.5 font-mono text-xs ${fail ? "bg-red-950/20 border-red-900" : "bg-amber-400/5 border-amber-400/20"}`}
-    >
-      {tx.status === "pending" && (
-        <span className="text-amber-400">⏳ {label} — waiting for wallet…</span>
-      )}
-      {tx.status === "confirming" && (
-        <span className="text-amber-400">
-          ⏳ {label} — confirming…{" "}
-          {tx.txUrl && (
-            <a
-              href={tx.txUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-yellow-400 underline"
-            >
-              View ↗
-            </a>
-          )}
-        </span>
-      )}
-      {fail && (
-        <span className="text-red-400">
-          ❌ {label} failed: {tx.error}
-        </span>
-      )}
-    </div>
-  );
-}
-
-function Spin() {
-  return (
-    <span className="w-3.5 h-3.5 border-2 border-current border-t-transparent rounded-full animate-spin inline-block" />
-  );
-}
+const splashCSS=`.detect-wrap{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;background:var(--black,#0a0a0a)}.detect-orb{width:90px;height:90px;border-radius:50%;border:1px solid #f5c40030;background:radial-gradient(circle,#f5c40012 0%,transparent 70%);display:flex;align-items:center;justify-content:center;font-size:34px;margin-bottom:20px;animation:orb-beat 1.1s ease-in-out infinite}.detect-label{font-size:14px;font-family:monospace;color:#64748b;margin-bottom:18px}.dot-row{display:flex;gap:8px}.dot{width:8px;height:8px;border-radius:50%;background:#f5c400;animation:dot-up .7s ease-in-out infinite alternate}@keyframes orb-beat{0%,100%{transform:scale(1)}50%{transform:scale(1.06)}}@keyframes dot-up{from{transform:translateY(0);opacity:.35}to{transform:translateY(-7px);opacity:1}}`;
+const css=`*{box-sizing:border-box}.db-root{min-height:100vh;background:var(--black,#0a0a0a);color:var(--white,#f1f5f9);font-family:system-ui,sans-serif;display:flex;flex-direction:column}.db-topbar{display:flex;align-items:center;justify-content:space-between;padding:12px 24px;border-bottom:1px solid #1f1f1f;background:#0d0d0d;position:sticky;top:0;z-index:40;flex-wrap:wrap;gap:10px}.db-topbar-left{display:flex;align-items:center;gap:10px}.db-topbar-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.db-logo-btn{background:none;border:none;cursor:pointer;padding:0;display:flex}.logo-clause{font-size:18px;font-weight:800;color:#f5c400}.logo-ai{font-size:18px;font-weight:800;color:#fff}.escrow-badge{font-size:11px;font-family:monospace;color:#64748b;background:#161616;border:1px solid #2a2a2a;border-radius:99px;padding:3px 10px}.role-chip{font-size:11px;font-family:monospace;font-weight:700;border:1px solid;border-radius:99px;padding:4px 12px}.state-chip{font-size:11px;font-family:monospace;border:1px solid;border-radius:99px;padding:4px 12px;background:#111;display:flex;align-items:center;gap:5px}.pulse-dot{width:6px;height:6px;border-radius:50%;display:inline-block;animation:pdot 1.4s ease-in-out infinite}@keyframes pdot{0%,100%{opacity:1}50%{opacity:.2}}.db-grid{display:grid;grid-template-columns:340px 1fr;gap:20px;padding:24px;max-width:1120px;margin:0 auto;width:100%;flex:1}.db-left,.db-right{display:flex;flex-direction:column;gap:12px}.role-card{border:1px solid;border-radius:14px;padding:18px 20px}.role-card-tag{font-size:11px;font-family:monospace;text-transform:uppercase;letter-spacing:.12em;margin-bottom:8px}.role-card-name{font-size:20px;font-weight:800}.role-card-wallet{font-size:11px;font-family:monospace;color:#475569;margin-top:4px}.timeout-banner{background:#f59e0b10;border:1px solid #f59e0b;border-radius:10px;padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:10px}.timeout-title{font-size:13px;font-weight:700;color:#f59e0b}.timeout-sub{font-size:11px;color:#94a3b8;margin-top:2px}.timeout-btn{background:#f59e0b;color:#0a0a0a;border:none;border-radius:6px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:5px;flex-shrink:0}.tx-banner{border:1px solid;border-radius:8px;padding:10px 14px;font-size:11px;font-family:monospace}.actions-section{display:flex;flex-direction:column;gap:8px}.actions-title{font-size:10px;font-family:monospace;color:#475569;text-transform:uppercase;letter-spacing:.12em}.info-box{border:1px solid;border-radius:8px;padding:10px 14px;font-size:12px;line-height:1.65}.primary-btn{width:100%;padding:13px 16px;background:#22c55e;color:#0a0a0a;border:none;border-radius:10px;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:7px}.danger-btn{width:100%;padding:12px 16px;background:transparent;color:#f87171;border:1px solid #7f1d1d;border-radius:10px;font-size:13px;font-weight:600}.finished-card{border:1px solid #1f1f1f;border-radius:14px;padding:28px 20px;text-align:center;background:#111}.finished-icon{font-size:34px}.finished-title{font-size:17px;font-weight:800;margin-top:10px}.finished-sub{font-size:13px;color:#94a3b8;margin-top:6px;line-height:1.5}.new-agreement-btn{margin-top:20px;padding:12px 24px;background:#f5c400;color:#0a0a0a;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer}.amount-card{background:linear-gradient(135deg,#140f00 0%,#111 100%);border:1px solid #f5c40022;border-radius:16px;padding:24px;text-align:center;position:relative;overflow:hidden}.amount-label{font-size:10px;font-family:monospace;color:#f5c400;text-transform:uppercase;letter-spacing:.18em;margin-bottom:10px}.amount-sbtc{font-size:38px;font-weight:900;color:#f5c400;letter-spacing:-1.5px;line-height:1}.amount-unit{font-size:13px;font-family:monospace;color:#f5c400;margin-top:3px}.amount-usd{font-size:15px;color:#fff;margin-top:8px;font-weight:600}.amount-micro{font-size:10px;font-family:monospace;color:#334155;margin-top:6px}.timeline-card{background:#111;border:1px solid #1f1f1f;border-radius:12px;padding:16px 18px}.timeline-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}.section-label{font-size:10px;font-family:monospace;color:#475569;text-transform:uppercase;letter-spacing:.1em}.polled-label{font-size:9px;font-family:monospace;color:#334155}.progress-track{height:4px;background:#1e293b;border-radius:99px;overflow:hidden;margin-bottom:12px}.progress-fill{height:100%;border-radius:99px;transition:width .4s ease}.timeline-cells{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}.timeline-cell{text-align:center}.tc-value{font-size:13px;font-weight:700;font-family:monospace}.tc-label{font-size:9px;color:#334155;text-transform:uppercase;letter-spacing:.08em;margin-top:3px}.terms-card{background:#111;border:1px solid #1f1f1f;border-radius:12px;overflow:hidden}.terms-header{padding:10px 16px;border-bottom:1px solid #1a1a1a;font-size:10px;font-family:monospace;color:#475569;text-transform:uppercase;letter-spacing:.1em}.terms-row{display:flex;justify-content:space-between;align-items:flex-start;padding:9px 16px;border-bottom:1px solid #0f0f0f;gap:12px}.terms-row:last-child{border-bottom:none}.terms-key{font-size:11px;font-family:monospace;color:#475569;flex-shrink:0}.terms-val{font-size:12px;font-weight:600;text-align:right;line-height:1.4}.parties-row{display:flex;align-items:center;gap:10px}.party-card{flex:1;background:#111;border:1px solid;border-radius:10px;padding:12px 14px}.party-role{font-size:9px;font-family:monospace;text-transform:uppercase;letter-spacing:.12em;margin-bottom:4px;display:flex;align-items:center;gap:5px}.party-you{border-radius:4px;padding:1px 5px;font-size:8px}.party-name{font-size:13px;font-weight:700}.party-status{font-size:10px;font-family:monospace;margin-top:4px}.party-wallet{font-size:9px;font-family:monospace;color:#334155;margin-top:3px}.parties-arrow{display:flex;flex-direction:column;align-items:center;gap:4px;flex-shrink:0}.spinner{width:14px;height:14px;border:2px solid #0a0a0a;border-top-color:transparent;border-radius:50%;display:inline-block;animation:spin .7s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}.modal-overlay{position:fixed;inset:0;z-index:100;background:rgba(0,0,0,.75);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;padding:24px}.modal-box{background:#111;border:1px solid #7f1d1d;border-radius:16px;padding:28px 24px;max-width:420px;width:100%;text-align:center}.modal-title{font-size:18px;font-weight:800;color:#fca5a5;margin-bottom:10px}.modal-body{font-size:13px;color:#94a3b8;line-height:1.7;margin-bottom:22px}.modal-actions{display:flex;gap:10px}.modal-cancel{flex:1;padding:12px;background:transparent;color:#94a3b8;border:1px solid #1f1f1f;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600}.modal-confirm{flex:2;padding:12px;background:#7f1d1d;color:#fca5a5;border:1px solid #991b1b;border-radius:8px;cursor:pointer;font-weight:700;font-size:13px}.modal-confirm:disabled{opacity:.5;cursor:not-allowed}@media(max-width:780px){.db-grid{grid-template-columns:1fr;padding:16px}.db-topbar{padding:10px 16px}}`;

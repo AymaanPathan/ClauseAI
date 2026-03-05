@@ -3,11 +3,11 @@
 // All READ-ONLY contract calls via Stacks API.
 // These do NOT require wallet signing.
 //
-// Key changes from v1:
-//   • OnChainAgreement reflects new map shape:
-//     - deposited (bool) replaces partyADeposited / partyBDeposited
-//     - amount replaces amountPerParty
-//     - removed partyAAmount, partyBAmount
+// FIXES:
+//   • getAgreement: contract returns (optional) — when agreementId doesn't
+//     exist yet, cvToJSON gives { type: "(optional none)", value: null }.
+//     Guard ALL field accesses so we never crash on undefined.
+//   • All read functions now safely return null instead of throwing.
 // ============================================================
 
 import {
@@ -30,11 +30,11 @@ const STACKS_NETWORK =
 // ── Parsed agreement from chain ───────────────────────────────
 export interface OnChainAgreement {
   state: ContractState;
-  partyA: string; // Payer
-  partyB: string; // Receiver
+  partyA: string;
+  partyB: string;
   arbitrator: string;
-  amount: bigint; // Amount payer locked (or will lock)
-  deposited: boolean; // Has payer deposited?
+  amount: bigint;
+  deposited: boolean;
   totalDeposited: bigint;
   deadlineBlock: bigint;
   disputeBlock: bigint;
@@ -55,6 +55,17 @@ async function readContract(
   });
 }
 
+// ── Safe field reader ─────────────────────────────────────────
+// cvToJSON nested values can be { value: X } or { value: { value: X } }
+// depending on Clarity type. This safely unwraps one level.
+function safeVal(field: unknown): unknown {
+  if (field === null || field === undefined) return undefined;
+  if (typeof field === "object" && field !== null && "value" in field) {
+    return (field as { value: unknown }).value;
+  }
+  return field;
+}
+
 // ── get-agreement ─────────────────────────────────────────────
 export async function getAgreement(
   agreementId: string,
@@ -63,20 +74,57 @@ export async function getAgreement(
     const result = await readContract("get-agreement", [
       stringAsciiCV(agreementId),
     ]);
-    const json = cvToJSON(result);
-    if (!json.value) return null;
 
-    const v = json.value;
+    const json = cvToJSON(result);
+
+    // Contract returns (optional {map}) — if none, value is null
+    if (!json || json.value === null || json.value === undefined) {
+      return null;
+    }
+
+    // Handle both direct value and nested optional: { type: "(optional ...)", value: {...} }
+    const raw = json.value;
+
+    // If it's still wrapped (some versions double-wrap), unwrap
+    const v: Record<string, unknown> =
+      raw &&
+      typeof raw === "object" &&
+      "value" in raw &&
+      typeof (raw as { value: unknown }).value === "object"
+        ? ((raw as { value: unknown }).value as Record<string, unknown>)
+        : (raw as Record<string, unknown>);
+
+    if (!v) return null;
+
+    // Guard every field — if contract map keys are missing, return null
+    const stateRaw = safeVal(v["state"]);
+    const partyARaw = safeVal(v["party-a"]);
+    const partyBRaw = safeVal(v["party-b"]);
+    const arbitratorRaw = safeVal(v["arbitrator"]);
+    const amountRaw = safeVal(v["amount"]);
+    const depositedRaw = safeVal(v["deposited"]);
+    const totalDepositedRaw = safeVal(v["total-deposited"]);
+    const deadlineBlockRaw = safeVal(v["deadline-block"]);
+    const disputeBlockRaw = safeVal(v["dispute-block"]);
+
+    if (stateRaw === undefined || partyARaw === undefined) {
+      console.warn(
+        "[contractReads] getAgreement: missing required fields in response",
+        v,
+      );
+      return null;
+    }
+
     return {
-      state: Number(v["state"].value) as ContractState,
-      partyA: v["party-a"].value,
-      partyB: v["party-b"].value,
-      arbitrator: v["arbitrator"].value,
-      amount: BigInt(v["amount"].value),
-      deposited: v["deposited"].value === true,
-      totalDeposited: BigInt(v["total-deposited"].value),
-      deadlineBlock: BigInt(v["deadline-block"].value),
-      disputeBlock: BigInt(v["dispute-block"].value),
+      state: Number(stateRaw) as ContractState,
+      partyA: String(partyARaw ?? ""),
+      partyB: String(partyBRaw ?? ""),
+      arbitrator: String(arbitratorRaw ?? ""),
+      amount: BigInt(String(amountRaw ?? "0")),
+      deposited: depositedRaw === true || depositedRaw === "true",
+      totalDeposited: BigInt(String(totalDepositedRaw ?? "0")),
+      deadlineBlock: BigInt(String(deadlineBlockRaw ?? "0")),
+      disputeBlock: BigInt(String(disputeBlockRaw ?? "0")),
     };
   } catch (err) {
     console.error("[contractReads] getAgreement error:", err);
@@ -93,8 +141,16 @@ export async function getAgreementState(
       stringAsciiCV(agreementId),
     ]);
     const json = cvToJSON(result);
-    if (json.type === "err") return null;
-    return Number(json.value.value) as ContractState;
+    if (
+      !json ||
+      json.type === "err" ||
+      json.value === null ||
+      json.value === undefined
+    ) {
+      return null;
+    }
+    const val = safeVal(json.value);
+    return val !== undefined ? (Number(val) as ContractState) : null;
   } catch (err) {
     console.error("[contractReads] getAgreementState error:", err);
     return null;
@@ -110,8 +166,16 @@ export async function getTotalDeposited(
       stringAsciiCV(agreementId),
     ]);
     const json = cvToJSON(result);
-    if (json.type === "err") return null;
-    return BigInt(json.value.value);
+    if (
+      !json ||
+      json.type === "err" ||
+      json.value === null ||
+      json.value === undefined
+    ) {
+      return null;
+    }
+    const val = safeVal(json.value);
+    return val !== undefined ? BigInt(String(val)) : null;
   } catch (err) {
     console.error("[contractReads] getTotalDeposited error:", err);
     return null;
@@ -125,8 +189,16 @@ export async function isTimedOut(agreementId: string): Promise<boolean> {
       stringAsciiCV(agreementId),
     ]);
     const json = cvToJSON(result);
-    if (json.type === "err") return false;
-    return json.value.value === true;
+    if (
+      !json ||
+      json.type === "err" ||
+      json.value === null ||
+      json.value === undefined
+    ) {
+      return false;
+    }
+    const val = safeVal(json.value);
+    return val === true || val === "true";
   } catch {
     return false;
   }
@@ -139,8 +211,16 @@ export async function isArbTimedOut(agreementId: string): Promise<boolean> {
       stringAsciiCV(agreementId),
     ]);
     const json = cvToJSON(result);
-    if (json.type === "err") return false;
-    return json.value.value === true;
+    if (
+      !json ||
+      json.type === "err" ||
+      json.value === null ||
+      json.value === undefined
+    ) {
+      return false;
+    }
+    const val = safeVal(json.value);
+    return val === true || val === "true";
   } catch {
     return false;
   }

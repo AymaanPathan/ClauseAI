@@ -1,14 +1,9 @@
 "use client";
-// ============================================================
-// app/agreement/[id]/page.tsx — Party B Join Page
-// Route: /agreement/:id
-// This is the page Party B lands on when they click the share link.
-// Flow:
-//   1. Load agreement terms from presence snapshot (Party A saved them)
-//   2. Show terms for review
-//   3. Connect wallet → register as Party B
-//   4. Navigate to ScreenPartyBDeposit
-// ============================================================
+// app/agreement/[id]/page.tsx
+// CHANGES FROM ORIGINAL:
+//   1. DepositState "Go to Dashboard" now navigates to /dashboard (not /)
+//   2. setAsPartyB is dispatched BEFORE navigation so Redux state is ready
+//   3. localStorage is written before navigation so /dashboard can rehydrate
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -110,11 +105,10 @@ export default function JoinPage() {
     initialize();
   }, [agreementId, dispatch]);
 
-  // ── Once myDepositDone, navigate to dashboard ─────────────────
+  // ── Once myDepositDone, navigate to /dashboard ────────────────
   useEffect(() => {
     if (myDepositDone && step === "depositing") {
-      // Small delay for UX
-      setTimeout(() => router.push("/"), 1500);
+      setTimeout(() => router.push("/dashboard"), 1500);
     }
   }, [myDepositDone, step, router]);
 
@@ -203,6 +197,7 @@ export default function JoinPage() {
         txDeposit={txDeposit}
         myDepositDone={myDepositDone}
         dispatch={dispatch}
+        router={router}
       />
     );
   }
@@ -326,7 +321,6 @@ function ReviewTermsState({
           </p>
         </div>
 
-        {/* Party A info */}
         {counterpartyWallet && (
           <div
             className="animate-fade-up delay-1"
@@ -359,7 +353,6 @@ function ReviewTermsState({
           </div>
         )}
 
-        {/* Terms box */}
         <div
           className="animate-fade-up delay-2"
           style={{
@@ -450,7 +443,6 @@ function ReviewTermsState({
           )}
         </div>
 
-        {/* Accept checkbox */}
         <label
           className="animate-fade-up delay-3"
           style={{
@@ -486,7 +478,6 @@ function ReviewTermsState({
           </span>
         </label>
 
-        {/* Proceed */}
         <button
           className="animate-fade-up delay-4"
           onClick={onProceed}
@@ -690,6 +681,7 @@ function DepositState({
   txDeposit,
   myDepositDone,
   dispatch,
+  router,
 }: {
   editedTerms: Record<string, unknown> | null;
   agreementId: string;
@@ -703,10 +695,18 @@ function DepositState({
   };
   myDepositDone: boolean;
   dispatch: ReturnType<typeof useAppDispatch>;
+  router: ReturnType<typeof useRouter>;
 }) {
   const amountUsd = parseFloat(String(editedTerms?.amount_usd ?? "0"));
 
-  // Receiver never deposits — just wait for payer and go to dashboard
+  function handleGoToDashboard() {
+    // Ensure Party B is set in Redux + localStorage before navigating
+    dispatch(setAsPartyB({ agreementId, address: walletAddress! }));
+    dispatch(setScreen("dashboard"));
+    // Navigate to the dedicated dashboard route
+    router.push("/dashboard");
+  }
+
   return (
     <CenterLayout>
       <div style={{ maxWidth: 520, width: "100%", textAlign: "center" }}>
@@ -756,7 +756,6 @@ function DepositState({
           </p>
         </div>
 
-        {/* Role clarification */}
         <div
           className="animate-fade-up delay-1"
           style={{
@@ -835,7 +834,6 @@ function DepositState({
           ))}
         </div>
 
-        {/* Your wallet */}
         <div
           className="animate-fade-up delay-2"
           style={{
@@ -867,12 +865,10 @@ function DepositState({
           </div>
         </div>
 
+        {/* ── FIXED: navigates to /dashboard, not / ── */}
         <button
           className="animate-fade-up delay-3"
-          onClick={() => {
-            dispatch(setAsPartyB({ agreementId, address: walletAddress! }));
-            dispatch(setScreen("dashboard"));
-          }}
+          onClick={handleGoToDashboard}
           style={{
             width: "100%",
             padding: "16px",
@@ -916,63 +912,6 @@ function CenterLayout({ children }: { children: React.ReactNode }) {
       }}
     >
       {children}
-    </div>
-  );
-}
-
-function MiniPartyCard({
-  label,
-  name,
-  wallet,
-  deposited,
-}: {
-  label: string;
-  name: string;
-  wallet: string | null;
-  deposited: boolean;
-}) {
-  return (
-    <div
-      style={{
-        background: "var(--black-2)",
-        border: `1px solid ${deposited ? "#22c55e40" : "var(--black-4)"}`,
-        borderRadius: 10,
-        padding: "12px 14px",
-      }}
-    >
-      <div
-        style={{
-          fontSize: 10,
-          fontFamily: "var(--font-mono)",
-          color: "var(--grey-1)",
-          textTransform: "uppercase",
-          marginBottom: 4,
-        }}
-      >
-        {label}
-      </div>
-      <div style={{ fontSize: 13, fontWeight: 700 }}>{name}</div>
-      <div
-        style={{
-          fontSize: 10,
-          color: deposited ? "#22c55e" : "var(--grey-2)",
-          marginTop: 4,
-        }}
-      >
-        {deposited ? "✅ Deposited" : "⏳ Pending"}
-      </div>
-      {wallet && (
-        <div
-          style={{
-            fontSize: 9,
-            fontFamily: "var(--font-mono)",
-            color: "var(--grey-2)",
-            marginTop: 2,
-          }}
-        >
-          {wallet.slice(0, 6)}...{wallet.slice(-4)}
-        </div>
-      )}
     </div>
   );
 }

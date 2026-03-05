@@ -53,9 +53,9 @@ export default function ScreenDescribe() {
   const typeMeta = agreementType ? TYPE_LABELS[agreementType] : null;
 
   const [text, setText] = useState(
-    "Ahmed is hiring Bob to design a logo by March 15. He pays $200 on delivery.",
+    "Aymaan is hiring Bob to design a logo by March 15. He pays $200 on delivery.",
   );
-  const [payer, setPayer] = useState("Ahmed");
+  const [payer, setPayer] = useState("Aymaan");
   const [receiver, setReceiver] = useState("Bob");
   const [arbitrator, setArbitrator] = useState("TBD");
   const [focused, setFocused] = useState<string | null>(null);

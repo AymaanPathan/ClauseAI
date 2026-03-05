@@ -19,7 +19,7 @@
 (define-constant TIMEOUT-BLOCKS     u432)
 (define-constant ARB-TIMEOUT-BLOCKS u288)
 
-(define-constant MIN-AMOUNT u1000)
+(define-constant MIN-AMOUNT u1000)  
 
 (define-data-var contract-owner principal tx-sender)
 

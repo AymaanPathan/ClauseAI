@@ -15,7 +15,7 @@ export const STACKS_NETWORK =
 // ── Deployed contract ─────────────────────────────────────────
 // Update CONTRACT_ADDRESS after you deploy the Clarity contract
 export const CONTRACT_ADDRESS = "ST2BRZZ2514G61W0VVHAXC4ZHCWPS897Z030TXWEY";
-export const CONTRACT_NAME = "clauseai-escrow";
+export const CONTRACT_NAME = "clauseai-escrow-v2";
 
 // Full principal used in contract calls
 export const CONTRACT_PRINCIPAL =

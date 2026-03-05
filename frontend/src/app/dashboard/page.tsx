@@ -100,7 +100,7 @@ export default function DashboardPage() {
   }, [ready, agreementId, poll]);
 
   // ── Derived ───────────────────────────────────────────────────
-  const onChainState = onChainData?.state ?? 1;
+  const onChainState = onChainData?.state ?? 0;
   const meta = STATE_META[onChainState] ?? STATE_META[1];
   const sbtcAmount = fmtSbtc(
     amountLocked,
@@ -128,6 +128,7 @@ export default function DashboardPage() {
   const receiverWallet = isPartyB ? walletAddress : counterpartyWallet;
   const isFinished = onChainState === 2 || onChainState === 3;
   const roleColor = isPartyB ? "#22c55e" : "#f5c400";
+  const loadingChain = !onChainData;
 
   if (!ready) {
     return (
@@ -259,7 +260,12 @@ export default function DashboardPage() {
               </div>
               {/* Payer releases funds → calls complete() on-chain */}
               <PrimaryBtn
-                disabled={busy.complete || busy.dispute}
+                disabled={
+                  loadingChain ||
+                  busy.complete ||
+                  busy.dispute ||
+                  onChainState !== 1
+                }
                 onClick={() =>
                   agreementId && dispatch(completeThunk(agreementId))
                 }

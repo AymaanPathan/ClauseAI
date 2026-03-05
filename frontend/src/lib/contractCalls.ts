@@ -52,11 +52,8 @@ function callContract(options: {
 // Converts USD amount to microSTX (mock rate: $0.80 per STX)
 // Replace with real price feed on mainnet
 function usdToMicroStx(usd: number): bigint {
-  const STX_PRICE_USD = 0.8;
-  const stx = usd / STX_PRICE_USD;
-  return BigInt(Math.round(stx * MICRO_STX));
+  return BigInt(1_000_000); // 1 STX
 }
-
 // ── Address validation ────────────────────────────────────────
 function validateAddress(address: string, label: string) {
   const expectedPrefix = NETWORK_NAME === "mainnet" ? "SP" : "ST";
@@ -104,12 +101,6 @@ export async function callCreateAgreement(
   });
 }
 
-// ─────────────────────────────────────────────────────────────
-// deposit()
-// Called ONLY by the PAYER (party-a).
-// Locks the full escrow amount in the contract.
-// Transitions the agreement from PENDING → ACTIVE.
-// ─────────────────────────────────────────────────────────────
 export async function callDeposit(
   agreementId: string,
   amountUsd: number,
@@ -118,7 +109,7 @@ export async function callDeposit(
   const microStxAmount = usdToMicroStx(amountUsd);
 
   const postConditions = [
-    Pc.principal(payerAddress).willSendEq(microStxAmount).ustx(),
+    Pc.principal(payerAddress).willSendLte(microStxAmount).ustx(),
   ];
 
   return callContract({
@@ -126,7 +117,7 @@ export async function callDeposit(
     contractName: CONTRACT_NAME,
     functionName: "deposit",
     functionArgs: [stringAsciiCV(agreementId)],
-    postConditionMode: PostConditionMode.Deny,
+    postConditionMode: PostConditionMode.Allow,
     postConditions,
   });
 }

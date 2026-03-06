@@ -1,12 +1,15 @@
 // ============================================================
-// lib/presenceApi.ts
+// api/PresenceaApi.ts  (matches the import name in your codebase)
+// Handles presence registration, polling, and SSE subscription.
 // ============================================================
 
-import axiosInstance from "@/lib/axiosSetup";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001/api";
+
+// ── Types ─────────────────────────────────────────────────────
 
 export interface PresenceState {
-  partyA: string | null; // Payer address
-  partyB: string | null; // Receiver address
+  partyA: string | null;
+  partyB: string | null;
   partyAJoinedAt: number | null;
   partyBJoinedAt: number | null;
   termsHash: string | null;
@@ -15,6 +18,9 @@ export interface PresenceState {
   createdAt: number | null;
 }
 
+// ── REST helpers ──────────────────────────────────────────────
+
+/** Register a party (partyA or partyB) for an agreement */
 export async function registerParty(
   agreementId: string,
   role: "partyA" | "partyB",
@@ -22,102 +28,122 @@ export async function registerParty(
   termsHash?: string,
   termsSnapshot?: Record<string, unknown>,
 ): Promise<PresenceState> {
-  const { data } = await axiosInstance.post<PresenceState>(
-    `/api/agreement/${agreementId}`,
-    { role, address, termsHash, termsSnapshot },
-  );
-  return data;
+  const res = await fetch(`${API_BASE}/agreement/${agreementId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ role, address, termsHash, termsSnapshot }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error ?? `Presence register failed: ${res.status}`);
+  }
+  return res.json();
 }
 
+/** One-shot poll of current presence state */
 export async function getPresence(agreementId: string): Promise<PresenceState> {
-  const { data } = await axiosInstance.get<PresenceState>(
-    `/api/agreement/${agreementId}`,
-  );
-  return data;
+  const res = await fetch(`${API_BASE}/agreement/${agreementId}`);
+  if (!res.ok) {
+    throw new Error(`Presence fetch failed: ${res.status}`);
+  }
+  return res.json();
 }
 
+/** Delete presence entry (cleanup) */
+export async function deletePresence(agreementId: string): Promise<void> {
+  await fetch(`${API_BASE}/agreement/${agreementId}`, { method: "DELETE" });
+}
+
+// ── SSE subscription ──────────────────────────────────────────
+
+/**
+ * Subscribe to real-time presence updates via Server-Sent Events.
+ *
+ * @param agreementId  The agreement ID to watch
+ * @param onUpdate     Called with fresh PresenceState on every event
+ * @param onError      Called on connection errors (non-fatal — auto-reconnects)
+ * @returns            Unsubscribe function — call it to close the SSE connection
+ *
+ * @example
+ * const unsub = subscribePresence(id, (p) => dispatch(applyPresenceUpdate(p)));
+ * // later:
+ * unsub();
+ */
 export function subscribePresence(
   agreementId: string,
   onUpdate: (state: PresenceState) => void,
   onError?: (err: Event) => void,
 ): () => void {
-  const backendUrl =
-    process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:3001";
-  const url = `${backendUrl}/api/agreement/${agreementId}/events`;
-
   let es: EventSource | null = null;
-  let pollFallback: ReturnType<typeof setInterval> | null = null;
   let closed = false;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let retryDelay = 2_000; // start at 2s, back off to 30s max
 
-  function startSSE() {
-    try {
-      es = new EventSource(url);
+  function connect() {
+    if (closed) return;
 
-      es.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data) as PresenceState;
-          onUpdate(data);
-        } catch {
-          // ignore parse errors
-        }
-      };
+    es = new EventSource(`${API_BASE}/agreement/${agreementId}/events`);
 
-      es.onerror = (err) => {
-        console.warn("[SSE] Connection error — falling back to polling", err);
-        onError?.(err);
-        es?.close();
-        es = null;
-        if (!closed) startPollingFallback();
-      };
-    } catch {
-      startPollingFallback();
-    }
-  }
-
-  function startPollingFallback() {
-    if (pollFallback) return;
-    pollFallback = setInterval(async () => {
-      if (closed) {
-        clearInterval(pollFallback!);
-        return;
-      }
+    es.onmessage = (event) => {
+      retryDelay = 2_000; // reset backoff on successful message
       try {
-        const state = await getPresence(agreementId);
-        onUpdate(state);
-        if (typeof EventSource !== "undefined" && !es) {
-          clearInterval(pollFallback!);
-          pollFallback = null;
-          startSSE();
-        }
+        const data = JSON.parse(event.data) as PresenceState;
+        onUpdate(data);
       } catch {
-        // keep retrying
+        // malformed event — ignore
       }
-    }, 3_000);
+    };
+
+    es.onerror = (err) => {
+      onError?.(err);
+      es?.close();
+      es = null;
+
+      if (!closed) {
+        // exponential backoff: 2s → 4s → 8s → … → 30s
+        retryTimer = setTimeout(() => {
+          retryDelay = Math.min(retryDelay * 2, 30_000);
+          connect();
+        }, retryDelay);
+      }
+    };
   }
 
-  if (typeof EventSource !== "undefined") {
-    startSSE();
-  } else {
-    startPollingFallback();
-  }
+  connect();
 
+  // Return unsubscribe function
   return () => {
     closed = true;
+    if (retryTimer !== null) clearTimeout(retryTimer);
     es?.close();
-    if (pollFallback) clearInterval(pollFallback);
+    es = null;
   };
 }
 
-export async function deletePresence(agreementId: string): Promise<void> {
-  await axiosInstance.delete(`/api/agreement/${agreementId}`);
+// ── Utility ───────────────────────────────────────────────────
+
+/**
+ * Stable hash of the parsed terms — used to detect if Party B
+ * is viewing the same version of the agreement Party A created.
+ */
+export function hashTerms(terms: Record<string, unknown>): string {
+  const stable = JSON.stringify(terms, Object.keys(terms).sort());
+  let hash = 0;
+  for (let i = 0; i < stable.length; i++) {
+    const chr = stable.charCodeAt(i);
+    hash = (hash << 5) - hash + chr;
+    hash |= 0; // convert to 32-bit int
+  }
+  return Math.abs(hash).toString(16);
 }
 
-export function hashTerms(terms: object): string {
-  const str = JSON.stringify(terms, Object.keys(terms).sort());
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = (hash << 5) - hash + str.charCodeAt(i);
-    hash |= 0;
-  }
-  return Math.abs(hash).toString(16).padStart(8, "0");
+/**
+ * Returns a human-readable "joined X ago" string.
+ */
+export function timeAgo(ts: number | null): string {
+  if (!ts) return "just now";
+  const diff = Math.floor((Date.now() - ts) / 1000);
+  if (diff < 60) return `${diff}s ago`;
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  return `${Math.floor(diff / 3600)}h ago`;
 }

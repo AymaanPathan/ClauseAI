@@ -4,16 +4,22 @@
 
 import axiosInstance from "@/lib/axiosSetup";
 
-export type AgreementType = "freelance" | "rental" | "trade" | "bet";
+export type AgreementType =
+  | "freelance"
+  | "rental"
+  | "trade"
+  | "bet"
+  | "multi-phase";
 
 export interface ParseRequest {
   type: AgreementType;
   text: string;
 }
 
+// ── V1 schema — rental / bet (single payment) ─────────────────
 export interface ParsedAgreement {
-  partyA: string; // Payer
-  partyB: string; // Receiver
+  partyA: string;
+  partyB: string;
   amount_usd: string;
   deadline: string;
   condition: string;
@@ -23,14 +29,46 @@ export interface ParsedAgreement {
   notes: string;
 }
 
+// ── V2 schema — freelance / trade / multi-phase (milestones) ──
+export interface Milestone {
+  title: string;
+  percentage: number; // integer 0–100, all milestones must sum to 100
+  deadline: string; // ISO 8601 or ""
+  condition: string;
+}
+
+export interface ParsedAgreementV2 {
+  payer: string;
+  receiver: string;
+  total_usd: string;
+  milestones: Milestone[];
+  arbitrator: string;
+  confidence: "high" | "medium" | "low";
+  missing_fields: string[];
+  notes: string;
+}
+
+// ── Type guard ────────────────────────────────────────────────
+export function isV2(p: unknown): p is ParsedAgreementV2 {
+  return (
+    typeof p === "object" &&
+    p !== null &&
+    "milestones" in p &&
+    Array.isArray((p as ParsedAgreementV2).milestones)
+  );
+}
+
+// ── Response ──────────────────────────────────────────────────
 export interface ParseResponse {
   success: boolean;
-  data?: ParsedAgreement;
+  data?: ParsedAgreement | ParsedAgreementV2;
   error?: string;
   meta: {
     provider: string;
     model: string;
     type: AgreementType;
+    schema?: "v1" | "v2";
+    milestone_count?: number | null;
     latency_ms: number;
   };
 }
@@ -40,6 +78,7 @@ export interface ParserHealthResponse {
   config: { provider: string; model: string };
 }
 
+// ── API calls ─────────────────────────────────────────────────
 export const parseAgreement = async (
   payload: ParseRequest,
 ): Promise<ParseResponse> => {

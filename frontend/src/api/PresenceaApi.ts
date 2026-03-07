@@ -3,7 +3,7 @@
 // Handles presence registration, polling, and SSE subscription.
 // ============================================================
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001/api";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
 
 // ── Types ─────────────────────────────────────────────────────
 

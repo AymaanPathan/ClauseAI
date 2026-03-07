@@ -1,128 +1,150 @@
 "use client";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
-import { setScreen, resetAll } from "../../store/slices/agreementSlice";
-
-const STEPS = [
-  { id: "select-type", label: "Type" },
-  { id: "describe", label: "Describe" },
-  { id: "parsed-terms", label: "Review" },
-  { id: "connect-wallet", label: "Wallet" },
-  { id: "share-link", label: "Share" },
-  { id: "lock-funds", label: "Lock" },
-  { id: "dashboard", label: "Live" },
-];
+import { setScreen } from "@/store/slices/agreementSlice";
 
 export default function Topbar() {
   const dispatch = useAppDispatch();
   const screen = useAppSelector((s) => s.agreement.currentScreen);
-  const stepIdx = STEPS.findIndex((s) => s.id === screen);
+
+  const STEPS = [
+    { key: "select-type", label: "Type" },
+    { key: "describe", label: "Describe" },
+    { key: "parsed-terms", label: "Review" },
+    { key: "connect-wallet", label: "Wallet" },
+    { key: "share-link", label: "Invite" },
+    { key: "lock-funds", label: "Lock" },
+  ];
+
+  const currentIndex = STEPS.findIndex((s) => s.key === screen);
 
   return (
-    <div
-      style={{
-        position: "sticky",
-        top: 0,
-        zIndex: 100,
-        background: "rgba(8,8,8,0.85)",
-        backdropFilter: "blur(16px)",
-        borderBottom: "1px solid var(--black-4)",
-        padding: "0 24px",
-        height: 56,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-      }}
-    >
+    <header className="topbar">
       {/* Logo */}
       <button
-        onClick={() => dispatch(resetAll())}
+        onClick={() => dispatch(setScreen("landing"))}
         style={{
           background: "none",
           border: "none",
           cursor: "pointer",
           display: "flex",
           alignItems: "center",
-          gap: 8,
+          gap: 2,
+          padding: 0,
+          flexShrink: 0,
         }}
       >
         <span
           style={{
-            fontSize: 18,
-            fontWeight: 800,
-            color: "var(--yellow)",
-            letterSpacing: "-0.5px",
+            fontSize: 14,
+            fontWeight: 700,
+            color: "var(--text-1)",
+            letterSpacing: "-0.03em",
           }}
         >
           Clause
         </span>
         <span
           style={{
-            fontSize: 18,
-            fontWeight: 800,
-            color: "var(--white)",
-            letterSpacing: "-0.5px",
+            fontSize: 14,
+            fontWeight: 300,
+            color: "var(--text-3)",
+            letterSpacing: "-0.03em",
           }}
         >
           Ai
         </span>
       </button>
 
-      {/* Step indicators */}
-      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-        {STEPS.map((step, i) => {
-          const done = i < stepIdx;
-          const active = i === stepIdx;
-          return (
-            <div
-              key={step.id}
-              style={{ display: "flex", alignItems: "center", gap: 4 }}
-            >
+      {/* Step progress */}
+      {currentIndex >= 0 && (
+        <div
+          style={{
+            flex: 1,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 0,
+          }}
+        >
+          {STEPS.map((step, i) => {
+            const done = i < currentIndex;
+            const active = i === currentIndex;
+            const future = i > currentIndex;
+            return (
               <div
-                style={{
-                  width: active ? "auto" : 6,
-                  height: 6,
-                  padding: active ? "2px 10px" : 0,
-                  borderRadius: 99,
-                  background: active
-                    ? "var(--yellow)"
-                    : done
-                      ? "var(--yellow)"
-                      : "var(--black-5)",
-                  fontSize: 10,
-                  fontWeight: 700,
-                  color: "var(--black)",
-                  display: "flex",
-                  alignItems: "center",
-                  transition: "all 0.3s ease",
-                  fontFamily: "var(--font-mono)",
-                }}
+                key={step.key}
+                style={{ display: "flex", alignItems: "center" }}
               >
-                {active ? step.label : ""}
-              </div>
-              {i < STEPS.length - 1 && (
                 <div
                   style={{
-                    width: 12,
-                    height: 1,
-                    background: done ? "var(--yellow)" : "var(--black-4)",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "3px 10px",
+                    borderRadius: 99,
+                    background: active ? "var(--bg-3)" : "transparent",
+                    border: active
+                      ? "1px solid var(--border-hi)"
+                      : "1px solid transparent",
+                    transition: "all var(--fast) var(--ease)",
                   }}
-                />
-              )}
-            </div>
-          );
-        })}
-      </div>
+                >
+                  <span
+                    style={{
+                      width: 5,
+                      height: 5,
+                      borderRadius: "50%",
+                      background: done
+                        ? "var(--green)"
+                        : active
+                          ? "var(--text-1)"
+                          : "var(--bg-5)",
+                      display: "inline-block",
+                      flexShrink: 0,
+                    }}
+                  />
+                  <span
+                    style={{
+                      fontSize: 11,
+                      fontFamily: "var(--mono)",
+                      color: active
+                        ? "var(--text-1)"
+                        : done
+                          ? "var(--text-3)"
+                          : "var(--text-4)",
+                      letterSpacing: "0.04em",
+                      fontWeight: active ? 500 : 400,
+                    }}
+                  >
+                    {step.label}
+                  </span>
+                </div>
+                {i < STEPS.length - 1 && (
+                  <div
+                    style={{
+                      width: 20,
+                      height: 1,
+                      background:
+                        i < currentIndex ? "var(--border-hi)" : "var(--border)",
+                      margin: "0 2px",
+                    }}
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
 
-      {/* Right side */}
+      {/* Right */}
       <div
-        style={{
-          fontSize: 11,
-          color: "var(--grey-1)",
-          fontFamily: "var(--font-mono)",
-        }}
+        style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}
       >
-        Stacks Testnet
+        <div className="badge">
+          <span className="dot dot-active" />
+          Stacks Testnet
+        </div>
       </div>
-    </div>
+    </header>
   );
 }

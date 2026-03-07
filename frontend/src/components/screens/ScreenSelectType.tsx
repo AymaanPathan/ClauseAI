@@ -5,7 +5,6 @@ import { AgreementType } from "@/api/parseApi";
 
 const TYPES: {
   type: AgreementType;
-  icon: string;
   title: string;
   desc: string;
   examples: string[];
@@ -14,42 +13,33 @@ const TYPES: {
 }[] = [
   {
     type: "freelance",
-    icon: "💼",
     title: "Freelance Work",
     desc: "Payer locks funds in escrow. Released to freelancer when work is delivered and confirmed.",
-    examples: ["Logo design", "Web development", "Writing", "Video editing"],
+    examples: ["Logo design", "Web dev", "Writing", "Video editing"],
     payerLabel: "Client",
     receiverLabel: "Freelancer",
   },
   {
     type: "rental",
-    icon: "🏠",
     title: "Rental / Equipment",
     desc: "Renter locks a deposit on-chain. Auto-release on return, or arbitrate damage claims.",
-    examples: ["Camera gear", "Apartment deposit", "Vehicle", "Office space"],
+    examples: ["Camera gear", "Apartment", "Vehicle", "Office space"],
     payerLabel: "Renter",
     receiverLabel: "Owner",
   },
   {
     type: "trade",
-    icon: "🌾",
     title: "Trade & Commerce",
     desc: "Buyer locks payment. Released to seller on delivery confirmation. No trust required.",
-    examples: ["Agricultural goods", "Equipment", "P2P marketplace", "Exports"],
+    examples: ["Agriculture", "Equipment", "P2P market", "Exports"],
     payerLabel: "Buyer",
     receiverLabel: "Seller",
   },
   {
     type: "bet",
-    icon: "🎲",
     title: "Simple Bet",
     desc: "Lock stakes on-chain. Winner takes all when the condition resolves via arbitrator.",
-    examples: [
-      "Sports outcome",
-      "Price target",
-      "Election result",
-      "Any event",
-    ],
+    examples: ["Sports outcome", "Price target", "Election", "Any event"],
     payerLabel: "Bettor A",
     receiverLabel: "Bettor B",
   },
@@ -60,90 +50,73 @@ export default function ScreenSelectType() {
   const selected = useAppSelector((s) => s.agreement.agreementType);
 
   return (
-    <div
-      style={{
-        minHeight: "calc(100vh - 56px)",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "60px 24px",
-      }}
-    >
-      <div style={{ maxWidth: 860, width: "100%" }}>
-        <div
-          className="animate-fade-up"
-          style={{ marginBottom: 48, textAlign: "center" }}
-        >
-          <p
+    <div className="page">
+      <div style={{ maxWidth: 920, width: "100%" }}>
+        {/* Header */}
+        <div className="fade-up" style={{ marginBottom: 48 }}>
+          <div className="step-counter" style={{ marginBottom: 14 }}>
+            Step 1 of 6
+          </div>
+          <h2
             style={{
-              fontSize: 12,
-              fontFamily: "var(--font-mono)",
-              color: "var(--yellow)",
-              letterSpacing: "0.15em",
-              textTransform: "uppercase",
-              marginBottom: 16,
+              fontSize: "clamp(26px, 4vw, 44px)",
+              fontWeight: 700,
+              letterSpacing: "-0.04em",
+              lineHeight: 1.1,
+              marginBottom: 10,
             }}
           >
-            Step 1 of 6
-          </p>
-          <h2 style={{ fontSize: 36, fontWeight: 800, letterSpacing: "-1px" }}>
             What type of agreement?
           </h2>
-          <p style={{ color: "var(--grey-1)", marginTop: 12, fontSize: 15 }}>
+          <p style={{ fontSize: 14, color: "var(--text-2)", lineHeight: 1.7 }}>
             Choose a template. One party locks funds — the other receives them
             when conditions are met.
           </p>
         </div>
 
+        {/* Cards grid */}
         <div
+          className="fade-up d2"
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
-            gap: 16,
+            gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
+            gap: 10,
+            marginBottom: 28,
           }}
         >
-          {TYPES.map((t, i) => {
+          {TYPES.map((t) => {
             const isSelected = selected === t.type;
             return (
               <button
                 key={t.type}
-                className={`animate-fade-up delay-${i + 1}`}
                 onClick={() => {
                   dispatch(setAgreementType(t.type));
-                  setTimeout(() => dispatch(setScreen("describe")), 200);
+                  setTimeout(() => dispatch(setScreen("describe")), 180);
                 }}
                 style={{
-                  background: isSelected
-                    ? "var(--yellow-dim)"
-                    : "var(--black-2)",
-                  border: `1px solid ${isSelected ? "var(--yellow)" : "var(--black-4)"}`,
-                  borderRadius: 16,
+                  background: isSelected ? "var(--bg-3)" : "var(--bg-1)",
+                  border: `1px solid ${isSelected ? "var(--border-hi)" : "var(--border)"}`,
+                  borderRadius: "var(--r-md)",
                   padding: "24px 20px",
                   textAlign: "left",
                   cursor: "pointer",
-                  transition: "all var(--transition)",
+                  transition: "all var(--fast) var(--ease)",
                   position: "relative",
-                  overflow: "hidden",
                 }}
                 onMouseEnter={(e) => {
                   if (!isSelected) {
-                    (e.currentTarget as HTMLElement).style.borderColor =
-                      "var(--grey-2)";
                     (e.currentTarget as HTMLElement).style.background =
-                      "var(--black-3)";
-                    (e.currentTarget as HTMLElement).style.transform =
-                      "translateY(-2px)";
+                      "var(--bg-2)";
+                    (e.currentTarget as HTMLElement).style.borderColor =
+                      "var(--border-hi)";
                   }
                 }}
                 onMouseLeave={(e) => {
                   if (!isSelected) {
-                    (e.currentTarget as HTMLElement).style.borderColor =
-                      "var(--black-4)";
                     (e.currentTarget as HTMLElement).style.background =
-                      "var(--black-2)";
-                    (e.currentTarget as HTMLElement).style.transform =
-                      "translateY(0)";
+                      "var(--bg-1)";
+                    (e.currentTarget as HTMLElement).style.borderColor =
+                      "var(--border)";
                   }
                 }}
               >
@@ -151,31 +124,39 @@ export default function ScreenSelectType() {
                   <div
                     style={{
                       position: "absolute",
-                      top: 12,
-                      right: 12,
-                      width: 20,
-                      height: 20,
+                      top: 14,
+                      right: 14,
+                      width: 18,
+                      height: 18,
                       borderRadius: "50%",
-                      background: "var(--yellow)",
+                      background: "var(--text-1)",
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
-                      fontSize: 11,
-                      color: "var(--black)",
-                      fontWeight: 800,
                     }}
                   >
-                    ✓
+                    <svg
+                      width="10"
+                      height="10"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="var(--bg)"
+                      strokeWidth="3"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
                   </div>
                 )}
 
-                <div style={{ fontSize: 28, marginBottom: 12 }}>{t.icon}</div>
                 <div
                   style={{
-                    fontSize: 16,
-                    fontWeight: 700,
-                    color: isSelected ? "var(--yellow)" : "var(--white)",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: isSelected ? "var(--text-1)" : "var(--text-1)",
                     marginBottom: 8,
+                    letterSpacing: "-0.01em",
                   }}
                 >
                   {t.title}
@@ -183,64 +164,46 @@ export default function ScreenSelectType() {
                 <p
                   style={{
                     fontSize: 12,
-                    color: "var(--grey-1)",
+                    color: "var(--text-3)",
                     lineHeight: 1.6,
-                    marginBottom: 16,
+                    marginBottom: 18,
                   }}
                 >
                   {t.desc}
                 </p>
 
-                {/* Role indicators */}
-                <div
-                  style={{
-                    display: "flex",
-                    gap: 6,
-                    marginBottom: 14,
-                  }}
-                >
+                {/* Roles */}
+                <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
                   <span
+                    className="tag"
                     style={{
-                      fontSize: 10,
-                      fontFamily: "var(--font-mono)",
-                      background: isSelected
-                        ? "rgba(245,196,0,0.15)"
-                        : "var(--black-4)",
-                      border: `1px solid ${isSelected ? "var(--yellow)" : "transparent"}`,
-                      color: isSelected ? "var(--yellow)" : "var(--grey-1)",
-                      borderRadius: 4,
-                      padding: "3px 8px",
+                      color: isSelected ? "var(--text-2)" : "var(--text-4)",
+                      borderColor: isSelected
+                        ? "var(--border-hi)"
+                        : "var(--border)",
                     }}
                   >
-                    💸 {t.payerLabel}
+                    {t.payerLabel}
                   </span>
                   <span
                     style={{
                       fontSize: 10,
-                      fontFamily: "var(--font-mono)",
-                      background: "var(--black-4)",
-                      color: "var(--grey-1)",
-                      borderRadius: 4,
-                      padding: "3px 8px",
+                      color: "var(--text-4)",
+                      display: "flex",
+                      alignItems: "center",
                     }}
                   >
-                    → {t.receiverLabel}
+                    →
+                  </span>
+                  <span className="tag" style={{ color: "var(--text-4)" }}>
+                    {t.receiverLabel}
                   </span>
                 </div>
 
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                {/* Examples */}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
                   {t.examples.map((ex) => (
-                    <span
-                      key={ex}
-                      style={{
-                        fontSize: 10,
-                        fontFamily: "var(--font-mono)",
-                        background: "var(--black-4)",
-                        color: "var(--grey-2)",
-                        borderRadius: 4,
-                        padding: "2px 7px",
-                      }}
-                    >
+                    <span key={ex} className="tag" style={{ fontSize: 10 }}>
                       {ex}
                     </span>
                   ))}
@@ -250,39 +213,78 @@ export default function ScreenSelectType() {
           })}
         </div>
 
-        {/* How it works callout */}
+        {/* Info callout */}
         <div
-          className="animate-fade-up delay-5"
+          className="fade-up d3"
           style={{
-            marginTop: 32,
             padding: "16px 20px",
-            background: "var(--black-2)",
-            border: "1px solid var(--black-4)",
-            borderRadius: 12,
+            background: "var(--bg-1)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--r)",
             display: "flex",
-            gap: 16,
+            gap: 14,
             alignItems: "flex-start",
           }}
         >
-          <span style={{ fontSize: 20, flexShrink: 0 }}>⚡</span>
+          <div
+            style={{
+              width: 28,
+              height: 28,
+              flexShrink: 0,
+              border: "1px solid var(--border)",
+              borderRadius: "var(--r-sm)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              background: "var(--bg-3)",
+              marginTop: 1,
+            }}
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="var(--text-3)"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+            </svg>
+          </div>
           <div>
-            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
+            <div
+              style={{
+                fontSize: 12,
+                fontWeight: 600,
+                color: "var(--text-1)",
+                marginBottom: 4,
+              }}
+            >
               How conditional escrow works
             </div>
             <p
               style={{
                 fontSize: 12,
-                color: "var(--grey-1)",
-                lineHeight: 1.7,
+                color: "var(--text-3)",
+                lineHeight: 1.65,
                 margin: 0,
               }}
             >
-              The <strong style={{ color: "var(--white)" }}>payer</strong> locks
-              funds into a Bitcoin-secured smart contract. The{" "}
-              <strong style={{ color: "var(--white)" }}>receiver</strong> gets
-              paid when conditions are confirmed — or funds auto-refund after
-              the deadline. The{" "}
-              <strong style={{ color: "var(--white)" }}>arbitrator</strong>{" "}
+              The{" "}
+              <strong style={{ color: "var(--text-2)", fontWeight: 500 }}>
+                payer
+              </strong>{" "}
+              locks funds into a Bitcoin-secured smart contract. The{" "}
+              <strong style={{ color: "var(--text-2)", fontWeight: 500 }}>
+                receiver
+              </strong>{" "}
+              gets paid when conditions are confirmed — or funds auto-refund
+              after the deadline. The{" "}
+              <strong style={{ color: "var(--text-2)", fontWeight: 500 }}>
+                arbitrator
+              </strong>{" "}
               resolves disputes if they arise.
             </p>
           </div>

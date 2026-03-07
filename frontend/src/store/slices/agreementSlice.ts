@@ -20,7 +20,12 @@ import {
   PayloadAction,
   createAction,
 } from "@reduxjs/toolkit";
-import { parseAgreement, ParsedAgreement, AgreementType } from "@/api/parseApi";
+import {
+  parseAgreement,
+  ParsedAgreement,
+  AgreementType,
+  ParsedAgreementV2,
+} from "@/api/parseApi";
 import {
   callCreateAgreement,
   callDeposit,
@@ -101,7 +106,7 @@ export interface AgreementState {
   partyAName: string;
   partyBName: string;
   arbitratorName: string;
-  parsedTerms: ParsedAgreement | null;
+  parsedTerms: ParsedAgreement | ParsedAgreementV2 | null;
   editedTerms: ParsedAgreement | null;
   parseLoading: boolean;
   parseError: string | null;
@@ -702,11 +707,24 @@ const agreementSlice = createSlice({
       .addCase(parseAgreementThunk.fulfilled, (state, action) => {
         state.parseLoading = false;
         state.parsedTerms = action.payload.data!;
-        state.editedTerms = { ...action.payload.data! };
-        if (state.partyAName) state.editedTerms!.partyA = state.partyAName;
-        if (state.partyBName) state.editedTerms!.partyB = state.partyBName;
-        if (state.arbitratorName)
-          state.editedTerms!.arbitrator = state.arbitratorName;
+        // Use 'as any' for the spread — ParsedAgreement is a union (V1 | V2)
+        // and we need to apply party names regardless of which variant was returned.
+        state.editedTerms = {
+          ...(action.payload.data! as any),
+        } as typeof state.editedTerms;
+        const terms = state.editedTerms as any;
+        if (state.partyAName) {
+          // V1 uses partyA, V2 uses payer — update both so either schema works
+          terms.partyA = state.partyAName;
+          terms.payer = state.partyAName;
+        }
+        if (state.partyBName) {
+          terms.partyB = state.partyBName;
+          terms.receiver = state.partyBName;
+        }
+        if (state.arbitratorName) {
+          terms.arbitrator = state.arbitratorName;
+        }
         state.parseMeta = {
           provider: action.payload.meta.provider,
           model: action.payload.meta.model,

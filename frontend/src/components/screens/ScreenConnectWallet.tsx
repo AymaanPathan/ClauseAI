@@ -5,9 +5,7 @@ import { setScreen, connectWalletThunk } from "@/store/slices/agreementSlice";
 
 export default function ScreenConnectWallet() {
   const dispatch = useAppDispatch();
-  const { walletConnected, walletAddress, isPartyB } = useAppSelector(
-    (s) => s.agreement,
-  );
+  const { walletConnected, walletAddress } = useAppSelector((s) => s.agreement);
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -29,75 +27,95 @@ export default function ScreenConnectWallet() {
   }
 
   return (
-    <div
-      style={{
-        minHeight: "calc(100vh - 56px)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 24,
-      }}
-    >
-      <div style={{ maxWidth: 480, width: "100%", textAlign: "center" }}>
-        <div className="animate-fade-up">
+    <div className="page">
+      <div style={{ maxWidth: 440, width: "100%", textAlign: "center" }}>
+        <div className="fade-up">
           <button
             onClick={() => dispatch(setScreen("parsed-terms"))}
             style={{
               background: "none",
               border: "none",
-              color: "var(--grey-1)",
-              fontSize: 13,
+              color: "var(--text-3)",
+              fontSize: 11,
               cursor: "pointer",
-              marginBottom: 24,
+              marginBottom: 32,
+              fontFamily: "var(--mono)",
+              letterSpacing: "0.04em",
             }}
           >
             ← Back
           </button>
 
+          {/* Status icon */}
           <div
             style={{
-              width: 80,
-              height: 80,
+              width: 64,
+              height: 64,
               borderRadius: "50%",
-              background: walletConnected ? "#22c55e15" : "var(--yellow-dim)",
-              border: `1px solid ${walletConnected ? "#22c55e" : "var(--yellow)"}`,
+              background: walletConnected
+                ? "rgba(34,197,94,0.06)"
+                : "var(--bg-3)",
+              border: `1px solid ${walletConnected ? "rgba(34,197,94,0.2)" : "var(--border-hi)"}`,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              fontSize: 36,
               margin: "0 auto 28px",
             }}
           >
-            {walletConnected ? "✅" : isConnecting ? "⏳" : "₿"}
+            {walletConnected ? (
+              <svg
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="var(--green)"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            ) : isConnecting ? (
+              <span className="spinner" style={{ width: 22, height: 22 }} />
+            ) : (
+              <svg
+                width="22"
+                height="22"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="var(--text-2)"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+              </svg>
+            )}
           </div>
 
-          <span
-            style={{
-              fontSize: 12,
-              fontFamily: "var(--font-mono)",
-              color: "var(--yellow)",
-              letterSpacing: "0.15em",
-              textTransform: "uppercase",
-              display: "block",
-              marginBottom: 12,
-            }}
+          <div
+            className="step-counter"
+            style={{ marginBottom: 12, display: "block" }}
           >
             Step 4 of 6
-          </span>
+          </div>
+
           <h2
             style={{
               fontSize: 32,
-              fontWeight: 800,
-              letterSpacing: "-1px",
-              marginBottom: 12,
+              fontWeight: 700,
+              letterSpacing: "-0.04em",
+              lineHeight: 1.1,
+              marginBottom: 10,
             }}
           >
             {walletConnected ? "Wallet Connected" : "Connect your wallet"}
           </h2>
+
           <p
             style={{
-              color: "var(--grey-1)",
-              fontSize: 14,
+              color: "var(--text-2)",
+              fontSize: 13,
               lineHeight: 1.7,
               marginBottom: 32,
             }}
@@ -110,66 +128,63 @@ export default function ScreenConnectWallet() {
 
         {error && (
           <div
-            style={{
-              background: "#7f1d1d20",
-              border: "1px solid #7f1d1d",
-              borderRadius: 8,
-              padding: "10px 14px",
-              fontSize: 13,
-              color: "#fca5a5",
-              marginBottom: 16,
-              textAlign: "left",
-            }}
+            className="error-box fade-in"
+            style={{ marginBottom: 16, textAlign: "left" }}
           >
-            ❌ {error}
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{ flexShrink: 0, marginTop: 1 }}
+            >
+              <circle cx="12" cy="12" r="10" />
+              <line x1="15" y1="9" x2="9" y2="15" />
+              <line x1="9" y1="9" x2="15" y2="15" />
+            </svg>
+            {error}
           </div>
         )}
 
         <div
-          className="animate-fade-up delay-2"
-          style={{ display: "flex", flexDirection: "column", gap: 12 }}
+          className="fade-up d2"
+          style={{ display: "flex", flexDirection: "column", gap: 10 }}
         >
           {walletConnected ? (
             <button
+              className="btn btn-primary btn-lg"
               onClick={() => dispatch(setScreen("share-link"))}
-              style={{
-                width: "100%",
-                padding: "16px",
-                background: "var(--yellow)",
-                color: "var(--black)",
-                border: "none",
-                borderRadius: "var(--radius)",
-                fontSize: 15,
-                fontWeight: 700,
-                cursor: "pointer",
-              }}
+              style={{ width: "100%" }}
             >
-              Continue → Invite Receiver
+              Continue — Invite Receiver
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M5 12h14M12 5l7 7-7 7" />
+              </svg>
             </button>
           ) : (
             <button
+              className="btn btn-primary btn-lg"
               onClick={handleConnect}
               disabled={isConnecting}
-              style={{
-                width: "100%",
-                padding: "16px",
-                background: isConnecting ? "var(--black-4)" : "var(--yellow)",
-                color: isConnecting ? "var(--grey-2)" : "var(--black)",
-                border: "none",
-                borderRadius: "var(--radius)",
-                fontSize: 15,
-                fontWeight: 700,
-                cursor: isConnecting ? "not-allowed" : "pointer",
-                transition: "all var(--transition)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 10,
-              }}
+              style={{ width: "100%" }}
             >
               {isConnecting ? (
                 <>
-                  <Spinner /> Connecting to Leather...
+                  <span className="spinner" style={{ width: 14, height: 14 }} />
+                  Connecting to Leather...
                 </>
               ) : (
                 "Connect Leather Wallet"
@@ -179,9 +194,10 @@ export default function ScreenConnectWallet() {
 
           <div
             style={{
-              fontSize: 12,
-              color: "var(--grey-2)",
-              fontFamily: "var(--font-mono)",
+              fontSize: 11,
+              fontFamily: "var(--mono)",
+              color: "var(--text-4)",
+              textAlign: "center",
             }}
           >
             Don't have Leather?{" "}
@@ -189,98 +205,97 @@ export default function ScreenConnectWallet() {
               href="https://wallet.hiro.so"
               target="_blank"
               rel="noopener noreferrer"
-              style={{ color: "var(--yellow)", textDecoration: "none" }}
+              style={{ color: "var(--text-2)", textDecoration: "none" }}
             >
               Install it free →
             </a>
           </div>
         </div>
 
-        {/* Info boxes */}
+        {/* Info cards */}
         <div
-          className="animate-fade-up delay-3"
+          className="fade-up d3"
           style={{
             display: "flex",
             flexDirection: "column",
-            gap: 10,
+            gap: 8,
             marginTop: 32,
           }}
         >
-          <div
-            style={{
-              padding: "16px 20px",
-              background: "var(--black-2)",
-              border: "1px solid var(--black-4)",
-              borderRadius: "var(--radius-sm)",
-              display: "flex",
-              gap: 12,
-              textAlign: "left",
-            }}
-          >
-            <span style={{ fontSize: 20 }}>🔒</span>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
-                Non-custodial escrow
-              </div>
-              <p
+          {[
+            {
+              title: "Non-custodial escrow",
+              desc: "ClauseAi never holds your keys. Funds go directly into the smart contract, enforced by Bitcoin.",
+            },
+            {
+              title: "Only payers deposit",
+              desc: "The receiver doesn't need to lock any funds. Only you, as the payer, deposit into escrow.",
+            },
+          ].map(({ title, desc }) => (
+            <div
+              key={title}
+              style={{
+                padding: "14px 16px",
+                background: "var(--bg-1)",
+                border: "1px solid var(--border)",
+                borderRadius: "var(--r-sm)",
+                display: "flex",
+                gap: 12,
+                textAlign: "left",
+              }}
+            >
+              <div
                 style={{
-                  fontSize: 12,
-                  color: "var(--grey-1)",
-                  lineHeight: 1.6,
+                  width: 28,
+                  height: 28,
+                  flexShrink: 0,
+                  border: "1px solid var(--border)",
+                  borderRadius: "var(--r-sm)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  background: "var(--bg-3)",
                 }}
               >
-                ClauseAi never holds your keys. Funds go directly into the smart
-                contract, enforced by Bitcoin.
-              </p>
-            </div>
-          </div>
-
-          <div
-            style={{
-              padding: "16px 20px",
-              background: "var(--black-2)",
-              border: "1px solid var(--black-4)",
-              borderRadius: "var(--radius-sm)",
-              display: "flex",
-              gap: 12,
-              textAlign: "left",
-            }}
-          >
-            <span style={{ fontSize: 20 }}>💸</span>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
-                Only payers deposit
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="var(--text-3)"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                </svg>
               </div>
-              <p
-                style={{
-                  fontSize: 12,
-                  color: "var(--grey-1)",
-                  lineHeight: 1.6,
-                }}
-              >
-                The receiver (other party) doesn't need to lock any funds. Only
-                you, as the payer, deposit into escrow.
-              </p>
+              <div>
+                <div
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 500,
+                    color: "var(--text-1)",
+                    marginBottom: 3,
+                  }}
+                >
+                  {title}
+                </div>
+                <p
+                  style={{
+                    fontSize: 11,
+                    color: "var(--text-3)",
+                    lineHeight: 1.6,
+                  }}
+                >
+                  {desc}
+                </p>
+              </div>
             </div>
-          </div>
+          ))}
         </div>
       </div>
     </div>
-  );
-}
-
-function Spinner() {
-  return (
-    <span
-      style={{
-        width: 16,
-        height: 16,
-        border: "2px solid var(--grey-2)",
-        borderTopColor: "transparent",
-        borderRadius: "50%",
-        animation: "spin 0.7s linear infinite",
-        display: "inline-block",
-      }}
-    />
   );
 }

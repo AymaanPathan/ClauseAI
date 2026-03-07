@@ -1,7 +1,6 @@
 "use client";
 import { useState } from "react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
-
 import { AgreementType } from "@/api/parseApi";
 import {
   parseAgreementThunk,
@@ -25,31 +24,86 @@ const TYPE_LABELS: Record<
   { label: string; payerRole: string; receiverRole: string }
 > = {
   freelance: {
-    label: "💼 Freelance Work",
-    payerRole: "Client (Payer)",
-    receiverRole: "Freelancer (Receiver)",
+    label: "Freelance Work",
+    payerRole: "Client",
+    receiverRole: "Freelancer",
   },
   rental: {
-    label: "🏠 Rental / Equipment",
-    payerRole: "Renter (Payer)",
-    receiverRole: "Owner (Receiver)",
+    label: "Rental / Equipment",
+    payerRole: "Renter",
+    receiverRole: "Owner",
   },
   trade: {
-    label: "🌾 Trade & Commerce",
-    payerRole: "Buyer (Payer)",
-    receiverRole: "Seller (Receiver)",
+    label: "Trade & Commerce",
+    payerRole: "Buyer",
+    receiverRole: "Seller",
   },
-  bet: {
-    label: "🎲 Simple Bet",
-    payerRole: "Bettor A (Payer)",
-    receiverRole: "Bettor B (Receiver)",
-  },
+  bet: { label: "Simple Bet", payerRole: "Bettor A", receiverRole: "Bettor B" },
 };
+
+function InputField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  hint,
+  accentColor,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  hint?: string;
+  accentColor?: string;
+}) {
+  const [focused, setFocused] = useState(false);
+  return (
+    <div>
+      <label
+        style={{
+          display: "block",
+          fontSize: 11,
+          fontFamily: "var(--mono)",
+          color: accentColor ?? "var(--text-3)",
+          letterSpacing: "0.08em",
+          textTransform: "uppercase",
+          marginBottom: 7,
+        }}
+      >
+        {label}
+      </label>
+      <input
+        className="input"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        placeholder={placeholder}
+        style={{
+          borderColor: focused
+            ? (accentColor ?? "var(--border-hi)")
+            : "var(--border)",
+        }}
+      />
+      {hint && (
+        <div
+          style={{
+            fontSize: 10,
+            fontFamily: "var(--mono)",
+            color: "var(--text-4)",
+            marginTop: 5,
+          }}
+        >
+          {hint}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function ScreenDescribe() {
   const dispatch = useAppDispatch();
   const { agreementType, parseLoading } = useAppSelector((s) => s.agreement);
-
   const typeMeta = agreementType ? TYPE_LABELS[agreementType] : null;
 
   const [text, setText] = useState(
@@ -58,14 +112,13 @@ export default function ScreenDescribe() {
   const [payer, setPayer] = useState("Aymaan");
   const [receiver, setReceiver] = useState("Bob");
   const [arbitrator, setArbitrator] = useState("TBD");
-  const [focused, setFocused] = useState<string | null>(null);
+  const [textFocus, setTextFocus] = useState(false);
 
   const canParse = text.trim().length > 10 && payer.trim() && receiver.trim();
 
   async function handleParse() {
     if (!canParse || !agreementType) return;
     dispatch(setRawText(text));
-    // Map payer→partyA (funds locker), receiver→partyB (funds recipient)
     dispatch(setPartyNames({ partyA: payer, partyB: receiver, arbitrator }));
     const result = await dispatch(
       parseAgreementThunk({ type: agreementType, text }),
@@ -75,255 +128,142 @@ export default function ScreenDescribe() {
     }
   }
 
-  const inputStyle = (id: string) => ({
-    width: "100%",
-    background: "var(--black-2)",
-    border: `1px solid ${focused === id ? "var(--yellow)" : "var(--black-4)"}`,
-    borderRadius: "var(--radius-sm)",
-    padding: "12px 16px",
-    color: "var(--white)",
-    fontSize: 14,
-    outline: "none",
-    fontFamily: "var(--font-display)",
-    transition: "border-color var(--transition)",
-    boxSizing: "border-box" as const,
-  });
-
   return (
-    <div
-      style={{
-        minHeight: "calc(100vh - 56px)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "60px 24px",
-      }}
-    >
-      <div style={{ maxWidth: 600, width: "100%" }}>
-        <div className="animate-fade-up" style={{ marginBottom: 40 }}>
+    <div className="page" style={{ alignItems: "flex-start", paddingTop: 64 }}>
+      <div style={{ maxWidth: 640, width: "100%" }}>
+        {/* Header */}
+        <div className="fade-up" style={{ marginBottom: 40 }}>
           <button
             onClick={() => dispatch(setScreen("select-type"))}
             style={{
               background: "none",
               border: "none",
-              color: "var(--grey-1)",
-              fontSize: 13,
+              color: "var(--text-3)",
+              fontSize: 12,
               cursor: "pointer",
               marginBottom: 20,
               display: "flex",
               alignItems: "center",
               gap: 6,
+              fontFamily: "var(--mono)",
+              letterSpacing: "0.04em",
+              padding: 0,
             }}
           >
             ← Back
           </button>
+
           <div
             style={{
               display: "flex",
               alignItems: "center",
-              gap: 12,
-              marginBottom: 8,
+              gap: 10,
+              marginBottom: 12,
             }}
           >
-            <span
-              style={{
-                fontSize: 12,
-                fontFamily: "var(--font-mono)",
-                color: "var(--yellow)",
-                letterSpacing: "0.15em",
-                textTransform: "uppercase",
-              }}
-            >
-              Step 2 of 6
-            </span>
-            {typeMeta && (
-              <span
-                style={{
-                  fontSize: 12,
-                  background: "var(--black-3)",
-                  border: "1px solid var(--black-4)",
-                  borderRadius: 99,
-                  padding: "2px 12px",
-                  color: "var(--grey-1)",
-                }}
-              >
-                {typeMeta.label}
-              </span>
-            )}
+            <div className="step-counter">Step 2 of 6</div>
+            {typeMeta && <div className="tag">{typeMeta.label}</div>}
           </div>
+
           <h2
             style={{
-              fontSize: 32,
-              fontWeight: 800,
-              letterSpacing: "-1px",
+              fontSize: "clamp(24px, 3.5vw, 38px)",
+              fontWeight: 700,
+              letterSpacing: "-0.04em",
+              lineHeight: 1.1,
               marginBottom: 8,
             }}
           >
             Describe your agreement
           </h2>
-          <p style={{ color: "var(--grey-1)", fontSize: 14 }}>
+          <p style={{ fontSize: 13, color: "var(--text-2)", lineHeight: 1.7 }}>
             Name the payer and receiver, then describe the deal in plain
             English.
           </p>
         </div>
 
-        {/* Role explanation banner */}
+        {/* Role info strip */}
         <div
-          className="animate-fade-up delay-1"
+          className="fade-up d1"
           style={{
-            background: "var(--black-2)",
-            border: "1px solid var(--black-4)",
-            borderRadius: "var(--radius-sm)",
-            padding: "12px 16px",
-            marginBottom: 20,
+            background: "var(--bg-2)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--r-sm)",
+            padding: "11px 16px",
+            marginBottom: 22,
             display: "flex",
-            gap: 20,
-            fontSize: 12,
-            color: "var(--grey-1)",
-            fontFamily: "var(--font-mono)",
+            gap: 16,
+            fontSize: 11,
+            fontFamily: "var(--mono)",
+            color: "var(--text-3)",
+            letterSpacing: "0.04em",
+            flexWrap: "wrap",
           }}
         >
-          <span>
-            <span style={{ color: "var(--yellow)" }}>💸 Payer</span> — locks
-            funds in escrow
-          </span>
-          <span style={{ color: "var(--grey-3)" }}>→</span>
-          <span>
-            <span style={{ color: "#22c55e" }}>🎯 Receiver</span> — gets paid
-            when conditions met
-          </span>
-          <span style={{ color: "var(--grey-3)" }}>→</span>
-          <span>
-            <span style={{ color: "#60a5fa" }}>⚖️ Arbitrator</span> — resolves
-            disputes
-          </span>
+          <span>Payer — locks funds in escrow</span>
+          <span style={{ color: "var(--text-4)" }}>·</span>
+          <span>Receiver — gets paid on completion</span>
+          <span style={{ color: "var(--text-4)" }}>·</span>
+          <span>Arbitrator — resolves disputes</span>
         </div>
 
-        {/* Party names — 2 columns for payer/receiver */}
+        {/* Party names */}
         <div
-          className="animate-fade-up delay-1"
+          className="fade-up d2"
           style={{
             display: "grid",
             gridTemplateColumns: "1fr 1fr",
             gap: 12,
-            marginBottom: 16,
+            marginBottom: 14,
           }}
         >
-          <div>
-            <label
-              style={{
-                fontSize: 11,
-                fontFamily: "var(--font-mono)",
-                color: "var(--yellow)",
-                textTransform: "uppercase",
-                letterSpacing: "0.1em",
-                display: "block",
-                marginBottom: 6,
-              }}
-            >
-              💸 {typeMeta?.payerRole ?? "Payer"}
-            </label>
-            <input
-              value={payer}
-              onChange={(e) => setPayer(e.target.value)}
-              onFocus={() => setFocused("payer")}
-              onBlur={() => setFocused(null)}
-              placeholder="e.g. Ahmed"
-              style={inputStyle("payer")}
-            />
-            <div
-              style={{
-                fontSize: 10,
-                color: "var(--grey-2)",
-                fontFamily: "var(--font-mono)",
-                marginTop: 4,
-              }}
-            >
-              Locks funds in escrow
-            </div>
-          </div>
-          <div>
-            <label
-              style={{
-                fontSize: 11,
-                fontFamily: "var(--font-mono)",
-                color: "#22c55e",
-                textTransform: "uppercase",
-                letterSpacing: "0.1em",
-                display: "block",
-                marginBottom: 6,
-              }}
-            >
-              🎯 {typeMeta?.receiverRole ?? "Receiver"}
-            </label>
-            <input
-              value={receiver}
-              onChange={(e) => setReceiver(e.target.value)}
-              onFocus={() => setFocused("receiver")}
-              onBlur={() => setFocused(null)}
-              placeholder="e.g. Bob"
-              style={inputStyle("receiver")}
-            />
-            <div
-              style={{
-                fontSize: 10,
-                color: "var(--grey-2)",
-                fontFamily: "var(--font-mono)",
-                marginTop: 4,
-              }}
-            >
-              Receives payment on completion
-            </div>
-          </div>
-        </div>
-
-        <div className="animate-fade-up delay-2" style={{ marginBottom: 20 }}>
-          <label
-            style={{
-              fontSize: 11,
-              fontFamily: "var(--font-mono)",
-              color: "#60a5fa",
-              textTransform: "uppercase",
-              letterSpacing: "0.1em",
-              display: "block",
-              marginBottom: 6,
-            }}
-          >
-            ⚖️ Arbitrator{" "}
-            <span style={{ color: "var(--grey-2)" }}>
-              (optional — can be set later)
-            </span>
-          </label>
-          <input
-            value={arbitrator}
-            onChange={(e) => setArbitrator(e.target.value)}
-            onFocus={() => setFocused("arb")}
-            onBlur={() => setFocused(null)}
-            placeholder="e.g. mediator.btc or leave blank"
-            style={inputStyle("arb")}
+          <InputField
+            label={`${typeMeta?.payerRole ?? "Payer"} (locks funds)`}
+            value={payer}
+            onChange={setPayer}
+            placeholder="e.g. Ahmed"
+            hint="Deposits into escrow"
+          />
+          <InputField
+            label={`${typeMeta?.receiverRole ?? "Receiver"} (gets paid)`}
+            value={receiver}
+            onChange={setReceiver}
+            placeholder="e.g. Bob"
+            hint="Receives on completion"
           />
         </div>
 
-        {/* Text area */}
-        <div className="animate-fade-up delay-3" style={{ marginBottom: 24 }}>
+        {/* Arbitrator */}
+        <div className="fade-up d3" style={{ marginBottom: 20 }}>
+          <InputField
+            label="Arbitrator (optional)"
+            value={arbitrator}
+            onChange={setArbitrator}
+            placeholder="e.g. mediator.btc or leave blank"
+          />
+        </div>
+
+        {/* Textarea */}
+        <div className="fade-up d3" style={{ marginBottom: 24 }}>
           <label
             style={{
-              fontSize: 11,
-              fontFamily: "var(--font-mono)",
-              color: "var(--grey-1)",
-              textTransform: "uppercase",
-              letterSpacing: "0.1em",
               display: "block",
-              marginBottom: 6,
+              fontSize: 11,
+              fontFamily: "var(--mono)",
+              color: "var(--text-3)",
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              marginBottom: 7,
             }}
           >
-            Describe the Agreement
+            Agreement Description
           </label>
           <textarea
+            className="input"
             value={text}
             onChange={(e) => setText(e.target.value)}
-            onFocus={() => setFocused("text")}
-            onBlur={() => setFocused(null)}
+            onFocus={() => setTextFocus(true)}
+            onBlur={() => setTextFocus(false)}
             placeholder={
               agreementType
                 ? (PLACEHOLDERS[agreementType] ?? "Describe your agreement...")
@@ -331,9 +271,9 @@ export default function ScreenDescribe() {
             }
             rows={5}
             style={{
-              ...inputStyle("text"),
               resize: "vertical",
               lineHeight: 1.7,
+              borderColor: textFocus ? "var(--border-hi)" : "var(--border)",
             }}
           />
           <div
@@ -345,18 +285,18 @@ export default function ScreenDescribe() {
           >
             <span
               style={{
-                fontSize: 11,
-                fontFamily: "var(--font-mono)",
-                color: "var(--grey-2)",
+                fontSize: 10,
+                fontFamily: "var(--mono)",
+                color: "var(--text-4)",
               }}
             >
               Include: amount, deadline, and what triggers payment
             </span>
             <span
               style={{
-                fontSize: 11,
-                fontFamily: "var(--font-mono)",
-                color: text.length > 10 ? "var(--grey-1)" : "var(--grey-2)",
+                fontSize: 10,
+                fontFamily: "var(--mono)",
+                color: "var(--text-4)",
               }}
             >
               {text.length} chars
@@ -364,74 +304,52 @@ export default function ScreenDescribe() {
           </div>
         </div>
 
-        {/* Parse button */}
-        <button
-          className="animate-fade-up delay-4"
-          onClick={handleParse}
-          disabled={!canParse || parseLoading}
-          style={{
-            width: "100%",
-            padding: "16px",
-            background:
-              canParse && !parseLoading ? "var(--yellow)" : "var(--black-4)",
-            color: canParse && !parseLoading ? "var(--black)" : "var(--grey-2)",
-            border: "none",
-            borderRadius: "var(--radius)",
-            fontSize: 15,
-            fontWeight: 700,
-            cursor: canParse && !parseLoading ? "pointer" : "not-allowed",
-            transition: "all var(--transition)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 10,
-          }}
-          onMouseEnter={(e) =>
-            canParse &&
-            !parseLoading &&
-            ((e.currentTarget as HTMLElement).style.background =
-              "var(--yellow-hover)")
-          }
-          onMouseLeave={(e) =>
-            canParse &&
-            !parseLoading &&
-            ((e.currentTarget as HTMLElement).style.background =
-              "var(--yellow)")
-          }
-        >
-          {parseLoading ? (
-            <>
-              <span
-                style={{
-                  width: 16,
-                  height: 16,
-                  border: "2px solid var(--black)",
-                  borderTopColor: "transparent",
-                  borderRadius: "50%",
-                  animation: "spin 0.7s linear infinite",
-                  display: "inline-block",
-                }}
-              />
-              Parsing with AI...
-            </>
-          ) : (
-            "Parse Agreement with AI →"
-          )}
-        </button>
-
-        {!canParse && !parseLoading && (
-          <p
-            style={{
-              textAlign: "center",
-              fontSize: 12,
-              color: "var(--grey-2)",
-              marginTop: 12,
-              fontFamily: "var(--font-mono)",
-            }}
+        {/* CTA */}
+        <div className="fade-up d4">
+          <button
+            onClick={handleParse}
+            disabled={!canParse || parseLoading}
+            className="btn btn-primary btn-lg"
+            style={{ width: "100%" }}
           >
-            Fill in both payer and receiver names to continue
-          </p>
-        )}
+            {parseLoading ? (
+              <>
+                <span className="spinner" style={{ width: 14, height: 14 }} />
+                Parsing with AI...
+              </>
+            ) : (
+              <>
+                Parse Agreement with AI
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M5 12h14M12 5l7 7-7 7" />
+                </svg>
+              </>
+            )}
+          </button>
+
+          {!canParse && !parseLoading && (
+            <p
+              style={{
+                textAlign: "center",
+                fontSize: 11,
+                fontFamily: "var(--mono)",
+                color: "var(--text-4)",
+                marginTop: 10,
+              }}
+            >
+              Fill in payer and receiver names to continue
+            </p>
+          )}
+        </div>
       </div>
     </div>
   );

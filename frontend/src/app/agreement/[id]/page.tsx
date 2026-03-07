@@ -1,9 +1,5 @@
 "use client";
 // app/agreement/[id]/page.tsx
-// CHANGES FROM ORIGINAL:
-//   1. DepositState "Go to Dashboard" now navigates to /dashboard (not /)
-//   2. setAsPartyB is dispatched BEFORE navigation so Redux state is ready
-//   3. localStorage is written before navigation so /dashboard can rehydrate
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -45,9 +41,9 @@ export default function JoinPage() {
   const [step, setStep] = useState<JoinStep>("loading");
   const [error, setError] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
+  // ── CRITICAL: termsAccepted is local state only, never set to true by default
   const [termsAccepted, setTermsAccepted] = useState(false);
 
-  // ── On mount: try to rehydrate session or load fresh terms ───
   useEffect(() => {
     if (!agreementId) {
       setStep("error");
@@ -56,7 +52,6 @@ export default function JoinPage() {
     }
 
     async function initialize() {
-      // 1. Try to rehydrate existing Party B session (page refresh case)
       if (typeof window !== "undefined") {
         const storedAddress = localStorage.getItem("clauseai_wallet_address");
         const storedIsPartyB =
@@ -65,14 +60,12 @@ export default function JoinPage() {
         if (storedAddress && storedIsPartyB) {
           const result = await dispatch(rehydratePartyBThunk(agreementId));
           if (rehydratePartyBThunk.fulfilled.match(result) && result.payload) {
-            // Session restored — go straight to deposit screen
             setStep("depositing");
             return;
           }
         }
       }
 
-      // 2. Fresh visit — load terms from presence snapshot
       const result = await dispatch(fetchTermsForPartyBThunk(agreementId));
       if (fetchTermsForPartyBThunk.rejected.match(result)) {
         setStep("error");
@@ -90,11 +83,10 @@ export default function JoinPage() {
       }
 
       const presence = result.payload;
-
       if (!presence?.termsSnapshot) {
         setStep("error");
         setError(
-          "Agreement terms not found. Party A may not have completed setup yet. Ask them to share the link again.",
+          "Agreement terms not found. Party A may not have completed setup yet.",
         );
         return;
       }
@@ -105,14 +97,12 @@ export default function JoinPage() {
     initialize();
   }, [agreementId, dispatch]);
 
-  // ── Once myDepositDone, navigate to /dashboard ────────────────
   useEffect(() => {
     if (myDepositDone && step === "depositing") {
       setTimeout(() => router.push("/dashboard"), 1500);
     }
   }, [myDepositDone, step, router]);
 
-  // ── Step: Connect wallet ──────────────────────────────────────
   async function handleConnectWallet() {
     setIsConnecting(true);
     setError(null);
@@ -124,7 +114,6 @@ export default function JoinPage() {
 
       const address = result.payload as string;
 
-      // Register as Party B in presence
       const regResult = await dispatch(
         registerPresenceThunk({
           agreementId,
@@ -137,9 +126,7 @@ export default function JoinPage() {
         throw new Error("Failed to register with agreement. Please try again.");
       }
 
-      // Set Party B state (also persists to localStorage)
       dispatch(setAsPartyB({ agreementId, address }));
-
       setStep("depositing");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Connection failed");
@@ -147,10 +134,6 @@ export default function JoinPage() {
       setIsConnecting(false);
     }
   }
-
-  // ─────────────────────────────────────────────────────────────
-  // Render
-  // ─────────────────────────────────────────────────────────────
 
   if (step === "loading" || parseLoading) {
     return <LoadingState agreementId={agreementId} />;
@@ -167,7 +150,8 @@ export default function JoinPage() {
         agreementId={agreementId}
         counterpartyWallet={counterpartyWallet}
         termsAccepted={termsAccepted}
-        onAccept={() => setTermsAccepted(true)}
+        // ── Pass the setter directly so it's fully two-way
+        setTermsAccepted={setTermsAccepted}
         onProceed={() => setStep("connect-wallet")}
       />
     );
@@ -176,7 +160,6 @@ export default function JoinPage() {
   if (step === "connect-wallet") {
     return (
       <ConnectWalletState
-        editedTerms={editedTerms as Record<string, unknown> | null}
         isConnecting={isConnecting}
         error={error}
         walletConnected={walletConnected}
@@ -206,6 +189,65 @@ export default function JoinPage() {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Schema helpers — handle both V1 (rental/bet) and V2 (freelance/trade)
+//
+// V1 snapshot keys: partyA, partyB, condition, deadline, amount_usd, arbitrator
+// V2 snapshot keys: payer, receiver, total_usd, milestones[], arbitrator
+//   (V2 may also have condition/deadline at top level OR inside milestones[0])
+// ─────────────────────────────────────────────────────────────
+
+function isV2(t: Record<string, unknown> | null): boolean {
+  if (!t) return false;
+  return "payer" in t || "receiver" in t || "total_usd" in t;
+}
+
+function readField(
+  t: Record<string, unknown> | null,
+  ...keys: string[]
+): string {
+  if (!t) return "—";
+  for (const k of keys) {
+    const v = t[k];
+    if (v !== undefined && v !== null && String(v).trim() !== "") {
+      return String(v);
+    }
+  }
+  return "—";
+}
+
+/** Pull condition text: check top-level first, then first milestone */
+function readCondition(t: Record<string, unknown> | null): string {
+  if (!t) return "—";
+  const top = readField(t, "condition");
+  if (top !== "—") return top;
+  // V2: try milestones[0].condition
+  const ms = t.milestones;
+  if (Array.isArray(ms) && ms.length > 0) {
+    const c = (ms[0] as Record<string, unknown>).condition;
+    if (c && String(c).trim()) return String(c);
+  }
+  return "—";
+}
+
+/** Pull deadline: check top-level first, then first milestone */
+function readDeadline(t: Record<string, unknown> | null): string {
+  if (!t) return "—";
+  const top = readField(t, "deadline");
+  if (top !== "—") return top;
+  const ms = t.milestones;
+  if (Array.isArray(ms) && ms.length > 0) {
+    const d = (ms[0] as Record<string, unknown>).deadline;
+    if (d && String(d).trim()) return String(d);
+  }
+  return "—";
+}
+
+/** Returns USD amount as a raw numeric string or "—" */
+function readAmountRaw(t: Record<string, unknown> | null): string {
+  return readField(t, "amount_usd", "total_usd");
+}
+
+// ─────────────────────────────────────────────────────────────
 // Sub-components
 // ─────────────────────────────────────────────────────────────
 
@@ -213,13 +255,26 @@ function LoadingState({ agreementId }: { agreementId: string }) {
   return (
     <CenterLayout>
       <div style={{ textAlign: "center" }}>
-        <div style={{ fontSize: 48, marginBottom: 24 }}>
-          <Spinner size={48} color="var(--yellow)" />
-        </div>
-        <h2 style={{ fontSize: 24, fontWeight: 700, marginBottom: 8 }}>
+        <Spinner size={40} />
+        <h2
+          style={{
+            fontSize: 20,
+            fontWeight: 700,
+            marginTop: 20,
+            marginBottom: 8,
+          }}
+        >
           Loading agreement...
         </h2>
-        <p style={{ color: "var(--grey-1)", fontSize: 13 }}>#{agreementId}</p>
+        <p
+          style={{
+            color: "var(--grey-1)",
+            fontSize: 12,
+            fontFamily: "var(--font-mono)",
+          }}
+        >
+          #{agreementId}
+        </p>
       </div>
     </CenterLayout>
   );
@@ -232,7 +287,7 @@ function ErrorState({ error }: { error: string }) {
         <div style={{ fontSize: 48, marginBottom: 24 }}>❌</div>
         <h2
           style={{
-            fontSize: 24,
+            fontSize: 22,
             fontWeight: 700,
             marginBottom: 12,
             color: "#f87171",
@@ -243,13 +298,14 @@ function ErrorState({ error }: { error: string }) {
         <p
           style={{
             color: "var(--grey-1)",
-            fontSize: 14,
+            fontSize: 13,
             lineHeight: 1.7,
-            marginBottom: 24,
             background: "#7f1d1d20",
             border: "1px solid #7f1d1d",
             borderRadius: 8,
             padding: "12px 16px",
+            marginBottom: 24,
+            textAlign: "left",
           }}
         >
           {error}
@@ -278,19 +334,77 @@ function ReviewTermsState({
   agreementId,
   counterpartyWallet,
   termsAccepted,
-  onAccept,
+  setTermsAccepted,
   onProceed,
 }: {
   editedTerms: Record<string, unknown> | null;
   agreementId: string;
   counterpartyWallet: string | null;
   termsAccepted: boolean;
-  onAccept: () => void;
+  // ── Receive the setter, not a one-way onAccept callback
+  setTermsAccepted: (v: boolean) => void;
   onProceed: () => void;
 }) {
+  const v2 = isV2(editedTerms);
+
+  // Normalised rows — reads from whichever schema the snapshot uses
+  const rows: { label: string; value: string; highlight?: boolean }[] = [
+    {
+      label: "Party A (Initiator)",
+      value: readField(editedTerms, "partyA", "payer"),
+    },
+    {
+      label: "Party B (You)",
+      value: readField(editedTerms, "partyB", "receiver"),
+    },
+    {
+      label: "Condition / Deliverable",
+      value: readCondition(editedTerms),
+    },
+    {
+      label: "Deadline",
+      value: readDeadline(editedTerms),
+    },
+    {
+      label: "Amount (USD)",
+      value: (() => {
+        const raw = readAmountRaw(editedTerms);
+        return raw === "—" ? "—" : `$${raw}`;
+      })(),
+      highlight: true,
+    },
+    {
+      label: "Arbitrator",
+      value: readField(editedTerms, "arbitrator"),
+    },
+  ];
+
+  // V2 milestones (optional table below main rows)
+  const milestones =
+    v2 && Array.isArray(editedTerms?.milestones)
+      ? (editedTerms!.milestones as Array<{
+          title?: string;
+          label?: string;
+          percentage: number;
+          deadline?: string;
+        }>)
+      : null;
+
+  const amountRaw = readAmountRaw(editedTerms);
+
+  // ── Guard: button is ONLY enabled when checkbox is ticked AND terms loaded
+  const canProceed = termsAccepted && editedTerms !== null;
+
+  function handleProceed() {
+    // Double-guard: never trust just the disabled prop in production
+    if (!canProceed) return;
+    onProceed();
+  }
+
   return (
     <CenterLayout>
       <div style={{ maxWidth: 560, width: "100%" }}>
+        {/* Header */}
         <div className="animate-fade-up" style={{ marginBottom: 32 }}>
           <div
             style={{
@@ -316,11 +430,22 @@ function ReviewTermsState({
             Review agreement terms
           </h1>
           <p style={{ color: "var(--grey-1)", fontSize: 14 }}>
-            Agreement #{agreementId} — review carefully before connecting your
-            wallet. Funds will be locked on-chain.
+            Agreement{" "}
+            <span
+              style={{
+                fontFamily: "var(--font-mono)",
+                color: "var(--white)",
+                fontWeight: 500,
+              }}
+            >
+              #{agreementId}
+            </span>{" "}
+            — review carefully before connecting your wallet. Funds will be
+            locked on-chain.
           </p>
         </div>
 
+        {/* Party A badge */}
         {counterpartyWallet && (
           <div
             className="animate-fade-up delay-1"
@@ -353,6 +478,7 @@ function ReviewTermsState({
           </div>
         )}
 
+        {/* Terms table */}
         <div
           className="animate-fade-up delay-2"
           style={{
@@ -379,24 +505,17 @@ function ReviewTermsState({
           </div>
 
           {editedTerms ? (
-            <div>
-              {[
-                { label: "Party A (Initiator)", key: "partyA" },
-                { label: "Party B (You)", key: "partyB" },
-                { label: "Condition / Deliverable", key: "condition" },
-                { label: "Deadline", key: "deadline" },
-                { label: "Amount (USD)", key: "amount_usd" },
-                { label: "Arbitrator", key: "arbitrator" },
-              ].map((row, i, arr) => (
+            <>
+              {rows.map((row, i) => (
                 <div
-                  key={row.key}
+                  key={row.label}
                   style={{
                     display: "flex",
                     justifyContent: "space-between",
                     alignItems: "flex-start",
                     padding: "12px 20px",
                     borderBottom:
-                      i < arr.length - 1 ? "1px solid var(--black-4)" : "none",
+                      i < rows.length - 1 ? "1px solid var(--black-4)" : "none",
                   }}
                 >
                   <span
@@ -414,21 +533,62 @@ function ReviewTermsState({
                   <span
                     style={{
                       fontSize: 13,
-                      fontWeight: row.key === "amount_usd" ? 700 : 600,
-                      color:
-                        row.key === "amount_usd"
-                          ? "var(--yellow)"
+                      fontWeight: row.highlight ? 700 : 600,
+                      color: row.highlight
+                        ? "var(--yellow)"
+                        : row.value === "—"
+                          ? "var(--grey-2)"
                           : "var(--white)",
                       textAlign: "right",
                     }}
                   >
-                    {row.key === "amount_usd"
-                      ? `$${editedTerms[row.key] ?? "—"}`
-                      : String(editedTerms[row.key] ?? "—")}
+                    {row.value}
                   </span>
                 </div>
               ))}
-            </div>
+
+              {/* V2 milestones */}
+              {milestones && milestones.length > 0 && (
+                <div style={{ borderTop: "1px solid var(--black-4)" }}>
+                  <div
+                    style={{
+                      padding: "10px 20px 6px",
+                      fontSize: 10,
+                      fontFamily: "var(--font-mono)",
+                      color: "var(--grey-2)",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.08em",
+                    }}
+                  >
+                    Payment milestones
+                  </div>
+                  {milestones.map((ms, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        padding: "8px 20px",
+                        borderTop: "1px solid var(--black-4)",
+                      }}
+                    >
+                      <span style={{ fontSize: 12, color: "var(--grey-1)" }}>
+                        {ms.title ?? ms.label ?? `Milestone ${i + 1}`}
+                      </span>
+                      <span
+                        style={{
+                          fontSize: 12,
+                          fontFamily: "var(--font-mono)",
+                          color: "var(--grey-2)",
+                        }}
+                      >
+                        {ms.percentage}%
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
           ) : (
             <div
               style={{
@@ -443,8 +603,28 @@ function ReviewTermsState({
           )}
         </div>
 
-        <label
+        {/*
+          ── CHECKBOX ─────────────────────────────────────────────────────────
+          Implemented as a controlled div, NOT a native <input> inside a <label>.
+          Reason: native checkbox inside a label fires both onClick (on label) AND
+          onChange (on input), creating double-fire edge cases. The original code
+          also used one-way binding: onChange={(e) => e.target.checked && onAccept()}
+          meaning unchecking never set termsAccepted back to false. This is fully
+          two-way via setTermsAccepted(!termsAccepted), with keyboard support.
+          ─────────────────────────────────────────────────────────────────────
+        */}
+        <div
           className="animate-fade-up delay-3"
+          role="checkbox"
+          aria-checked={termsAccepted}
+          tabIndex={0}
+          onClick={() => setTermsAccepted(!termsAccepted)}
+          onKeyDown={(e) => {
+            if (e.key === " " || e.key === "Enter") {
+              e.preventDefault();
+              setTermsAccepted(!termsAccepted);
+            }
+          }}
           style={{
             display: "flex",
             alignItems: "flex-start",
@@ -456,19 +636,40 @@ function ReviewTermsState({
             border: `1px solid ${termsAccepted ? "var(--yellow)" : "var(--black-4)"}`,
             borderRadius: 10,
             transition: "all 0.2s",
+            userSelect: "none",
           }}
         >
-          <input
-            type="checkbox"
-            checked={termsAccepted}
-            onChange={(e) => e.target.checked && onAccept()}
+          {/* Custom checkbox visual — driven entirely by termsAccepted state */}
+          <div
             style={{
-              marginTop: 2,
-              accentColor: "var(--yellow)",
-              width: 16,
-              height: 16,
+              width: 18,
+              height: 18,
+              borderRadius: 4,
+              flexShrink: 0,
+              marginTop: 1,
+              border: `2px solid ${termsAccepted ? "var(--yellow)" : "var(--grey-2)"}`,
+              background: termsAccepted ? "var(--yellow)" : "transparent",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              transition: "all 0.15s",
             }}
-          />
+          >
+            {termsAccepted && (
+              <svg
+                width="11"
+                height="11"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="var(--black)"
+                strokeWidth="3.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            )}
+          </div>
           <span
             style={{ fontSize: 13, lineHeight: 1.6, color: "var(--grey-1)" }}
           >
@@ -476,48 +677,71 @@ function ReviewTermsState({
             will be locked in a smart contract and only released when conditions
             are met.
           </span>
-        </label>
+        </div>
 
+        {/*
+          ── BUTTON ───────────────────────────────────────────────────────────
+          Three layers of protection:
+          1. disabled prop  — prevents form submission, removes from tab order
+          2. pointerEvents: "none"  — no click events reach the element at all
+          3. handleProceed() guard  — if somehow called, bails out immediately
+          ─────────────────────────────────────────────────────────────────────
+        */}
         <button
           className="animate-fade-up delay-4"
-          onClick={onProceed}
-          disabled={!termsAccepted || !editedTerms}
+          onClick={handleProceed}
+          disabled={!canProceed}
+          aria-disabled={!canProceed}
           style={{
             width: "100%",
             padding: "16px",
-            background:
-              termsAccepted && editedTerms ? "var(--yellow)" : "var(--black-4)",
-            color:
-              termsAccepted && editedTerms ? "var(--black)" : "var(--grey-2)",
+            background: canProceed ? "var(--yellow)" : "var(--black-4)",
+            color: canProceed ? "var(--black)" : "var(--grey-2)",
             border: "none",
             borderRadius: "var(--radius)",
             fontSize: 15,
             fontWeight: 700,
-            cursor: termsAccepted && editedTerms ? "pointer" : "not-allowed",
+            cursor: canProceed ? "pointer" : "not-allowed",
+            pointerEvents: canProceed ? "auto" : "none",
           }}
         >
           Connect Wallet & Join →
         </button>
 
-        <p
-          style={{
-            marginTop: 12,
-            textAlign: "center",
-            fontSize: 12,
-            color: "var(--grey-2)",
-            fontFamily: "var(--font-mono)",
-          }}
-        >
-          You'll deposit ${(editedTerms?.amount_usd as string) ?? "—"} into
-          escrow after connecting.
-        </p>
+        {!termsAccepted && (
+          <p
+            style={{
+              marginTop: 10,
+              textAlign: "center",
+              fontSize: 12,
+              color: "var(--grey-2)",
+              fontFamily: "var(--font-mono)",
+            }}
+          >
+            Tick the checkbox above to continue
+          </p>
+        )}
+
+        {termsAccepted && (
+          <p
+            style={{
+              marginTop: 10,
+              textAlign: "center",
+              fontSize: 12,
+              color: "var(--grey-2)",
+              fontFamily: "var(--font-mono)",
+            }}
+          >
+            You'll deposit{amountRaw !== "—" ? ` $${amountRaw}` : ""} into
+            escrow after connecting.
+          </p>
+        )}
       </div>
     </CenterLayout>
   );
 }
 
 function ConnectWalletState({
-  editedTerms,
   isConnecting,
   error,
   walletConnected,
@@ -525,7 +749,6 @@ function ConnectWalletState({
   presenceRegistered,
   onConnect,
 }: {
-  editedTerms: Record<string, unknown> | null;
   isConnecting: boolean;
   error: string | null;
   walletConnected: boolean;
@@ -550,7 +773,7 @@ function ConnectWalletState({
             margin: "0 auto 24px",
           }}
         >
-          {walletConnected ? "✅" : isConnecting ? "⏳" : "₿"}
+          {walletConnected ? "✅" : isConnecting ? <Spinner size={28} /> : "₿"}
         </div>
 
         <span
@@ -585,8 +808,8 @@ function ConnectWalletState({
           }}
         >
           {walletConnected
-            ? `Connected: ${walletAddress?.slice(0, 10)}...${walletAddress?.slice(-6)}`
-            : "Connect your Leather wallet to join this agreement and deposit your stake."}
+            ? `${walletAddress?.slice(0, 10)}...${walletAddress?.slice(-6)}`
+            : "Connect your Leather wallet to join this agreement."}
         </p>
 
         {error && (
@@ -618,7 +841,7 @@ function ConnectWalletState({
               fontWeight: 600,
             }}
           >
-            ✅ Registered! Moving to deposit...
+            ✅ Registered — moving to next step...
           </div>
         ) : (
           <button
@@ -697,13 +920,12 @@ function DepositState({
   dispatch: ReturnType<typeof useAppDispatch>;
   router: ReturnType<typeof useRouter>;
 }) {
-  const amountUsd = parseFloat(String(editedTerms?.amount_usd ?? "0"));
+  const amountRaw = readAmountRaw(editedTerms);
+  const condition = readCondition(editedTerms);
 
   function handleGoToDashboard() {
-    // Ensure Party B is set in Redux + localStorage before navigating
     dispatch(setAsPartyB({ agreementId, address: walletAddress! }));
     dispatch(setScreen("dashboard"));
-    // Navigate to the dedicated dashboard route
     router.push("/dashboard");
   }
 
@@ -781,19 +1003,25 @@ function DepositState({
             {
               icon: "💸",
               label: "Payer locks funds",
-              desc: `The payer deploys the contract and locks $${amountUsd} USD.`,
+              desc:
+                amountRaw === "—"
+                  ? "The payer deploys the contract and locks funds."
+                  : `The payer deploys the contract and locks $${amountRaw} USD.`,
               color: "#f59e0b",
             },
             {
               icon: "📋",
               label: "Conditions must be met",
-              desc: String(editedTerms?.condition ?? "Delivery confirmed."),
+              desc:
+                condition === "—"
+                  ? "Delivery confirmed per agreement terms."
+                  : condition,
               color: "var(--white)",
             },
             {
               icon: "🎯",
               label: "You get paid",
-              desc: "Once the payer confirms, funds release directly to your wallet.",
+              desc: "Once confirmed, funds release directly to your wallet.",
               color: "#22c55e",
             },
           ].map((item, i, arr) => (
@@ -803,9 +1031,9 @@ function DepositState({
                 display: "flex",
                 gap: 14,
                 padding: "14px 20px",
+                textAlign: "left",
                 borderBottom:
                   i < arr.length - 1 ? "1px solid var(--black-4)" : "none",
-                textAlign: "left",
               }}
             >
               <span style={{ fontSize: 20, flexShrink: 0 }}>{item.icon}</span>
@@ -865,7 +1093,6 @@ function DepositState({
           </div>
         </div>
 
-        {/* ── FIXED: navigates to /dashboard, not / ── */}
         <button
           className="animate-fade-up delay-3"
           onClick={handleGoToDashboard}
@@ -899,7 +1126,8 @@ function DepositState({
   );
 }
 
-// ── Layout wrapper ────────────────────────────────────────────
+// ── Shared primitives ─────────────────────────────────────────
+
 function CenterLayout({ children }: { children: React.ReactNode }) {
   return (
     <div
@@ -916,19 +1144,13 @@ function CenterLayout({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Spinner({
-  size = 16,
-  color = "var(--black)",
-}: {
-  size?: number;
-  color?: string;
-}) {
+function Spinner({ size = 16 }: { size?: number }) {
   return (
     <span
       style={{
         width: size,
         height: size,
-        border: `2px solid ${color === "var(--black)" ? "var(--grey-2)" : color}`,
+        border: "2px solid var(--grey-2)",
         borderTopColor: "transparent",
         borderRadius: "50%",
         animation: "spin 0.7s linear infinite",

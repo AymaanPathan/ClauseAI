@@ -1,5 +1,5 @@
 // ============================================================
-// src/server.ts — Updated with MongoDB + Arbitration route
+// src/index.ts — Entry point (renamed from server.ts)
 // ============================================================
 
 import express from "express";
@@ -17,32 +17,31 @@ const app = express();
 const PORT = process.env.PORT ?? 3001;
 
 app.use(cors());
-app.use(express.json({ limit: "10mb" })); // larger limit for base64 evidence
+app.use(express.json({ limit: "10mb" }));
 
 // ── Routes ────────────────────────────────────────────────────
 app.use("/api/parse", parseRouter);
 app.use("/api/agreement", agreementRouter);
-app.use("/api/arbitrate", arbitrateRouter); // ← NEW
+app.use("/api/arbitrate", arbitrateRouter);
 
-// ── Root health check ─────────────────────────────────────────
+// ── Health check ──────────────────────────────────────────────
 app.get("/", (_req, res) => {
   res.json({
     status: "ok",
-    service: "ClauseAi Backend",
+    service: "ClauseAI Backend",
+    version: "1.0.0",
     routes: ["/api/parse", "/api/agreement", "/api/arbitrate"],
   });
 });
 
 // ── Startup ───────────────────────────────────────────────────
 async function start() {
-  // Redis (presence store — existing)
   await initRedis();
-
-  // MongoDB (disputes — new)
   await connectMongoDB();
 
   app.listen(PORT, () => {
-    console.log(`✅ ClauseAi backend running on http://localhost:${PORT}`);
+    console.log(`✅ ClauseAI backend running on http://localhost:${PORT}`);
+    console.log(`   Routes: /api/parse  /api/agreement  /api/arbitrate`);
   });
 }
 

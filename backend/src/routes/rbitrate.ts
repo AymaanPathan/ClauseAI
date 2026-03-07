@@ -1,9 +1,35 @@
+// ============================================================
+// src/routes/arbitrate.ts — Full Arbitration Engine
+//
+// Endpoints:
+//   POST /api/arbitrate/open             — open a dispute record
+//   POST /api/arbitrate/submit           — party submits statement + evidence URLs
+//   POST /api/arbitrate/upload           — upload evidence files to Cloudinary
+//   POST /api/arbitrate/verdict          — manually trigger AI arbitration
+//   POST /api/arbitrate/resolve          — arbitrator confirms or overrides verdict
+//   GET  /api/arbitrate/dashboard/:addr  — all disputes for an arbitrator wallet
+//   GET  /api/arbitrate/:id/:index       — get single dispute state
+//   GET  /api/arbitrate/:id/:index/events — SSE live updates for a dispute
+//
+// ENV VARS:
+//   GROQ_API_KEY            (required)
+//   CLOUDINARY_CLOUD_NAME   (optional — falls back to placeholder URLs)
+//   CLOUDINARY_API_KEY      (optional)
+//   CLOUDINARY_API_SECRET   (optional)
+//   MONGODB_URI             (optional — falls back to in-memory)
+// ============================================================
+
 import { Router, Request, Response } from "express";
 import multer from "multer";
 import { v2 as cloudinary } from "cloudinary";
-import { Dispute, DisputeMemStore, IDispute } from "../models/Dispute";
-import { AIVerdict, VerdictOutcome } from "../types/dispute";
-import { isMongoAvailable } from "../lib/db";
+import {
+  Dispute,
+  DisputeMemStore,
+  isMongoAvailable,
+  IDispute,
+  AIVerdict,
+  VerdictOutcome,
+} from "../lib/db";
 import { getGroqClient } from "../lib/groq-client";
 import { AI_CONFIG } from "../lib/ai-config";
 

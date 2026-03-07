@@ -1,9 +1,6 @@
-// ============================================================
 // store/index.ts — Redux store
-// ============================================================
-
 import { configureStore } from "@reduxjs/toolkit";
-import agreementReducer from "./slices/agreementSlice";
+import agreementReducer, { AgreementState } from "./slices/agreementSlice";
 
 export const store = configureStore({
   reducer: {
@@ -11,5 +8,7 @@ export const store = configureStore({
   },
 });
 
-export type RootState = ReturnType<typeof store.getState>;
+export type RootState = {
+  agreement: AgreementState;
+};
 export type AppDispatch = typeof store.dispatch;

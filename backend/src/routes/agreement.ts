@@ -236,4 +236,70 @@ router.delete("/:id", async (req: Request, res: Response) => {
   }
 });
 
+export function addApprovalRoute(router: Router) {
+  router.post("/:id/approve", async (req: Request, res: Response) => {
+    const { role, address } = req.body as {
+      role: "partyA" | "partyB";
+      address: string;
+    };
+
+    if (!role || !["partyA", "partyB"].includes(role)) {
+      return res
+        .status(400)
+        .json({ error: 'role must be "partyA" or "partyB"' });
+    }
+    if (!address || typeof address !== "string") {
+      return res.status(400).json({ error: "address is required" });
+    }
+
+    try {
+      // readPresence / writePresence / notifySSE are already in agreement.ts
+      // This is a drop-in addition to that file.
+
+      // @ts-ignore — these are defined in the outer scope of agreement.ts
+      let entry = await readPresence(req.params.id);
+      if (!entry) {
+        return res.status(404).json({ error: "Agreement not found" });
+      }
+
+      // Verify the approving address matches the registered party
+      if (role === "partyA" && entry.partyA && entry.partyA !== address) {
+        return res
+          .status(403)
+          .json({ error: "Address does not match Party A" });
+      }
+      if (role === "partyB" && entry.partyB && entry.partyB !== address) {
+        return res
+          .status(403)
+          .json({ error: "Address does not match Party B" });
+      }
+
+      // Set approval flag
+      if (role === "partyA") {
+        (entry as any).partyAApproved = true;
+      } else {
+        (entry as any).partyBApproved = true;
+      }
+
+      // @ts-ignore
+      await writePresence(req.params.id, entry);
+
+      const response = {
+        ...entry,
+        bothConnected: !!entry.partyA && !!entry.partyB,
+        partyAApproved: (entry as any).partyAApproved ?? false,
+        partyBApproved: (entry as any).partyBApproved ?? false,
+      };
+
+      // @ts-ignore
+      notifySSE(req.params.id, response);
+
+      res.json(response);
+    } catch (err) {
+      console.error("[approval POST]", err);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+}
+
 export default router;

@@ -12,6 +12,8 @@
 //   • triggerMilestoneTimeoutThunk(id, index)
 //   • triggerArbTimeoutThunk(id, index)  (now takes index)
 //   • pollAgreementThunk — now also fetches all milestones
+//   • approveAgreementThunk(id, role, address)   ← NEW
+//   • pollApprovalThunk(id)                      ← NEW
 // ============================================================
 
 import {
@@ -54,6 +56,11 @@ import {
   getPresence,
   PresenceState,
 } from "../../api/PresenceaApi";
+import {
+  approveAgreement,
+  getApprovalState,
+  ApprovalState,
+} from "../../api/approvalApi";
 
 // ─────────────────────────────────────────────────────────────
 // Types
@@ -65,6 +72,8 @@ export type AppScreen =
   | "describe"
   | "parsed-terms"
   | "connect-wallet"
+  | "set-arbitrator" // ← NEW
+  | "approve-agreement" // ← NEW
   | "share-link"
   | "lock-funds"
   | "dashboard"
@@ -105,6 +114,8 @@ export interface AgreementState {
   rawText: string;
   partyAName: string;
   partyBName: string;
+  partyAApproved: boolean;
+  partyBApproved: boolean;
   arbitratorName: string;
   parsedTerms: ParsedAgreement | ParsedAgreementV2 | null;
   editedTerms: ParsedAgreement | null;
@@ -165,7 +176,8 @@ const initialState: AgreementState = {
   shareLink: null,
   fundState: "idle",
   amountLocked: null,
-
+  partyAApproved: false,
+  partyBApproved: false,
   milestoneInputs: [],
   milestones: [],
   txMilestone: {},
@@ -480,8 +492,52 @@ export const pollAgreementThunk = createAsyncThunk(
   },
 );
 
+// ── approveAgreementThunk ─────────────────────────────────────
+export const approveAgreementThunk = createAsyncThunk(
+  "agreement/approveAgreement",
+  async (
+    payload: {
+      agreementId: string;
+      role: "partyA" | "partyB";
+      address: string;
+    },
+    { rejectWithValue },
+  ) => {
+    try {
+      return await approveAgreement(
+        payload.agreementId,
+        payload.role,
+        payload.address,
+      );
+    } catch (err: unknown) {
+      return rejectWithValue(
+        err instanceof Error ? err.message : "Approval failed",
+      );
+    }
+  },
+);
+
+// ── pollApprovalThunk ─────────────────────────────────────────
+export const pollApprovalThunk = createAsyncThunk(
+  "agreement/pollApproval",
+  async (agreementId: string, { rejectWithValue }) => {
+    try {
+      return await getApprovalState(agreementId);
+    } catch (err: unknown) {
+      return rejectWithValue(
+        err instanceof Error ? err.message : "Approval poll failed",
+      );
+    }
+  },
+);
+
 export const presenceUpdated = createAction<PresenceState>(
   "agreement/presenceUpdated",
+);
+
+/** Dispatched by the SSE subscriber in ScreenApproveAgreement */
+export const approvalUpdated = createAction<ApprovalState>(
+  "agreement/approvalUpdated",
 );
 
 // ─────────────────────────────────────────────────────────────
@@ -707,14 +763,11 @@ const agreementSlice = createSlice({
       .addCase(parseAgreementThunk.fulfilled, (state, action) => {
         state.parseLoading = false;
         state.parsedTerms = action.payload.data!;
-        // Use 'as any' for the spread — ParsedAgreement is a union (V1 | V2)
-        // and we need to apply party names regardless of which variant was returned.
         state.editedTerms = {
           ...(action.payload.data! as any),
         } as typeof state.editedTerms;
         const terms = state.editedTerms as any;
         if (state.partyAName) {
-          // V1 uses partyA, V2 uses payer — update both so either schema works
           terms.partyA = state.partyAName;
           terms.payer = state.partyAName;
         }
@@ -893,7 +946,6 @@ const agreementSlice = createSlice({
           txUrl: action.payload.txUrl,
           error: null,
         };
-        // Optimistically update milestone status
         const ms = state.milestones.find((m) => m.index === idx);
         if (ms) ms.status = 2; // COMPLETE
       })
@@ -1031,6 +1083,28 @@ const agreementSlice = createSlice({
         }
       }
     });
+
+    // ── approveAgreement ──────────────────────────────────────
+    builder
+      .addCase(approveAgreementThunk.fulfilled, (state, action) => {
+        state.partyAApproved = action.payload.partyAApproved;
+        state.partyBApproved = action.payload.partyBApproved;
+      })
+      .addCase(approveAgreementThunk.rejected, (state, action) => {
+        state.presenceError = action.payload as string;
+      });
+
+    // ── pollApproval ──────────────────────────────────────────
+    builder.addCase(pollApprovalThunk.fulfilled, (state, action) => {
+      state.partyAApproved = action.payload.partyAApproved;
+      state.partyBApproved = action.payload.partyBApproved;
+    });
+
+    // ── approvalUpdated (SSE) ─────────────────────────────────
+    builder.addCase(approvalUpdated, (state, action) => {
+      state.partyAApproved = action.payload.partyAApproved;
+      state.partyBApproved = action.payload.partyBApproved;
+    });
   },
 });
 
@@ -1058,6 +1132,11 @@ function applyPresence(state: AgreementState, presence: PresenceState) {
       state.counterpartyConnected = true;
     }
   }
+  // Sync approval flags whenever a presence event carries them
+  if ((presence as any).partyAApproved !== undefined)
+    state.partyAApproved = (presence as any).partyAApproved;
+  if ((presence as any).partyBApproved !== undefined)
+    state.partyBApproved = (presence as any).partyBApproved;
 }
 
 export const {

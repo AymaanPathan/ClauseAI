@@ -94,7 +94,7 @@ export default function ScreenShareLink() {
         {/* Header */}
         <div className="fade-up" style={{ marginBottom: 36 }}>
           <button
-            onClick={() => dispatch(setScreen("connect-wallet"))}
+            onClick={() => dispatch(setScreen("set-arbitrator"))}
             style={{
               background: "none",
               border: "none",
@@ -315,14 +315,14 @@ export default function ScreenShareLink() {
           />
         </div>
 
-        {/* CTA */}
+        {/* CTA — now goes to approve-agreement instead of lock-funds */}
         {counterpartyConnected ? (
           <button
             className="btn btn-primary btn-lg fade-in"
-            onClick={() => dispatch(setScreen("lock-funds"))}
+            onClick={() => dispatch(setScreen("approve-agreement"))}
             style={{ width: "100%" }}
           >
-            {receiverName} Connected — Lock Funds
+            {receiverName} Connected — Review &amp; Approve
             <svg
               width="12"
               height="12"

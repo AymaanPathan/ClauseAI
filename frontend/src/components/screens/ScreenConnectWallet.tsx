@@ -5,9 +5,16 @@ import { setScreen, connectWalletThunk } from "@/store/slices/agreementSlice";
 
 export default function ScreenConnectWallet() {
   const dispatch = useAppDispatch();
-  const { walletConnected, walletAddress } = useAppSelector((s) => s.agreement);
+  const { walletConnected, walletAddress, isPartyB } = useAppSelector(
+    (s) => s.agreement,
+  );
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Party A → set-arbitrator, Party B → approve-agreement (skips arbitrator step)
+  function nextScreen() {
+    dispatch(setScreen(isPartyB ? "approve-agreement" : "set-arbitrator"));
+  }
 
   async function handleConnect() {
     setIsConnecting(true);
@@ -15,7 +22,7 @@ export default function ScreenConnectWallet() {
     try {
       const result = await dispatch(connectWalletThunk());
       if (connectWalletThunk.fulfilled.match(result)) {
-        dispatch(setScreen("share-link"));
+        nextScreen();
       } else {
         setError((result.payload as string) ?? "Wallet connect failed");
       }
@@ -157,10 +164,10 @@ export default function ScreenConnectWallet() {
           {walletConnected ? (
             <button
               className="btn btn-primary btn-lg"
-              onClick={() => dispatch(setScreen("share-link"))}
+              onClick={nextScreen}
               style={{ width: "100%" }}
             >
-              Continue — Invite Receiver
+              Continue — {isPartyB ? "Review Agreement" : "Choose Arbitrator"}
               <svg
                 width="12"
                 height="12"

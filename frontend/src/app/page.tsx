@@ -8,6 +8,8 @@ import ScreenSelectType from "@/components/screens/ScreenSelectType";
 import ScreenDescribe from "@/components/screens/ScreenDescribe";
 import ScreenParsedTerms from "@/components/screens/ScreenParsedTerms";
 import ScreenConnectWallet from "@/components/screens/ScreenConnectWallet";
+import ScreenSetArbitrator from "@/components/screens/ScreenSetArbitrator";
+import ScreenApproveAgreement from "@/components/screens/ScreenApproveAgreement";
 import ScreenShareLink from "@/components/screens/ScreenShareLink";
 import ScreenLockFunds from "@/components/screens/ScreenLockFunds";
 import ScreenOutcome from "@/components/screens/ScreenOutcome";
@@ -19,12 +21,10 @@ export default function Home() {
   const screen = useAppSelector((s) => s.agreement.currentScreen);
   const showTopbar = screen !== "landing";
 
-  // Restore wallet session on mount (handles page refreshes)
   useEffect(() => {
     dispatch(rehydrateSession());
   }, [dispatch]);
 
-  // When Redux screen becomes "dashboard", navigate to the /dashboard route
   useEffect(() => {
     if (screen === "dashboard") {
       router.push("/dashboard");
@@ -39,6 +39,8 @@ export default function Home() {
       {screen === "describe" && <ScreenDescribe />}
       {screen === "parsed-terms" && <ScreenParsedTerms />}
       {screen === "connect-wallet" && <ScreenConnectWallet />}
+      {screen === "set-arbitrator" && <ScreenSetArbitrator />}
+      {screen === "approve-agreement" && <ScreenApproveAgreement />}
       {screen === "share-link" && <ScreenShareLink />}
       {screen === "lock-funds" && <ScreenLockFunds />}
       {(screen === "complete" ||

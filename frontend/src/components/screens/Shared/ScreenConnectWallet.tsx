@@ -11,9 +11,9 @@ export default function ScreenConnectWallet() {
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Party A → set-arbitrator, Party B → approve-agreement (skips arbitrator step)
+  // After wallet connect, both Party A and Party B go to approve-agreement
   function nextScreen() {
-    dispatch(setScreen(isPartyB ? "approve-agreement" : "set-arbitrator"));
+    dispatch(setScreen("approve-agreement"));
   }
 
   async function handleConnect() {
@@ -38,7 +38,9 @@ export default function ScreenConnectWallet() {
       <div style={{ maxWidth: 440, width: "100%", textAlign: "center" }}>
         <div className="fade-up">
           <button
-            onClick={() => dispatch(setScreen("parsed-terms"))}
+            onClick={() =>
+              dispatch(setScreen(isPartyB ? "parsed-terms" : "share-link"))
+            }
             style={{
               background: "none",
               border: "none",
@@ -104,7 +106,7 @@ export default function ScreenConnectWallet() {
             className="step-counter"
             style={{ marginBottom: 12, display: "block" }}
           >
-            Step 4 of 6
+            {isPartyB ? "Step 1 of 2" : "Step 5 of 6"}
           </div>
 
           <h2
@@ -167,7 +169,7 @@ export default function ScreenConnectWallet() {
               onClick={nextScreen}
               style={{ width: "100%" }}
             >
-              Continue — {isPartyB ? "Review Agreement" : "Choose Arbitrator"}
+              Continue — {isPartyB ? "Review Agreement" : "Review & Approve"}
               <svg
                 width="12"
                 height="12"

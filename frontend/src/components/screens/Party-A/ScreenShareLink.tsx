@@ -7,7 +7,7 @@ import {
   registerPresenceThunk,
   applyPresenceUpdate,
 } from "@/store/slices/agreementSlice";
-import { hashTerms, subscribePresence } from "../../api/PresenceaApi";
+import { hashTerms, subscribePresence } from "../../../api/PresenceaApi";
 
 export default function ScreenShareLink() {
   const dispatch = useAppDispatch();
@@ -319,10 +319,10 @@ export default function ScreenShareLink() {
         {counterpartyConnected ? (
           <button
             className="btn btn-primary btn-lg fade-in"
-            onClick={() => dispatch(setScreen("approve-agreement"))}
+            onClick={() => dispatch(setScreen("connect-wallet"))}
             style={{ width: "100%" }}
           >
-            {receiverName} Connected — Review &amp; Approve
+            {receiverName} Connected — Connect Your Wallet
             <svg
               width="12"
               height="12"

@@ -1,6 +1,6 @@
 "use client";
 import { useAppDispatch } from "@/store/hooks";
-import { setScreen } from "../../store/slices/agreementSlice";
+import { setScreen } from "../../../store/slices/agreementSlice";
 
 const IconArrow = () => (
   <svg

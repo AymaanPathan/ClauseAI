@@ -5,7 +5,7 @@ import {
   setScreen,
   updateEditedTerms,
   approveTerms,
-} from "../../store/slices/agreementSlice";
+} from "../../../store/slices/agreementSlice";
 import { isV2, ParsedAgreementV2 } from "@/api/parseApi";
 import type { Milestone } from "@/api/parseApi";
 
@@ -15,7 +15,7 @@ function confDot(c?: string) {
   return "var(--red)";
 }
 
-export default function ScreenParsedTerms() {
+export default function ReviewTerms() {
   const dispatch = useAppDispatch();
   const { editedTerms, parseError, agreementType } = useAppSelector(
     (s) => s.agreement,
@@ -483,7 +483,7 @@ export default function ScreenParsedTerms() {
             className="btn btn-primary btn-lg"
             onClick={() => {
               dispatch(approveTerms());
-              dispatch(setScreen("connect-wallet"));
+              dispatch(setScreen("set-arbitrator"));
             }}
             style={{ width: "100%" }}
             disabled={hasV2 && !pctOk}

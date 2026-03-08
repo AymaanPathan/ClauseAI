@@ -1,13 +1,12 @@
 "use client";
 import { useState } from "react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
-import { AgreementType } from "@/api/parseApi";
 import {
   parseAgreementThunk,
   setPartyNames,
   setRawText,
   setScreen,
-} from "../../store/slices/agreementSlice";
+} from "../../../store/slices/agreementSlice";
 
 const PLACEHOLDERS: Record<string, string> = {
   freelance:

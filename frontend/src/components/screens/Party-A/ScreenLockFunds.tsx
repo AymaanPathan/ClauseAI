@@ -6,7 +6,7 @@ import {
   setMilestoneInputs,
   createAgreementThunk,
   depositThunk,
-} from "../../store/slices/agreementSlice";
+} from "../../../store/slices/agreementSlice";
 import { MilestoneInput } from "@/lib/contractCalls";
 import { isV2, ParsedAgreementV2 } from "@/api/parseApi";
 import PresenceIndicator from "@/components/ui/PresenceIndicator";

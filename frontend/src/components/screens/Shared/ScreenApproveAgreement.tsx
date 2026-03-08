@@ -728,14 +728,14 @@ export default function ScreenApproveAgreement() {
             </div>
           )}
 
-          {/* ── PARTY A: back to arbitrator ── */}
+          {/* ── PARTY A: back to wallet screen ── */}
           {!isPartyB && !myApproved && (
             <button
               className="btn btn-ghost"
-              onClick={() => dispatch(setScreen("set-arbitrator" as never))}
+              onClick={() => dispatch(setScreen("connect-wallet" as never))}
               style={{ width: "100%" }}
             >
-              ← Change Arbitrator
+              ← Back
             </button>
           )}
         </div>

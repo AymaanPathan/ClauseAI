@@ -85,7 +85,7 @@ export default function ScreenSetArbitrator() {
         {/* ── Header ───────────────────────────────────────── */}
         <div className="fade-up" style={{ marginBottom: 36 }}>
           <button
-            onClick={() => dispatch(setScreen("connect-wallet"))}
+            onClick={() => dispatch(setScreen("parsed-terms"))}
             style={backBtnStyle}
           >
             ← Back
@@ -95,7 +95,7 @@ export default function ScreenSetArbitrator() {
             className="step-counter"
             style={{ display: "block", marginBottom: 12 }}
           >
-            Step 4.5 of 6
+            Step 4 of 6
           </div>
 
           <h2 style={titleStyle}>Choose an arbitrator</h2>

@@ -1,19 +1,17 @@
 // ============================================================
-// store/slices/agreementSlice.ts — MILESTONE ESCROW v3
+// store/slices/agreementSlice.ts — v4  PRODUCTION SESSION MANAGEMENT
 //
-// New state:
-//   • milestones: OnChainMilestone[] — synced from chain
-//   • milestoneInputs: MilestoneInput[] — user-defined before deploy
-//   • txMilestone: Record<number, TxState> — per-milestone tx tracking
+// Key changes from v3:
+//   • rehydrateSession removed — replaced with:
+//       rehydratePartyASession (thunk) — used by app/page.tsx
+//       initPartyBSession      (thunk) — used by app/agreement/[id]/page.tsx
+//       clearStalePartyBState  (reducer) — called before initPartyBSession
 //
-// New thunks:
-//   • completeMilestoneThunk(id, index)
-//   • disputeMilestoneThunk(id, index)
-//   • triggerMilestoneTimeoutThunk(id, index)
-//   • triggerArbTimeoutThunk(id, index)  (now takes index)
-//   • pollAgreementThunk — now also fetches all milestones
-//   • approveAgreementThunk(id, role, address)   ← NEW
-//   • pollApprovalThunk(id)                      ← NEW
+//   • Approval flags (partyAApproved/partyBApproved) are NEVER restored
+//     from localStorage. They are always fetched fresh from the API.
+//
+//   • Party B "already approved" is detected server-side, not by reading
+//     stale localStorage. The page component renders the right UI.
 // ============================================================
 
 import {
@@ -62,6 +60,11 @@ import {
   ApprovalState,
 } from "../../api/approvalApi";
 
+const API_BASE =
+  typeof process !== "undefined"
+    ? (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000")
+    : "http://localhost:8000";
+
 // ─────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────
@@ -72,8 +75,8 @@ export type AppScreen =
   | "describe"
   | "parsed-terms"
   | "connect-wallet"
-  | "set-arbitrator" // ← NEW
-  | "approve-agreement" // ← NEW
+  | "set-arbitrator"
+  | "approve-agreement"
   | "share-link"
   | "lock-funds"
   | "dashboard"
@@ -134,12 +137,8 @@ export interface AgreementState {
   fundState: FundState;
   amountLocked: string | null;
 
-  // ── Milestone state ──────────────────────────────────────────
-  /** User-defined milestone inputs before deployment */
   milestoneInputs: MilestoneInput[];
-  /** Live on-chain milestone data (fetched during polling) */
   milestones: OnChainMilestone[];
-  /** Per-milestone tx states keyed by milestone index */
   txMilestone: Record<number, TxState>;
 
   deadlineBlock: number | null;
@@ -181,7 +180,6 @@ const initialState: AgreementState = {
   milestoneInputs: [],
   milestones: [],
   txMilestone: {},
-
   deadlineBlock: null,
   disputeOpenedBy: null,
   myDepositDone: false,
@@ -190,7 +188,6 @@ const initialState: AgreementState = {
   pollingActive: false,
   presenceRegistered: false,
   presenceError: null,
-
   txCreate: emptyTx(),
   txDeposit: emptyTx(),
 };
@@ -290,6 +287,90 @@ export const fetchTermsForPartyBThunk = createAsyncThunk(
   },
 );
 
+// ── rehydratePartyASession ────────────────────────────────────
+// Used exclusively by app/page.tsx (Party A route).
+// Restores Party A context from localStorage.
+// NEVER restores approval flags — those are always fetched from API.
+// If it finds a Party B session, returns { isPartyB: true } and
+// lets page.tsx redirect to /agreement/[id].
+export const rehydratePartyASession = createAsyncThunk(
+  "agreement/rehydratePartyA",
+  async (_, { rejectWithValue }) => {
+    if (typeof window === "undefined") return null;
+    try {
+      const agreementId = localStorage.getItem("clauseai_agreement_id");
+      if (!agreementId) return null;
+
+      const isPartyB =
+        localStorage.getItem(`clauseai_is_party_b_${agreementId}`) === "true";
+
+      // Don't restore a Party B session on the Party A page
+      if (isPartyB) return { isPartyB: true, agreementId };
+
+      const address = localStorage.getItem("clauseai_wallet_address");
+      const termsRaw = localStorage.getItem("clauseai_terms");
+      const milestonesRaw = localStorage.getItem("clauseai_milestones");
+
+      return {
+        isPartyB: false,
+        agreementId,
+        address,
+        terms: termsRaw ? (JSON.parse(termsRaw) as ParsedAgreement) : null,
+        milestones: milestonesRaw
+          ? (JSON.parse(milestonesRaw) as MilestoneInput[])
+          : null,
+      };
+    } catch {
+      return null;
+    }
+  },
+);
+
+// ── initPartyBSession ─────────────────────────────────────────
+// Used exclusively by app/agreement/[id]/page.tsx (Party B route).
+// ALWAYS fetches agreement from server — never trusts localStorage for
+// approval state. Detects genuine "already approved" vs stale cache.
+export const initPartyBSession = createAsyncThunk(
+  "agreement/initPartyB",
+  async (agreementId: string, { rejectWithValue }) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/agreement/${agreementId}`);
+      if (!res.ok) {
+        if (res.status === 404)
+          throw new Error("This agreement link is invalid or has expired.");
+        throw new Error(`Server error ${res.status}`);
+      }
+      const data = await res.json();
+
+      const storedAddress = localStorage.getItem("clauseai_wallet_address");
+      const storedIsPartyB =
+        localStorage.getItem(`clauseai_is_party_b_${agreementId}`) === "true";
+
+      // "Already approved" = server confirms it AND the stored wallet is the
+      // approved party B wallet. A different device / cleared storage = not approved.
+      const alreadyApproved =
+        data.partyBApproved === true &&
+        storedIsPartyB &&
+        !!storedAddress &&
+        data.partyB === storedAddress;
+
+      return {
+        agreementId,
+        terms: data.termsSnapshot ?? null,
+        partyAWallet: data.partyA ?? null,
+        partyBApproved: data.partyBApproved ?? false,
+        partyAApproved: data.partyAApproved ?? false,
+        alreadyApproved,
+        storedAddress: storedIsPartyB ? storedAddress : null,
+      };
+    } catch (err: unknown) {
+      return rejectWithValue(
+        err instanceof Error ? err.message : "Failed to load agreement.",
+      );
+    }
+  },
+);
+
 export const rehydratePartyBThunk = createAsyncThunk(
   "agreement/rehydratePartyB",
   async (agreementId: string, { rejectWithValue }) => {
@@ -313,7 +394,6 @@ export const rehydratePartyBThunk = createAsyncThunk(
   },
 );
 
-// ── create-agreement (v3: includes milestones) ────────────────
 export const createAgreementThunk = createAsyncThunk(
   "agreement/createOnChain",
   async (
@@ -366,7 +446,6 @@ export const depositThunk = createAsyncThunk(
   },
 );
 
-// ── complete-milestone ────────────────────────────────────────
 export const completeMilestoneThunk = createAsyncThunk(
   "agreement/completeMilestone",
   async (
@@ -391,7 +470,6 @@ export const completeMilestoneThunk = createAsyncThunk(
   },
 );
 
-// ── dispute-milestone ─────────────────────────────────────────
 export const disputeMilestoneThunk = createAsyncThunk(
   "agreement/disputeMilestone",
   async (
@@ -416,7 +494,6 @@ export const disputeMilestoneThunk = createAsyncThunk(
   },
 );
 
-// ── trigger-milestone-timeout ─────────────────────────────────
 export const triggerMilestoneTimeoutThunk = createAsyncThunk(
   "agreement/triggerMilestoneTimeout",
   async (
@@ -441,7 +518,6 @@ export const triggerMilestoneTimeoutThunk = createAsyncThunk(
   },
 );
 
-// ── trigger-arb-timeout (per milestone) ──────────────────────
 export const triggerArbTimeoutThunk = createAsyncThunk(
   "agreement/triggerArbTimeout",
   async (
@@ -466,7 +542,6 @@ export const triggerArbTimeoutThunk = createAsyncThunk(
   },
 );
 
-// ── pollAgreementThunk — now also fetches all milestones ──────
 export const pollAgreementThunk = createAsyncThunk(
   "agreement/poll",
   async (agreementId: string, { rejectWithValue }) => {
@@ -475,7 +550,6 @@ export const pollAgreementThunk = createAsyncThunk(
         getAgreement(agreementId),
         getCurrentBlockHeight(),
       ]);
-      // Fetch milestones if we know the count
       let milestones: OnChainMilestone[] = [];
       if (onChain && onChain.milestoneCount > 0) {
         milestones = await getAllMilestones(
@@ -492,7 +566,6 @@ export const pollAgreementThunk = createAsyncThunk(
   },
 );
 
-// ── approveAgreementThunk ─────────────────────────────────────
 export const approveAgreementThunk = createAsyncThunk(
   "agreement/approveAgreement",
   async (
@@ -517,7 +590,6 @@ export const approveAgreementThunk = createAsyncThunk(
   },
 );
 
-// ── pollApprovalThunk ─────────────────────────────────────────
 export const pollApprovalThunk = createAsyncThunk(
   "agreement/pollApproval",
   async (agreementId: string, { rejectWithValue }) => {
@@ -534,8 +606,6 @@ export const pollApprovalThunk = createAsyncThunk(
 export const presenceUpdated = createAction<PresenceState>(
   "agreement/presenceUpdated",
 );
-
-/** Dispatched by the SSE subscriber in ScreenApproveAgreement */
 export const approvalUpdated = createAction<ApprovalState>(
   "agreement/approvalUpdated",
 );
@@ -580,8 +650,6 @@ const agreementSlice = createSlice({
     approveTerms(state) {
       state.parsedTerms = state.editedTerms;
     },
-
-    // ── Milestone inputs (set during lock-funds screen) ───────
     setMilestoneInputs(state, action: PayloadAction<MilestoneInput[]>) {
       state.milestoneInputs = action.payload;
       if (typeof window !== "undefined") {
@@ -591,7 +659,6 @@ const agreementSlice = createSlice({
         );
       }
     },
-
     setWalletAddress(state, action: PayloadAction<string>) {
       state.walletConnected = true;
       state.walletAddress = action.payload;
@@ -600,6 +667,26 @@ const agreementSlice = createSlice({
       disconnectHiroWallet();
       state.walletConnected = false;
       state.walletAddress = null;
+    },
+
+    // ── clearStalePartyBState ─────────────────────────────────
+    // Called by /agreement/[id]/page.tsx before initPartyBSession.
+    // Wipes anything that could cause a ghost-approved state.
+    clearStalePartyBState(state) {
+      state.partyAApproved = false;
+      state.partyBApproved = false;
+      state.walletConnected = false;
+      state.walletAddress = null;
+      state.presenceRegistered = false;
+      state.counterpartyConnected = false;
+      state.counterpartyWallet = null;
+      state.isPartyB = false;
+      state.editedTerms = null;
+      state.parsedTerms = null;
+      if (typeof window !== "undefined") {
+        // Only wipe approval-related keys, keep agreement ID for the fetch
+        localStorage.removeItem("clauseai_wallet_address");
+      }
     },
 
     setAsPartyB(
@@ -660,52 +747,6 @@ const agreementSlice = createSlice({
       state.shareLink = buildShareLink(action.payload);
     },
 
-    rehydrateSession(state) {
-      if (typeof window === "undefined") return;
-      const address = localStorage.getItem("clauseai_wallet_address");
-      const agreementId = localStorage.getItem("clauseai_agreement_id");
-      if (address) {
-        state.walletConnected = true;
-        state.walletAddress = address;
-      }
-      if (agreementId) {
-        state.agreementId = agreementId;
-        state.shareLink = buildShareLink(agreementId);
-        const isPartyB =
-          localStorage.getItem(`clauseai_is_party_b_${agreementId}`) === "true";
-        if (isPartyB) state.isPartyB = true;
-      }
-      const termsRaw = localStorage.getItem("clauseai_terms");
-      if (termsRaw) {
-        try {
-          const terms = JSON.parse(termsRaw) as ParsedAgreement;
-          state.editedTerms = terms;
-          state.parsedTerms = terms;
-        } catch {
-          // corrupted — ignore
-        }
-      }
-      const milestonesRaw = localStorage.getItem("clauseai_milestones");
-      if (milestonesRaw) {
-        try {
-          state.milestoneInputs = JSON.parse(milestonesRaw) as MilestoneInput[];
-        } catch {
-          // ignore
-        }
-      }
-
-      // FIX: If Party B is rehydrating and hasn't approved yet,
-      // don't leave them on "dashboard" — send them to approve-agreement.
-      // This prevents the premature dashboard redirect in page.tsx.
-      if (
-        state.isPartyB &&
-        !state.partyBApproved &&
-        state.currentScreen === "dashboard"
-      ) {
-        state.currentScreen = "approve-agreement";
-      }
-    },
-
     applyPresenceUpdate(state, action: PayloadAction<PresenceState>) {
       applyPresence(state, action.payload);
     },
@@ -752,6 +793,7 @@ const agreementSlice = createSlice({
       state.disputeOpenedBy = action.payload;
       state.currentScreen = "dispute";
     },
+
     resetAll() {
       if (typeof window !== "undefined") {
         Object.keys(localStorage)
@@ -763,7 +805,7 @@ const agreementSlice = createSlice({
   },
 
   extraReducers: (builder) => {
-    // parse
+    // ── parse ──────────────────────────────────────────────────
     builder
       .addCase(parseAgreementThunk.pending, (state) => {
         state.parseLoading = true;
@@ -800,7 +842,7 @@ const agreementSlice = createSlice({
         state.parseError = action.payload as string;
       });
 
-    // connectWallet
+    // ── connectWallet ──────────────────────────────────────────
     builder
       .addCase(connectWalletThunk.fulfilled, (state, action) => {
         state.walletConnected = true;
@@ -813,7 +855,7 @@ const agreementSlice = createSlice({
         state.presenceError = action.payload as string;
       });
 
-    // registerPresence
+    // ── registerPresence ───────────────────────────────────────
     builder
       .addCase(registerPresenceThunk.fulfilled, (state, action) => {
         state.presenceRegistered = true;
@@ -824,17 +866,17 @@ const agreementSlice = createSlice({
         state.presenceError = action.payload as string;
       });
 
-    // pollPresence
+    // ── pollPresence ───────────────────────────────────────────
     builder.addCase(pollPresenceThunk.fulfilled, (state, action) => {
       applyPresence(state, action.payload as PresenceState);
     });
 
-    // presenceUpdated (SSE)
+    // ── presenceUpdated (SSE) ──────────────────────────────────
     builder.addCase(presenceUpdated, (state, action) => {
       applyPresence(state, action.payload);
     });
 
-    // fetchTermsForPartyB
+    // ── fetchTermsForPartyB ────────────────────────────────────
     builder
       .addCase(fetchTermsForPartyBThunk.pending, (state) => {
         state.parseLoading = true;
@@ -862,7 +904,75 @@ const agreementSlice = createSlice({
         state.parseError = action.payload as string;
       });
 
-    // rehydratePartyB
+    // ── rehydratePartyASession ─────────────────────────────────
+    builder.addCase(rehydratePartyASession.fulfilled, (state, action) => {
+      if (!action.payload) return;
+      const p = action.payload;
+      if (p.isPartyB) return; // page.tsx will redirect
+
+      const { agreementId, address, terms, milestones } = p as any;
+      if (agreementId) {
+        state.agreementId = agreementId;
+        state.shareLink = buildShareLink(agreementId);
+      }
+      if (address) {
+        state.walletConnected = true;
+        state.walletAddress = address;
+      }
+      if (terms) {
+        state.parsedTerms = terms;
+        state.editedTerms = { ...terms };
+      }
+      if (milestones) {
+        state.milestoneInputs = milestones;
+      }
+      // Never restore approval flags from localStorage
+      state.partyAApproved = false;
+      state.partyBApproved = false;
+    });
+
+    // ── initPartyBSession ──────────────────────────────────────
+    builder
+      .addCase(initPartyBSession.fulfilled, (state, action) => {
+        const p = action.payload;
+        state.isPartyB = true;
+        state.agreementId = p.agreementId;
+        state.shareLink = buildShareLink(p.agreementId);
+
+        if (p.terms) {
+          const terms = p.terms as unknown as ParsedAgreement;
+          state.parsedTerms = terms;
+          state.editedTerms = { ...terms };
+        }
+
+        if (p.partyAWallet) {
+          state.counterpartyWallet = p.partyAWallet;
+          state.counterpartyConnected = true;
+        }
+
+        // Restore wallet only if this device previously signed as Party B
+        if (p.storedAddress) {
+          state.walletConnected = true;
+          state.walletAddress = p.storedAddress;
+          state.presenceRegistered = true;
+        }
+
+        // Approval state always from server — never from localStorage
+        state.partyAApproved = p.partyAApproved;
+        state.partyBApproved = p.partyBApproved;
+
+        // Route to correct screen based on session state
+        if (p.storedAddress && !p.alreadyApproved) {
+          state.currentScreen = "approve-agreement";
+        } else {
+          state.currentScreen = "connect-wallet";
+        }
+      })
+      .addCase(initPartyBSession.rejected, (_state, _action) => {
+        // Error handled by page component
+      });
+
+    // ── rehydratePartyBThunk (legacy) ──────────────────────────
     builder.addCase(rehydratePartyBThunk.fulfilled, (state, action) => {
       if (!action.payload) return;
       const { address, presence } = action.payload;
@@ -881,7 +991,7 @@ const agreementSlice = createSlice({
       }
     });
 
-    // createAgreement
+    // ── createAgreement ────────────────────────────────────────
     builder
       .addCase(createAgreementThunk.pending, (state) => {
         state.txCreate = {
@@ -908,7 +1018,7 @@ const agreementSlice = createSlice({
         };
       });
 
-    // deposit
+    // ── deposit ────────────────────────────────────────────────
     builder
       .addCase(depositThunk.pending, (state) => {
         state.txDeposit = {
@@ -938,7 +1048,7 @@ const agreementSlice = createSlice({
         };
       });
 
-    // completeMilestone
+    // ── completeMilestone ──────────────────────────────────────
     builder
       .addCase(completeMilestoneThunk.pending, (state, action) => {
         const idx = action.meta.arg.milestoneIndex;
@@ -958,7 +1068,7 @@ const agreementSlice = createSlice({
           error: null,
         };
         const ms = state.milestones.find((m) => m.index === idx);
-        if (ms) ms.status = 2; // COMPLETE
+        if (ms) ms.status = 2;
       })
       .addCase(completeMilestoneThunk.rejected, (state, action) => {
         const idx = action.meta.arg.milestoneIndex;
@@ -970,7 +1080,7 @@ const agreementSlice = createSlice({
         };
       });
 
-    // disputeMilestone
+    // ── disputeMilestone ───────────────────────────────────────
     builder
       .addCase(disputeMilestoneThunk.pending, (state, action) => {
         const idx = action.meta.arg.milestoneIndex;
@@ -990,7 +1100,7 @@ const agreementSlice = createSlice({
           error: null,
         };
         const ms = state.milestones.find((m) => m.index === idx);
-        if (ms) ms.status = 4; // DISPUTED
+        if (ms) ms.status = 4;
       })
       .addCase(disputeMilestoneThunk.rejected, (state, action) => {
         const idx = action.meta.arg.milestoneIndex;
@@ -1002,7 +1112,7 @@ const agreementSlice = createSlice({
         };
       });
 
-    // triggerMilestoneTimeout
+    // ── triggerMilestoneTimeout ────────────────────────────────
     builder
       .addCase(triggerMilestoneTimeoutThunk.pending, (state, action) => {
         const idx = action.meta.arg.milestoneIndex;
@@ -1022,7 +1132,7 @@ const agreementSlice = createSlice({
           error: null,
         };
         const ms = state.milestones.find((m) => m.index === idx);
-        if (ms) ms.status = 3; // REFUNDED
+        if (ms) ms.status = 3;
       })
       .addCase(triggerMilestoneTimeoutThunk.rejected, (state, action) => {
         const idx = action.meta.arg.milestoneIndex;
@@ -1034,7 +1144,7 @@ const agreementSlice = createSlice({
         };
       });
 
-    // triggerArbTimeout
+    // ── triggerArbTimeout ──────────────────────────────────────
     builder
       .addCase(triggerArbTimeoutThunk.pending, (state, action) => {
         const idx = action.meta.arg.milestoneIndex;
@@ -1054,7 +1164,7 @@ const agreementSlice = createSlice({
           error: null,
         };
         const ms = state.milestones.find((m) => m.index === idx);
-        if (ms) ms.status = 3; // REFUNDED
+        if (ms) ms.status = 3;
       })
       .addCase(triggerArbTimeoutThunk.rejected, (state, action) => {
         const idx = action.meta.arg.milestoneIndex;
@@ -1066,7 +1176,7 @@ const agreementSlice = createSlice({
         };
       });
 
-    // pollAgreement — now also syncs milestones
+    // ── pollAgreement ──────────────────────────────────────────
     builder.addCase(pollAgreementThunk.fulfilled, (state, action) => {
       const { onChain, blockHeight, milestones } = action.payload;
       if (blockHeight) state.blockHeight = blockHeight;
@@ -1095,7 +1205,7 @@ const agreementSlice = createSlice({
       }
     });
 
-    // ── approveAgreement ──────────────────────────────────────
+    // ── approveAgreement ───────────────────────────────────────
     builder
       .addCase(approveAgreementThunk.fulfilled, (state, action) => {
         state.partyAApproved = action.payload.partyAApproved;
@@ -1105,13 +1215,13 @@ const agreementSlice = createSlice({
         state.presenceError = action.payload as string;
       });
 
-    // ── pollApproval ──────────────────────────────────────────
+    // ── pollApproval ───────────────────────────────────────────
     builder.addCase(pollApprovalThunk.fulfilled, (state, action) => {
       state.partyAApproved = action.payload.partyAApproved;
       state.partyBApproved = action.payload.partyBApproved;
     });
 
-    // ── approvalUpdated (SSE) ─────────────────────────────────
+    // ── approvalUpdated (SSE) ──────────────────────────────────
     builder.addCase(approvalUpdated, (state, action) => {
       state.partyAApproved = action.payload.partyAApproved;
       state.partyBApproved = action.payload.partyBApproved;
@@ -1143,7 +1253,6 @@ function applyPresence(state: AgreementState, presence: PresenceState) {
       state.counterpartyConnected = true;
     }
   }
-  // Sync approval flags whenever a presence event carries them
   if ((presence as any).partyAApproved !== undefined)
     state.partyAApproved = (presence as any).partyAApproved;
   if ((presence as any).partyBApproved !== undefined)
@@ -1160,11 +1269,11 @@ export const {
   setMilestoneInputs,
   setWalletAddress,
   disconnectWallet,
+  clearStalePartyBState,
   setAsPartyB,
   setCounterpartyConnected,
   generateShareLink,
   setAgreementId,
-  rehydrateSession,
   applyPresenceUpdate,
   syncOnChainState,
   setBlockHeight,

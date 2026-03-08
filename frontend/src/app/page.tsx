@@ -19,6 +19,7 @@ export default function Home() {
   const dispatch = useAppDispatch();
   const router = useRouter();
   const screen = useAppSelector((s) => s.agreement.currentScreen);
+  const isPartyB = useAppSelector((s) => s.agreement.isPartyB);
   const showTopbar = screen !== "landing";
 
   useEffect(() => {
@@ -26,6 +27,8 @@ export default function Home() {
   }, [dispatch]);
 
   useEffect(() => {
+    // Only redirect to /dashboard once the screen is explicitly set to "dashboard"
+    // AND the user has gone through the proper flow (not just rehydration for party B)
     if (screen === "dashboard") {
       router.push("/dashboard");
     }

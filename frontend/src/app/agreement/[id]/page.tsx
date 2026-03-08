@@ -1,24 +1,50 @@
 "use client";
+// ============================================================
 // app/agreement/[id]/page.tsx
+//
+// Party B FLOW (receiver — never deposits anything):
+//
+//  STEP 1: review-terms   → read terms, tick checkbox
+//  STEP 2: connect-wallet → connect Leather, register presence
+//  STEP 3: approve        → click "Approve Agreement"
+//                           live status shows when Party A approves too
+//  STEP 4: waiting-funds  → BOTH approved, waiting for Party A
+//                           to lock funds on-chain (SSE watches)
+//  STEP 5: auto-redirect  → SSE fires contractDeployed → /dashboard
+//
+//  "Go to Dashboard" button NEVER shown until Party A locks funds.
+//  Party B deposits NOTHING. Party B only confirms and waits.
+// ============================================================
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
   fetchTermsForPartyBThunk,
-  rehydratePartyBThunk,
   connectWalletThunk,
   registerPresenceThunk,
   setAsPartyB,
-  setScreen,
 } from "@/store/slices/agreementSlice";
 
-type JoinStep =
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+type Step =
   | "loading"
   | "review-terms"
   | "connect-wallet"
-  | "depositing"
+  | "approve"
+  | "waiting-funds"
   | "error";
+
+interface LiveState {
+  partyAApproved: boolean;
+  partyBApproved: boolean;
+  partyA: string | null;
+  partyB: string | null;
+  contractDeployed: boolean;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function JoinPage() {
   const params = useParams();
@@ -26,46 +52,52 @@ export default function JoinPage() {
   const dispatch = useAppDispatch();
   const agreementId = params?.id as string;
 
-  const {
-    editedTerms,
-    walletConnected,
-    walletAddress,
-    presenceRegistered,
-    counterpartyWallet,
-    parseLoading,
-    parseError,
-    txDeposit,
-    myDepositDone,
-  } = useAppSelector((s) => s.agreement);
+  const { editedTerms, walletAddress, parseLoading, parseError } =
+    useAppSelector((s) => s.agreement);
 
-  const [step, setStep] = useState<JoinStep>("loading");
+  const [step, setStep] = useState<Step>("loading");
   const [error, setError] = useState<string | null>(null);
-  const [isConnecting, setIsConnecting] = useState(false);
-  // ── CRITICAL: termsAccepted is local state only, never set to true by default
   const [termsAccepted, setTermsAccepted] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [connectError, setConnectError] = useState<string | null>(null);
+  const [approving, setApproving] = useState(false);
+  const [approveError, setApproveError] = useState<string | null>(null);
+  const [live, setLive] = useState<LiveState>({
+    partyAApproved: false,
+    partyBApproved: false,
+    partyA: null,
+    partyB: null,
+    contractDeployed: false,
+  });
+
+  const sseUnsubRef = useRef<(() => void) | null>(null);
+
+  // ── Load terms on mount ───────────────────────────────────────────────────
 
   useEffect(() => {
     if (!agreementId) {
       setStep("error");
-      setError("Invalid agreement link — missing ID.");
+      setError("Invalid agreement link.");
       return;
     }
 
-    async function initialize() {
+    async function init() {
+      // Returning visitor: wallet already saved for this agreement
       if (typeof window !== "undefined") {
-        const storedAddress = localStorage.getItem("clauseai_wallet_address");
-        const storedIsPartyB =
+        const savedAddr = localStorage.getItem("clauseai_wallet_address");
+        const savedIsB =
           localStorage.getItem(`clauseai_is_party_b_${agreementId}`) === "true";
-
-        if (storedAddress && storedIsPartyB) {
-          const result = await dispatch(rehydratePartyBThunk(agreementId));
-          if (rehydratePartyBThunk.fulfilled.match(result) && result.payload) {
-            setStep("depositing");
-            return;
-          }
+        if (savedAddr && savedIsB) {
+          await dispatch(fetchTermsForPartyBThunk(agreementId));
+          dispatch(setAsPartyB({ agreementId, address: savedAddr }));
+          await fetchLiveState(agreementId);
+          openSSE(agreementId);
+          setStep("approve");
+          return;
         }
       }
 
+      // First visit
       const result = await dispatch(fetchTermsForPartyBThunk(agreementId));
       if (fetchTermsForPartyBThunk.rejected.match(result)) {
         setStep("error");
@@ -75,14 +107,7 @@ export default function JoinPage() {
         );
         return;
       }
-
-      if (!fetchTermsForPartyBThunk.fulfilled.match(result)) {
-        setStep("error");
-        setError("Failed to load agreement terms.");
-        return;
-      }
-
-      const presence = result.payload;
+      const presence = (result as any).payload;
       if (!presence?.termsSnapshot) {
         setStep("error");
         setError(
@@ -90,168 +115,218 @@ export default function JoinPage() {
         );
         return;
       }
-
       setStep("review-terms");
     }
 
-    initialize();
-  }, [agreementId, dispatch]);
+    init();
+    return () => {
+      sseUnsubRef.current?.();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agreementId]);
 
-  useEffect(() => {
-    if (myDepositDone && step === "depositing") {
-      setTimeout(() => router.push("/dashboard"), 1500);
+  // ── SSE: one persistent connection ───────────────────────────────────────
+
+  function openSSE(id: string) {
+    sseUnsubRef.current?.();
+
+    let es: EventSource | null = null;
+    let closed = false;
+    let retryDelay = 2_000;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    function connect() {
+      if (closed) return;
+      es = new EventSource(`${API_BASE}/api/agreement/${id}/events`);
+
+      es.onmessage = (e) => {
+        retryDelay = 2_000;
+        try {
+          const data = JSON.parse(e.data) as Partial<LiveState>;
+          setLive((prev) => {
+            const next: LiveState = {
+              partyAApproved: data.partyAApproved ?? prev.partyAApproved,
+              partyBApproved: data.partyBApproved ?? prev.partyBApproved,
+              partyA: data.partyA ?? prev.partyA,
+              partyB: data.partyB ?? prev.partyB,
+              contractDeployed: data.contractDeployed ?? prev.contractDeployed,
+            };
+            // Both approved → advance UI
+            if (next.partyAApproved && next.partyBApproved) {
+              setStep((s) => (s === "approve" ? "waiting-funds" : s));
+            }
+            // Party A locked funds → go to dashboard automatically
+            if (next.contractDeployed) {
+              closed = true;
+              es?.close();
+              router.push("/dashboard");
+            }
+            return next;
+          });
+        } catch {
+          /* ignore malformed events */
+        }
+      };
+
+      es.onerror = () => {
+        es?.close();
+        es = null;
+        if (!closed) {
+          retryTimer = setTimeout(() => {
+            retryDelay = Math.min(retryDelay * 2, 30_000);
+            connect();
+          }, retryDelay);
+        }
+      };
     }
-  }, [myDepositDone, step, router]);
+
+    connect();
+
+    sseUnsubRef.current = () => {
+      closed = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      es?.close();
+    };
+  }
+
+  async function fetchLiveState(id: string) {
+    try {
+      const res = await fetch(`${API_BASE}/api/agreement/${id}`);
+      const data = await res.json();
+      const next: LiveState = {
+        partyAApproved: data.partyAApproved ?? false,
+        partyBApproved: data.partyBApproved ?? false,
+        partyA: data.partyA ?? null,
+        partyB: data.partyB ?? null,
+        contractDeployed: data.contractDeployed ?? false,
+      };
+      setLive(next);
+      if (next.partyAApproved && next.partyBApproved) setStep("waiting-funds");
+      if (next.contractDeployed) router.push("/dashboard");
+    } catch {
+      /* non-fatal */
+    }
+  }
+
+  // ── Step 2: Connect + register ────────────────────────────────────────────
 
   async function handleConnectWallet() {
     setIsConnecting(true);
-    setError(null);
+    setConnectError(null);
     try {
-      const result = await dispatch(connectWalletThunk());
-      if (!connectWalletThunk.fulfilled.match(result)) {
-        throw new Error((result.payload as string) ?? "Wallet connect failed");
+      const walletResult = await dispatch(connectWalletThunk());
+      if (!connectWalletThunk.fulfilled.match(walletResult)) {
+        throw new Error(
+          (walletResult.payload as string) ?? "Wallet connection failed",
+        );
       }
-
-      const address = result.payload as string;
+      const address = walletResult.payload as string;
 
       const regResult = await dispatch(
-        registerPresenceThunk({
-          agreementId,
-          role: "partyB",
-          address,
-        }),
+        registerPresenceThunk({ agreementId, role: "partyB", address }),
       );
-
       if (!registerPresenceThunk.fulfilled.match(regResult)) {
         throw new Error("Failed to register with agreement. Please try again.");
       }
 
       dispatch(setAsPartyB({ agreementId, address }));
-      setStep("depositing");
+      await fetchLiveState(agreementId);
+      openSSE(agreementId);
+      setStep("approve");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Connection failed");
+      setConnectError(err instanceof Error ? err.message : "Connection failed");
     } finally {
       setIsConnecting(false);
     }
   }
 
-  if (step === "loading" || parseLoading) {
-    return <LoadingState agreementId={agreementId} />;
+  // ── Step 3: Approve ───────────────────────────────────────────────────────
+
+  async function handleApprove() {
+    if (!walletAddress) return;
+    setApproving(true);
+    setApproveError(null);
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/agreement/${agreementId}/approve`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ role: "partyB", address: walletAddress }),
+        },
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Approval failed");
+
+      setLive((prev) => {
+        const next = {
+          ...prev,
+          partyBApproved: true,
+          partyAApproved: data.partyAApproved ?? prev.partyAApproved,
+        };
+        if (next.partyAApproved && next.partyBApproved)
+          setStep("waiting-funds");
+        return next;
+      });
+    } catch (err) {
+      setApproveError(err instanceof Error ? err.message : "Approval failed");
+    } finally {
+      setApproving(false);
+    }
   }
 
-  if (step === "error") {
-    return <ErrorState error={error ?? parseError ?? "Unknown error"} />;
-  }
+  // ── Render ────────────────────────────────────────────────────────────────
 
-  if (step === "review-terms") {
+  if (step === "loading" || parseLoading)
+    return <ScreenLoading agreementId={agreementId} />;
+  if (step === "error")
+    return <ScreenError error={error ?? parseError ?? "Unknown error"} />;
+  if (step === "review-terms")
     return (
-      <ReviewTermsState
+      <ScreenReviewTerms
         editedTerms={editedTerms as Record<string, unknown> | null}
         agreementId={agreementId}
-        counterpartyWallet={counterpartyWallet}
         termsAccepted={termsAccepted}
-        // ── Pass the setter directly so it's fully two-way
         setTermsAccepted={setTermsAccepted}
         onProceed={() => setStep("connect-wallet")}
       />
     );
-  }
-
-  if (step === "connect-wallet") {
+  if (step === "connect-wallet")
     return (
-      <ConnectWalletState
+      <ScreenConnectWallet
         isConnecting={isConnecting}
-        error={error}
-        walletConnected={walletConnected}
-        walletAddress={walletAddress}
-        presenceRegistered={presenceRegistered}
+        error={connectError}
         onConnect={handleConnectWallet}
       />
     );
-  }
-
-  if (step === "depositing") {
+  if (step === "approve")
     return (
-      <DepositState
-        editedTerms={editedTerms as Record<string, unknown> | null}
+      <ScreenApprove
         agreementId={agreementId}
         walletAddress={walletAddress}
-        counterpartyWallet={counterpartyWallet}
-        txDeposit={txDeposit}
-        myDepositDone={myDepositDone}
-        dispatch={dispatch}
-        router={router}
+        editedTerms={editedTerms as Record<string, unknown> | null}
+        live={live}
+        approving={approving}
+        approveError={approveError}
+        onApprove={handleApprove}
       />
     );
-  }
-
+  if (step === "waiting-funds")
+    return (
+      <ScreenWaitingForFunds
+        walletAddress={walletAddress}
+        live={live}
+        editedTerms={editedTerms as Record<string, unknown> | null}
+      />
+    );
   return null;
 }
 
-// ─────────────────────────────────────────────────────────────
-// Schema helpers — handle both V1 (rental/bet) and V2 (freelance/trade)
-//
-// V1 snapshot keys: partyA, partyB, condition, deadline, amount_usd, arbitrator
-// V2 snapshot keys: payer, receiver, total_usd, milestones[], arbitrator
-//   (V2 may also have condition/deadline at top level OR inside milestones[0])
-// ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// SCREENS
+// ─────────────────────────────────────────────────────────────────────────────
 
-function isV2(t: Record<string, unknown> | null): boolean {
-  if (!t) return false;
-  return "payer" in t || "receiver" in t || "total_usd" in t;
-}
-
-function readField(
-  t: Record<string, unknown> | null,
-  ...keys: string[]
-): string {
-  if (!t) return "—";
-  for (const k of keys) {
-    const v = t[k];
-    if (v !== undefined && v !== null && String(v).trim() !== "") {
-      return String(v);
-    }
-  }
-  return "—";
-}
-
-/** Pull condition text: check top-level first, then first milestone */
-function readCondition(t: Record<string, unknown> | null): string {
-  if (!t) return "—";
-  const top = readField(t, "condition");
-  if (top !== "—") return top;
-  // V2: try milestones[0].condition
-  const ms = t.milestones;
-  if (Array.isArray(ms) && ms.length > 0) {
-    const c = (ms[0] as Record<string, unknown>).condition;
-    if (c && String(c).trim()) return String(c);
-  }
-  return "—";
-}
-
-/** Pull deadline: check top-level first, then first milestone */
-function readDeadline(t: Record<string, unknown> | null): string {
-  if (!t) return "—";
-  const top = readField(t, "deadline");
-  if (top !== "—") return top;
-  const ms = t.milestones;
-  if (Array.isArray(ms) && ms.length > 0) {
-    const d = (ms[0] as Record<string, unknown>).deadline;
-    if (d && String(d).trim()) return String(d);
-  }
-  return "—";
-}
-
-/** Returns USD amount as a raw numeric string or "—" */
-function readAmountRaw(t: Record<string, unknown> | null): string {
-  return readField(t, "amount_usd", "total_usd");
-}
-
-// ─────────────────────────────────────────────────────────────
-// Sub-components
-// ─────────────────────────────────────────────────────────────
-
-function LoadingState({ agreementId }: { agreementId: string }) {
+function ScreenLoading({ agreementId }: { agreementId: string }) {
   return (
     <CenterLayout>
       <div style={{ textAlign: "center" }}>
@@ -280,7 +355,7 @@ function LoadingState({ agreementId }: { agreementId: string }) {
   );
 }
 
-function ErrorState({ error }: { error: string }) {
+function ScreenError({ error }: { error: string }) {
   return (
     <CenterLayout>
       <div style={{ textAlign: "center", maxWidth: 480 }}>
@@ -329,266 +404,119 @@ function ErrorState({ error }: { error: string }) {
   );
 }
 
-function ReviewTermsState({
+function ScreenReviewTerms({
   editedTerms,
   agreementId,
-  counterpartyWallet,
   termsAccepted,
   setTermsAccepted,
   onProceed,
 }: {
   editedTerms: Record<string, unknown> | null;
   agreementId: string;
-  counterpartyWallet: string | null;
   termsAccepted: boolean;
-  // ── Receive the setter, not a one-way onAccept callback
   setTermsAccepted: (v: boolean) => void;
   onProceed: () => void;
 }) {
-  const v2 = isV2(editedTerms);
-
-  // Normalised rows — reads from whichever schema the snapshot uses
-  const rows: { label: string; value: string; highlight?: boolean }[] = [
+  const rows = [
     {
-      label: "Party A (Initiator)",
+      label: "Payer (Party A)",
       value: readField(editedTerms, "partyA", "payer"),
     },
     {
-      label: "Party B (You)",
+      label: "Receiver (You)",
       value: readField(editedTerms, "partyB", "receiver"),
     },
     {
-      label: "Condition / Deliverable",
-      value: readCondition(editedTerms),
-    },
-    {
-      label: "Deadline",
-      value: readDeadline(editedTerms),
-    },
-    {
-      label: "Amount (USD)",
+      label: "Amount",
       value: (() => {
-        const raw = readAmountRaw(editedTerms);
-        return raw === "—" ? "—" : `$${raw}`;
+        const r = readField(editedTerms, "amount_usd", "total_usd");
+        return r === "—" ? "—" : `$${r} USD`;
       })(),
       highlight: true,
     },
-    {
-      label: "Arbitrator",
-      value: readField(editedTerms, "arbitrator"),
-    },
+    { label: "Condition", value: readCondition(editedTerms) },
+    { label: "Deadline", value: readDeadline(editedTerms) },
+    { label: "Arbitrator", value: readField(editedTerms, "arbitrator") },
   ];
-
-  // V2 milestones (optional table below main rows)
-  const milestones =
-    v2 && Array.isArray(editedTerms?.milestones)
-      ? (editedTerms!.milestones as Array<{
-          title?: string;
-          label?: string;
-          percentage: number;
-          deadline?: string;
-        }>)
-      : null;
-
-  const amountRaw = readAmountRaw(editedTerms);
-
-  // ── Guard: button is ONLY enabled when checkbox is ticked AND terms loaded
-  const canProceed = termsAccepted && editedTerms !== null;
-
-  function handleProceed() {
-    // Double-guard: never trust just the disabled prop in production
-    if (!canProceed) return;
-    onProceed();
-  }
 
   return (
     <CenterLayout>
       <div style={{ maxWidth: 560, width: "100%" }}>
-        {/* Header */}
-        <div className="animate-fade-up" style={{ marginBottom: 32 }}>
-          <div
-            style={{
-              display: "inline-block",
-              fontSize: 12,
-              fontFamily: "var(--font-mono)",
-              color: "var(--yellow)",
-              letterSpacing: "0.15em",
-              textTransform: "uppercase",
-              marginBottom: 12,
-            }}
-          >
-            You've been invited
-          </div>
-          <h1
-            style={{
-              fontSize: 32,
-              fontWeight: 800,
-              letterSpacing: "-1px",
-              marginBottom: 8,
-            }}
-          >
-            Review agreement terms
-          </h1>
-          <p style={{ color: "var(--grey-1)", fontSize: 14 }}>
-            Agreement{" "}
-            <span
-              style={{
-                fontFamily: "var(--font-mono)",
-                color: "var(--white)",
-                fontWeight: 500,
-              }}
-            >
-              #{agreementId}
-            </span>{" "}
-            — review carefully before connecting your wallet. Funds will be
-            locked on-chain.
-          </p>
-        </div>
-
-        {/* Party A badge */}
-        {counterpartyWallet && (
-          <div
-            className="animate-fade-up delay-1"
-            style={{
-              background: "var(--black-2)",
-              border: "1px solid #22c55e40",
-              borderRadius: 10,
-              padding: "12px 16px",
-              marginBottom: 16,
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-            }}
-          >
-            <span style={{ color: "#22c55e" }}>✅</span>
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 600, color: "#22c55e" }}>
-                Party A connected
-              </div>
-              <div
-                style={{
-                  fontSize: 10,
-                  fontFamily: "var(--font-mono)",
-                  color: "var(--grey-2)",
-                }}
-              >
-                {counterpartyWallet}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Terms table */}
-        <div
-          className="animate-fade-up delay-2"
+        <StepTag>You've been invited</StepTag>
+        <h1
           style={{
-            background: "var(--black-2)",
-            border: "1px solid var(--black-4)",
-            borderRadius: 16,
-            overflow: "hidden",
-            marginBottom: 20,
+            fontSize: 32,
+            fontWeight: 800,
+            letterSpacing: "-1px",
+            margin: "12px 0 8px",
           }}
         >
-          <div
-            style={{
-              padding: "14px 20px",
-              borderBottom: "1px solid var(--black-4)",
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-            }}
+          Review agreement terms
+        </h1>
+        <p
+          style={{
+            color: "var(--grey-1)",
+            fontSize: 14,
+            marginBottom: 28,
+            lineHeight: 1.7,
+          }}
+        >
+          Agreement{" "}
+          <span
+            style={{ fontFamily: "var(--font-mono)", color: "var(--white)" }}
           >
-            <span>📋</span>
-            <span style={{ fontSize: 13, fontWeight: 700 }}>
-              Agreement Terms
-            </span>
-          </div>
+            #{agreementId}
+          </span>{" "}
+          — review carefully before joining. Once both parties approve, the
+          payer will lock funds on-chain.{" "}
+          <strong style={{ color: "var(--white)" }}>
+            You do not pay anything.
+          </strong>
+        </p>
 
+        <Card style={{ marginBottom: 20 }}>
+          <CardHeader>📋 Agreement Terms</CardHeader>
           {editedTerms ? (
-            <>
-              {rows.map((row, i) => (
-                <div
-                  key={row.label}
+            rows.map((row, i) => (
+              <div
+                key={row.label}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
+                  padding: "12px 20px",
+                  borderBottom:
+                    i < rows.length - 1 ? "1px solid var(--black-4)" : "none",
+                }}
+              >
+                <span
                   style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "flex-start",
-                    padding: "12px 20px",
-                    borderBottom:
-                      i < rows.length - 1 ? "1px solid var(--black-4)" : "none",
+                    fontSize: 11,
+                    fontFamily: "var(--font-mono)",
+                    color: "var(--grey-1)",
+                    textTransform: "uppercase",
+                    flexShrink: 0,
+                    marginRight: 16,
                   }}
                 >
-                  <span
-                    style={{
-                      fontSize: 11,
-                      fontFamily: "var(--font-mono)",
-                      color: "var(--grey-1)",
-                      textTransform: "uppercase",
-                      flexShrink: 0,
-                      marginRight: 16,
-                    }}
-                  >
-                    {row.label}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: 13,
-                      fontWeight: row.highlight ? 700 : 600,
-                      color: row.highlight
-                        ? "var(--yellow)"
-                        : row.value === "—"
-                          ? "var(--grey-2)"
-                          : "var(--white)",
-                      textAlign: "right",
-                    }}
-                  >
-                    {row.value}
-                  </span>
-                </div>
-              ))}
-
-              {/* V2 milestones */}
-              {milestones && milestones.length > 0 && (
-                <div style={{ borderTop: "1px solid var(--black-4)" }}>
-                  <div
-                    style={{
-                      padding: "10px 20px 6px",
-                      fontSize: 10,
-                      fontFamily: "var(--font-mono)",
-                      color: "var(--grey-2)",
-                      textTransform: "uppercase",
-                      letterSpacing: "0.08em",
-                    }}
-                  >
-                    Payment milestones
-                  </div>
-                  {milestones.map((ms, i) => (
-                    <div
-                      key={i}
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        padding: "8px 20px",
-                        borderTop: "1px solid var(--black-4)",
-                      }}
-                    >
-                      <span style={{ fontSize: 12, color: "var(--grey-1)" }}>
-                        {ms.title ?? ms.label ?? `Milestone ${i + 1}`}
-                      </span>
-                      <span
-                        style={{
-                          fontSize: 12,
-                          fontFamily: "var(--font-mono)",
-                          color: "var(--grey-2)",
-                        }}
-                      >
-                        {ms.percentage}%
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </>
+                  {row.label}
+                </span>
+                <span
+                  style={{
+                    fontSize: 13,
+                    fontWeight: row.highlight ? 700 : 600,
+                    color: row.highlight
+                      ? "var(--yellow)"
+                      : row.value === "—"
+                        ? "var(--grey-2)"
+                        : "var(--white)",
+                    textAlign: "right",
+                  }}
+                >
+                  {row.value}
+                </span>
+              </div>
+            ))
           ) : (
             <div
               style={{
@@ -598,116 +526,37 @@ function ReviewTermsState({
                 fontSize: 13,
               }}
             >
-              Terms not available. Party A may not have completed setup.
+              Terms unavailable.
             </div>
           )}
-        </div>
+        </Card>
 
-        {/*
-          ── CHECKBOX ─────────────────────────────────────────────────────────
-          Implemented as a controlled div, NOT a native <input> inside a <label>.
-          Reason: native checkbox inside a label fires both onClick (on label) AND
-          onChange (on input), creating double-fire edge cases. The original code
-          also used one-way binding: onChange={(e) => e.target.checked && onAccept()}
-          meaning unchecking never set termsAccepted back to false. This is fully
-          two-way via setTermsAccepted(!termsAccepted), with keyboard support.
-          ─────────────────────────────────────────────────────────────────────
-        */}
-        <div
-          className="animate-fade-up delay-3"
-          role="checkbox"
-          aria-checked={termsAccepted}
-          tabIndex={0}
-          onClick={() => setTermsAccepted(!termsAccepted)}
-          onKeyDown={(e) => {
-            if (e.key === " " || e.key === "Enter") {
-              e.preventDefault();
-              setTermsAccepted(!termsAccepted);
-            }
-          }}
-          style={{
-            display: "flex",
-            alignItems: "flex-start",
-            gap: 12,
-            cursor: "pointer",
-            marginBottom: 20,
-            padding: "14px 16px",
-            background: termsAccepted ? "var(--yellow-dim)" : "var(--black-2)",
-            border: `1px solid ${termsAccepted ? "var(--yellow)" : "var(--black-4)"}`,
-            borderRadius: 10,
-            transition: "all 0.2s",
-            userSelect: "none",
-          }}
-        >
-          {/* Custom checkbox visual — driven entirely by termsAccepted state */}
-          <div
-            style={{
-              width: 18,
-              height: 18,
-              borderRadius: 4,
-              flexShrink: 0,
-              marginTop: 1,
-              border: `2px solid ${termsAccepted ? "var(--yellow)" : "var(--grey-2)"}`,
-              background: termsAccepted ? "var(--yellow)" : "transparent",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              transition: "all 0.15s",
-            }}
-          >
-            {termsAccepted && (
-              <svg
-                width="11"
-                height="11"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="var(--black)"
-                strokeWidth="3.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
-            )}
-          </div>
-          <span
-            style={{ fontSize: 13, lineHeight: 1.6, color: "var(--grey-1)" }}
-          >
-            I have read and agree to the terms above. I understand that funds
-            will be locked in a smart contract and only released when conditions
-            are met.
-          </span>
-        </div>
+        <Checkbox checked={termsAccepted} onChange={setTermsAccepted}>
+          I have read and agree to these terms. I understand the payer will lock
+          funds in a Bitcoin-secured smart contract, and I will receive payment
+          once conditions are met.
+        </Checkbox>
 
-        {/*
-          ── BUTTON ───────────────────────────────────────────────────────────
-          Three layers of protection:
-          1. disabled prop  — prevents form submission, removes from tab order
-          2. pointerEvents: "none"  — no click events reach the element at all
-          3. handleProceed() guard  — if somehow called, bails out immediately
-          ─────────────────────────────────────────────────────────────────────
-        */}
         <button
-          className="animate-fade-up delay-4"
-          onClick={handleProceed}
-          disabled={!canProceed}
-          aria-disabled={!canProceed}
+          onClick={() => {
+            if (termsAccepted) onProceed();
+          }}
+          disabled={!termsAccepted}
           style={{
             width: "100%",
             padding: "16px",
-            background: canProceed ? "var(--yellow)" : "var(--black-4)",
-            color: canProceed ? "var(--black)" : "var(--grey-2)",
+            marginTop: 16,
+            background: termsAccepted ? "var(--yellow)" : "var(--black-4)",
+            color: termsAccepted ? "var(--black)" : "var(--grey-2)",
             border: "none",
             borderRadius: "var(--radius)",
             fontSize: 15,
             fontWeight: 700,
-            cursor: canProceed ? "pointer" : "not-allowed",
-            pointerEvents: canProceed ? "auto" : "none",
+            cursor: termsAccepted ? "pointer" : "not-allowed",
           }}
         >
-          Connect Wallet & Join →
+          Connect Wallet & Continue →
         </button>
-
         {!termsAccepted && (
           <p
             style={{
@@ -718,22 +567,7 @@ function ReviewTermsState({
               fontFamily: "var(--font-mono)",
             }}
           >
-            Tick the checkbox above to continue
-          </p>
-        )}
-
-        {termsAccepted && (
-          <p
-            style={{
-              marginTop: 10,
-              textAlign: "center",
-              fontSize: 12,
-              color: "var(--grey-2)",
-              fontFamily: "var(--font-mono)",
-            }}
-          >
-            You'll deposit{amountRaw !== "—" ? ` $${amountRaw}` : ""} into
-            escrow after connecting.
+            Tick the checkbox to continue
           </p>
         )}
       </div>
@@ -741,19 +575,13 @@ function ReviewTermsState({
   );
 }
 
-function ConnectWalletState({
+function ScreenConnectWallet({
   isConnecting,
   error,
-  walletConnected,
-  walletAddress,
-  presenceRegistered,
   onConnect,
 }: {
   isConnecting: boolean;
   error: string | null;
-  walletConnected: boolean;
-  walletAddress: string | null;
-  presenceRegistered: boolean;
   onConnect: () => void;
 }) {
   return (
@@ -764,8 +592,8 @@ function ConnectWalletState({
             width: 80,
             height: 80,
             borderRadius: "50%",
-            background: walletConnected ? "#22c55e15" : "var(--yellow-dim)",
-            border: `1px solid ${walletConnected ? "#22c55e" : "var(--yellow)"}`,
+            background: "var(--yellow-dim)",
+            border: "1px solid var(--yellow)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -773,31 +601,18 @@ function ConnectWalletState({
             margin: "0 auto 24px",
           }}
         >
-          {walletConnected ? "✅" : isConnecting ? <Spinner size={28} /> : "₿"}
+          {isConnecting ? <Spinner size={28} /> : "₿"}
         </div>
-
-        <span
-          style={{
-            fontSize: 12,
-            fontFamily: "var(--font-mono)",
-            color: "var(--yellow)",
-            letterSpacing: "0.15em",
-            textTransform: "uppercase",
-            display: "block",
-            marginBottom: 12,
-          }}
-        >
-          Joining as Party B
-        </span>
+        <StepTag>Step 2 of 3</StepTag>
         <h2
           style={{
             fontSize: 28,
             fontWeight: 800,
             letterSpacing: "-0.5px",
-            marginBottom: 12,
+            margin: "12px 0",
           }}
         >
-          {walletConnected ? "Wallet Connected" : "Connect your wallet"}
+          Connect your wallet
         </h2>
         <p
           style={{
@@ -807,76 +622,43 @@ function ConnectWalletState({
             marginBottom: 28,
           }}
         >
-          {walletConnected
-            ? `${walletAddress?.slice(0, 10)}...${walletAddress?.slice(-6)}`
-            : "Connect your Leather wallet to join this agreement."}
+          Connect your Leather wallet to register as the receiver.{" "}
+          <strong style={{ color: "var(--white)" }}>
+            You won't be charged anything.
+          </strong>
         </p>
-
-        {error && (
-          <div
-            style={{
-              background: "#7f1d1d20",
-              border: "1px solid #7f1d1d",
-              borderRadius: 8,
-              padding: "10px 14px",
-              fontSize: 13,
-              color: "#fca5a5",
-              marginBottom: 16,
-              textAlign: "left",
-            }}
-          >
-            ❌ {error}
-          </div>
-        )}
-
-        {presenceRegistered && walletConnected ? (
-          <div
-            style={{
-              background: "#22c55e15",
-              border: "1px solid #22c55e",
-              borderRadius: 10,
-              padding: "16px",
-              color: "#22c55e",
-              fontSize: 14,
-              fontWeight: 600,
-            }}
-          >
-            ✅ Registered — moving to next step...
-          </div>
-        ) : (
-          <button
-            onClick={onConnect}
-            disabled={isConnecting}
-            style={{
-              width: "100%",
-              padding: "16px",
-              background: isConnecting ? "var(--black-4)" : "var(--yellow)",
-              color: isConnecting ? "var(--grey-2)" : "var(--black)",
-              border: "none",
-              borderRadius: "var(--radius)",
-              fontSize: 15,
-              fontWeight: 700,
-              cursor: isConnecting ? "not-allowed" : "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 10,
-            }}
-          >
-            {isConnecting ? (
-              <>
-                <Spinner size={16} /> Connecting...
-              </>
-            ) : (
-              "Connect Leather Wallet"
-            )}
-          </button>
-        )}
-
+        {error && <ErrorBox style={{ marginBottom: 16 }}>{error}</ErrorBox>}
+        <button
+          onClick={onConnect}
+          disabled={isConnecting}
+          style={{
+            width: "100%",
+            padding: "16px",
+            background: isConnecting ? "var(--black-4)" : "var(--yellow)",
+            color: isConnecting ? "var(--grey-2)" : "var(--black)",
+            border: "none",
+            borderRadius: "var(--radius)",
+            fontSize: 15,
+            fontWeight: 700,
+            cursor: isConnecting ? "not-allowed" : "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 10,
+          }}
+        >
+          {isConnecting ? (
+            <>
+              <Spinner size={16} /> Connecting...
+            </>
+          ) : (
+            "Connect Leather Wallet"
+          )}
+        </button>
         <div
           style={{
-            marginTop: 24,
-            padding: "14px 16px",
+            marginTop: 20,
+            padding: "12px 16px",
             background: "var(--black-2)",
             border: "1px solid var(--black-4)",
             borderRadius: 8,
@@ -885,10 +667,17 @@ function ConnectWalletState({
             textAlign: "left",
           }}
         >
-          <span style={{ fontSize: 18 }}>🔒</span>
-          <p style={{ fontSize: 12, color: "var(--grey-1)", lineHeight: 1.6 }}>
-            ClauseAi never holds your keys. Funds go directly into the smart
-            contract, enforced by Bitcoin.
+          <span>🔒</span>
+          <p
+            style={{
+              fontSize: 12,
+              color: "var(--grey-1)",
+              lineHeight: 1.6,
+              margin: 0,
+            }}
+          >
+            ClauseAI never holds your keys. You're only registering your address
+            as the funds receiver.
           </p>
         </div>
       </div>
@@ -896,237 +685,350 @@ function ConnectWalletState({
   );
 }
 
-function DepositState({
-  editedTerms,
+// Step 3: Party B approves. Shows live status of Party A in real time.
+// NO "Go to Dashboard" button here. Only "Approve Agreement".
+function ScreenApprove({
   agreementId,
   walletAddress,
-  counterpartyWallet,
-  txDeposit,
-  myDepositDone,
-  dispatch,
-  router,
+  editedTerms,
+  live,
+  approving,
+  approveError,
+  onApprove,
 }: {
-  editedTerms: Record<string, unknown> | null;
   agreementId: string;
   walletAddress: string | null;
-  counterpartyWallet: string | null;
-  txDeposit: {
-    status: string;
-    txId: string | null;
-    txUrl: string | null;
-    error: string | null;
-  };
-  myDepositDone: boolean;
-  dispatch: ReturnType<typeof useAppDispatch>;
-  router: ReturnType<typeof useRouter>;
+  editedTerms: Record<string, unknown> | null;
+  live: LiveState;
+  approving: boolean;
+  approveError: string | null;
+  onApprove: () => void;
 }) {
-  const amountRaw = readAmountRaw(editedTerms);
-  const condition = readCondition(editedTerms);
-
-  function handleGoToDashboard() {
-    dispatch(setAsPartyB({ agreementId, address: walletAddress! }));
-    dispatch(setScreen("dashboard"));
-    router.push("/dashboard");
-  }
+  const terms = editedTerms as any;
+  const payerName = terms?.payer ?? terms?.partyA ?? "Party A";
+  const totalAmount = terms?.total_usd ?? terms?.amount_usd ?? "—";
+  const arbitrator = terms?.arbitrator ?? "TBD";
 
   return (
     <CenterLayout>
-      <div style={{ maxWidth: 520, width: "100%", textAlign: "center" }}>
-        <div className="animate-fade-up" style={{ marginBottom: 32 }}>
-          <div
-            style={{
-              width: 80,
-              height: 80,
-              borderRadius: "50%",
-              background: "#22c55e15",
-              border: "1px solid #22c55e",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: 36,
-              margin: "0 auto 24px",
-            }}
-          >
-            ✅
-          </div>
-          <span
-            style={{
-              fontSize: 12,
-              fontFamily: "var(--font-mono)",
-              color: "#22c55e",
-              letterSpacing: "0.15em",
-              textTransform: "uppercase",
-              display: "block",
-              marginBottom: 12,
-            }}
-          >
-            You're in
-          </span>
-          <h2
-            style={{
-              fontSize: 28,
-              fontWeight: 800,
-              letterSpacing: "-0.5px",
-              marginBottom: 12,
-            }}
-          >
-            Wallet connected
-          </h2>
-          <p style={{ color: "var(--grey-1)", fontSize: 14, lineHeight: 1.7 }}>
-            You've joined the agreement. You don't need to deposit anything —
-            only the payer locks funds.
-          </p>
-        </div>
+      <div style={{ maxWidth: 560, width: "100%" }}>
+        <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.2}}@keyframes spin{to{transform:rotate(360deg)}}`}</style>
 
-        <div
-          className="animate-fade-up delay-1"
+        <StepTag>Step 3 of 3</StepTag>
+        <h2
           style={{
-            background: "var(--black-2)",
-            border: "1px solid var(--black-4)",
-            borderRadius: 16,
-            overflow: "hidden",
-            marginBottom: 20,
+            fontSize: 32,
+            fontWeight: 800,
+            letterSpacing: "-1px",
+            margin: "12px 0 8px",
           }}
         >
+          Approve the agreement
+        </h2>
+        <p
+          style={{
+            color: "var(--grey-1)",
+            fontSize: 14,
+            lineHeight: 1.7,
+            marginBottom: 28,
+          }}
+        >
+          {payerName} has set up this escrow. Review the terms carefully —
+          especially the arbitrator — before approving.
+        </p>
+
+        {/* Live approval status — both parties visible */}
+        <Card style={{ marginBottom: 20, padding: "18px 20px" }}>
           <div
             style={{
-              padding: "14px 20px",
-              borderBottom: "1px solid var(--black-4)",
-              fontSize: 13,
-              fontWeight: 700,
-              textAlign: "left",
+              fontSize: 11,
+              fontFamily: "var(--font-mono)",
+              color: "var(--grey-2)",
+              textTransform: "uppercase",
+              letterSpacing: "0.1em",
+              marginBottom: 14,
             }}
           >
-            What happens next
+            Approval Status · Agreement #{agreementId}
           </div>
+          <div
+            style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}
+          >
+            <PartyCard
+              label="Payer (Party A)"
+              wallet={live.partyA}
+              approved={live.partyAApproved}
+              color="#f5c400"
+            />
+            <PartyCard
+              label="You (Receiver)"
+              wallet={walletAddress}
+              approved={live.partyBApproved}
+              isMe
+              color="#22c55e"
+            />
+          </div>
+        </Card>
+
+        {/* Key terms */}
+        <Card style={{ marginBottom: 20 }}>
+          <CardHeader>Key Terms</CardHeader>
           {[
             {
-              icon: "💸",
-              label: "Payer locks funds",
-              desc:
-                amountRaw === "—"
-                  ? "The payer deploys the contract and locks funds."
-                  : `The payer deploys the contract and locks $${amountRaw} USD.`,
-              color: "#f59e0b",
+              label: "Amount you'll receive",
+              value: totalAmount === "—" ? "—" : `$${totalAmount} USD`,
+              highlight: true,
             },
+            { label: "Condition", value: readCondition(editedTerms) },
+            { label: "Deadline", value: readDeadline(editedTerms) },
             {
-              icon: "📋",
-              label: "Conditions must be met",
-              desc:
-                condition === "—"
-                  ? "Delivery confirmed per agreement terms."
-                  : condition,
-              color: "var(--white)",
+              label: "Arbitrator",
+              value:
+                arbitrator === "TBD"
+                  ? "⚠️ None set"
+                  : `${String(arbitrator).slice(0, 10)}…${String(arbitrator).slice(-6)}`,
             },
-            {
-              icon: "🎯",
-              label: "You get paid",
-              desc: "Once confirmed, funds release directly to your wallet.",
-              color: "#22c55e",
-            },
-          ].map((item, i, arr) => (
+          ].map((r, i, arr) => (
             <div
-              key={i}
+              key={r.label}
               style={{
                 display: "flex",
-                gap: 14,
-                padding: "14px 20px",
-                textAlign: "left",
+                justifyContent: "space-between",
+                padding: "10px 20px",
                 borderBottom:
                   i < arr.length - 1 ? "1px solid var(--black-4)" : "none",
               }}
             >
-              <span style={{ fontSize: 20, flexShrink: 0 }}>{item.icon}</span>
-              <div>
-                <div
-                  style={{
-                    fontSize: 13,
-                    fontWeight: 700,
-                    color: item.color,
-                    marginBottom: 2,
-                  }}
-                >
-                  {item.label}
-                </div>
-                <div
-                  style={{
-                    fontSize: 12,
-                    color: "var(--grey-1)",
-                    lineHeight: 1.5,
-                  }}
-                >
-                  {item.desc}
-                </div>
-              </div>
+              <span
+                style={{
+                  fontSize: 12,
+                  color: "var(--grey-1)",
+                  fontFamily: "var(--font-mono)",
+                  textTransform: "uppercase",
+                }}
+              >
+                {r.label}
+              </span>
+              <span
+                style={{
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: r.highlight ? "var(--yellow)" : "var(--white)",
+                  textAlign: "right",
+                }}
+              >
+                {r.value}
+              </span>
             </div>
           ))}
-        </div>
+        </Card>
 
-        <div
-          className="animate-fade-up delay-2"
-          style={{
-            background: "var(--black-2)",
-            border: "1px solid #22c55e40",
-            borderRadius: 10,
-            padding: "12px 16px",
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            marginBottom: 20,
-            textAlign: "left",
-          }}
-        >
-          <span style={{ color: "#22c55e", fontSize: 18 }}>🎯</span>
-          <div>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "#22c55e" }}>
-              Receiver (You)
-            </div>
+        {approveError && (
+          <ErrorBox style={{ marginBottom: 16 }}>{approveError}</ErrorBox>
+        )}
+
+        {/* THE ONLY CTA: Approve button — or waiting state after clicking */}
+        {!live.partyBApproved ? (
+          <button
+            onClick={onApprove}
+            disabled={approving}
+            style={{
+              width: "100%",
+              padding: "16px",
+              background: approving ? "var(--black-4)" : "var(--yellow)",
+              color: approving ? "var(--grey-2)" : "var(--black)",
+              border: "none",
+              borderRadius: "var(--radius)",
+              fontSize: 15,
+              fontWeight: 700,
+              cursor: approving ? "not-allowed" : "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 10,
+            }}
+          >
+            {approving ? (
+              <>
+                <Spinner size={16} /> Approving...
+              </>
+            ) : (
+              "✓ Approve Agreement"
+            )}
+          </button>
+        ) : (
+          <div
+            style={{
+              background: "rgba(245,196,0,0.05)",
+              border: "1px solid rgba(245,196,0,0.2)",
+              borderRadius: 10,
+              padding: "16px 20px",
+              textAlign: "center",
+            }}
+          >
             <div
               style={{
-                fontSize: 10,
-                fontFamily: "var(--font-mono)",
-                color: "var(--grey-2)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 10,
+                marginBottom: 6,
               }}
             >
-              {walletAddress}
+              <PulseDot color="#f5c400" />
+              <span style={{ fontSize: 14, fontWeight: 700, color: "#f5c400" }}>
+                You approved — waiting for {payerName} to approve
+              </span>
             </div>
+            <p
+              style={{
+                fontSize: 12,
+                color: "var(--grey-2)",
+                fontFamily: "var(--font-mono)",
+                margin: 0,
+              }}
+            >
+              This page updates automatically via live connection.
+            </p>
           </div>
-        </div>
-
-        <button
-          className="animate-fade-up delay-3"
-          onClick={handleGoToDashboard}
-          style={{
-            width: "100%",
-            padding: "16px",
-            background: "var(--yellow)",
-            color: "var(--black)",
-            border: "none",
-            borderRadius: "var(--radius)",
-            fontSize: 15,
-            fontWeight: 700,
-            cursor: "pointer",
-          }}
-        >
-          Go to Dashboard →
-        </button>
-
-        <p
-          style={{
-            marginTop: 12,
-            fontSize: 12,
-            color: "var(--grey-2)",
-            fontFamily: "var(--font-mono)",
-          }}
-        >
-          You'll be notified when the payer activates the escrow.
-        </p>
+        )}
       </div>
     </CenterLayout>
   );
 }
 
-// ── Shared primitives ─────────────────────────────────────────
+// Step 4: Both approved. Party B just waits.
+// NO button. Auto-redirect when Party A locks funds on-chain (SSE).
+function ScreenWaitingForFunds({
+  walletAddress,
+  live,
+  editedTerms,
+}: {
+  walletAddress: string | null;
+  live: LiveState;
+  editedTerms: Record<string, unknown> | null;
+}) {
+  const terms = editedTerms as any;
+  const payerName = terms?.payer ?? terms?.partyA ?? "Party A";
+  const totalAmount = terms?.total_usd ?? terms?.amount_usd ?? "—";
+
+  return (
+    <CenterLayout>
+      <div style={{ maxWidth: 520, width: "100%", textAlign: "center" }}>
+        <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.2}}@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+
+        <div
+          style={{
+            width: 88,
+            height: 88,
+            borderRadius: "50%",
+            background: "rgba(34,197,94,0.08)",
+            border: "1px solid rgba(34,197,94,0.3)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 42,
+            margin: "0 auto 28px",
+          }}
+        >
+          ✅
+        </div>
+
+        <h2
+          style={{
+            fontSize: 30,
+            fontWeight: 800,
+            letterSpacing: "-0.5px",
+            marginBottom: 10,
+          }}
+        >
+          Agreement fully approved
+        </h2>
+        <p
+          style={{
+            color: "var(--grey-1)",
+            fontSize: 14,
+            lineHeight: 1.8,
+            marginBottom: 32,
+          }}
+        >
+          Both parties have approved. Now waiting for{" "}
+          <strong style={{ color: "var(--white)" }}>{payerName}</strong> to
+          deploy the contract and lock
+          {totalAmount !== "—" ? ` $${totalAmount} USD` : " the funds"}.{" "}
+          <strong style={{ color: "var(--white)" }}>
+            You'll be taken to your dashboard automatically
+          </strong>{" "}
+          as soon as the funds are locked — no action needed from you.
+        </p>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: 10,
+            marginBottom: 24,
+          }}
+        >
+          <PartyCard
+            label="Payer (Party A)"
+            wallet={live.partyA}
+            approved={live.partyAApproved}
+            color="#f5c400"
+          />
+          <PartyCard
+            label="You (Receiver)"
+            wallet={walletAddress}
+            approved={live.partyBApproved}
+            isMe
+            color="#22c55e"
+          />
+        </div>
+
+        {/* Status — just informational, no button */}
+        <div
+          style={{
+            background: "rgba(245,196,0,0.05)",
+            border: "1px solid rgba(245,196,0,0.15)",
+            borderRadius: 12,
+            padding: "20px",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 10,
+              marginBottom: 10,
+            }}
+          >
+            <PulseDot color="#f5c400" />
+            <span style={{ fontSize: 14, fontWeight: 700, color: "#f5c400" }}>
+              Waiting for {payerName} to lock funds
+            </span>
+          </div>
+          <p
+            style={{
+              fontSize: 12,
+              color: "var(--grey-2)",
+              lineHeight: 1.7,
+              margin: 0,
+              fontFamily: "var(--font-mono)",
+            }}
+          >
+            This page is connected live and will redirect you to your dashboard
+            automatically when funds are locked. You don't need to do anything.
+          </p>
+        </div>
+      </div>
+    </CenterLayout>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UI Primitives
+// ─────────────────────────────────────────────────────────────────────────────
 
 function CenterLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -1137,10 +1039,254 @@ function CenterLayout({ children }: { children: React.ReactNode }) {
         alignItems: "center",
         justifyContent: "center",
         padding: 24,
+        background: "var(--black)",
       }}
     >
       {children}
     </div>
+  );
+}
+
+function Card({
+  children,
+  style,
+}: {
+  children: React.ReactNode;
+  style?: React.CSSProperties;
+}) {
+  return (
+    <div
+      style={{
+        background: "var(--black-2)",
+        border: "1px solid var(--black-4)",
+        borderRadius: 14,
+        overflow: "hidden",
+        ...style,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function CardHeader({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        padding: "13px 20px",
+        borderBottom: "1px solid var(--black-4)",
+        fontSize: 13,
+        fontWeight: 700,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function StepTag({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        display: "inline-block",
+        fontSize: 11,
+        fontFamily: "var(--font-mono)",
+        color: "var(--yellow)",
+        letterSpacing: "0.15em",
+        textTransform: "uppercase",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+function ErrorBox({
+  children,
+  style,
+}: {
+  children: React.ReactNode;
+  style?: React.CSSProperties;
+}) {
+  return (
+    <div
+      style={{
+        background: "#7f1d1d20",
+        border: "1px solid #7f1d1d",
+        borderRadius: 8,
+        padding: "10px 14px",
+        fontSize: 13,
+        color: "#fca5a5",
+        textAlign: "left",
+        ...style,
+      }}
+    >
+      ❌ {children}
+    </div>
+  );
+}
+
+function Checkbox({
+  checked,
+  onChange,
+  children,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      role="checkbox"
+      aria-checked={checked}
+      tabIndex={0}
+      onClick={() => onChange(!checked)}
+      onKeyDown={(e) => {
+        if (e.key === " " || e.key === "Enter") {
+          e.preventDefault();
+          onChange(!checked);
+        }
+      }}
+      style={{
+        display: "flex",
+        alignItems: "flex-start",
+        gap: 12,
+        cursor: "pointer",
+        padding: "14px 16px",
+        background: checked ? "rgba(245,196,0,0.05)" : "var(--black-2)",
+        border: `1px solid ${checked ? "var(--yellow)" : "var(--black-4)"}`,
+        borderRadius: 10,
+        transition: "all 0.2s",
+        userSelect: "none",
+      }}
+    >
+      <div
+        style={{
+          width: 18,
+          height: 18,
+          borderRadius: 4,
+          flexShrink: 0,
+          marginTop: 1,
+          border: `2px solid ${checked ? "var(--yellow)" : "var(--grey-2)"}`,
+          background: checked ? "var(--yellow)" : "transparent",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          transition: "all 0.15s",
+        }}
+      >
+        {checked && (
+          <svg
+            width="11"
+            height="11"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="var(--black)"
+            strokeWidth="3.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+        )}
+      </div>
+      <span style={{ fontSize: 13, lineHeight: 1.6, color: "var(--grey-1)" }}>
+        {children}
+      </span>
+    </div>
+  );
+}
+
+function PartyCard({
+  label,
+  wallet,
+  approved,
+  isMe = false,
+  color,
+}: {
+  label: string;
+  wallet: string | null;
+  approved: boolean;
+  isMe?: boolean;
+  color: string;
+}) {
+  return (
+    <div
+      style={{
+        background: approved ? `${color}08` : "rgba(242,242,240,0.02)",
+        border: `1px solid ${approved ? `${color}25` : "rgba(242,242,240,0.07)"}`,
+        borderRadius: 10,
+        padding: "12px 14px",
+        transition: "all 0.3s",
+      }}
+    >
+      <div
+        style={{
+          fontSize: 9,
+          fontFamily: "var(--font-mono)",
+          textTransform: "uppercase",
+          letterSpacing: "0.12em",
+          color,
+          marginBottom: 6,
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+        }}
+      >
+        {label}
+        {isMe && (
+          <span
+            style={{
+              background: `${color}20`,
+              color,
+              borderRadius: 4,
+              padding: "1px 5px",
+              fontSize: 8,
+            }}
+          >
+            YOU
+          </span>
+        )}
+      </div>
+      {wallet && (
+        <div
+          style={{
+            fontSize: 9,
+            fontFamily: "var(--font-mono)",
+            color: "rgba(242,242,240,0.25)",
+            marginBottom: 4,
+          }}
+        >
+          {wallet.slice(0, 8)}…{wallet.slice(-6)}
+        </div>
+      )}
+      <div
+        style={{
+          fontSize: 11,
+          fontFamily: "var(--font-mono)",
+          color: approved ? color : "rgba(242,242,240,0.3)",
+          fontWeight: approved ? 700 : 400,
+        }}
+      >
+        {approved ? "Approved ✓" : "Pending…"}
+      </div>
+    </div>
+  );
+}
+
+function PulseDot({ color = "#f5c400" }: { color?: string }) {
+  return (
+    <span
+      style={{
+        width: 8,
+        height: 8,
+        borderRadius: "50%",
+        background: color,
+        display: "inline-block",
+        animation: "pulse 1.4s ease-in-out infinite",
+        flexShrink: 0,
+      }}
+    />
   );
 }
 
@@ -1159,4 +1305,45 @@ function Spinner({ size = 16 }: { size?: number }) {
       }}
     />
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Term helpers (V1 + V2 schemas)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function readField(
+  t: Record<string, unknown> | null,
+  ...keys: string[]
+): string {
+  if (!t) return "—";
+  for (const k of keys) {
+    const v = t[k];
+    if (v !== undefined && v !== null && String(v).trim() !== "")
+      return String(v);
+  }
+  return "—";
+}
+
+function readCondition(t: Record<string, unknown> | null): string {
+  if (!t) return "—";
+  const top = readField(t, "condition");
+  if (top !== "—") return top;
+  const ms = t.milestones;
+  if (Array.isArray(ms) && ms.length > 0) {
+    const c = (ms[0] as Record<string, unknown>).condition;
+    if (c && String(c).trim()) return String(c);
+  }
+  return "—";
+}
+
+function readDeadline(t: Record<string, unknown> | null): string {
+  if (!t) return "—";
+  const top = readField(t, "deadline");
+  if (top !== "—") return top;
+  const ms = t.milestones;
+  if (Array.isArray(ms) && ms.length > 0) {
+    const d = (ms[0] as Record<string, unknown>).deadline;
+    if (d && String(d).trim()) return String(d);
+  }
+  return "—";
 }

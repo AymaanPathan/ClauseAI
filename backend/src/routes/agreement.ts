@@ -19,8 +19,10 @@ export interface PresenceEntry {
   partyAJoinedAt: number | null;
   partyBJoinedAt: number | null;
   termsHash: string | null;
-  termsSnapshot: Record<string, unknown> | null; // Party A's parsed terms
+  termsSnapshot: Record<string, unknown> | null;
   createdAt: number | null;
+  partyAApproved: boolean;
+  partyBApproved: boolean;
 }
 
 export interface PresenceResponse extends PresenceEntry {
@@ -33,9 +35,19 @@ async function readPresence(id: string): Promise<PresenceEntry | null> {
   if (isRedisAvailable()) {
     const redis = getRedisClient();
     const raw = await redis.get(`presence:${id}`);
-    return raw ? (JSON.parse(raw) as PresenceEntry) : null;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as PresenceEntry;
+    // Backfill approval flags for entries written before this version
+    parsed.partyAApproved = parsed.partyAApproved ?? false;
+    parsed.partyBApproved = parsed.partyBApproved ?? false;
+    return parsed;
   }
-  return memStore.get(id) ?? null;
+  const entry = memStore.get(id) ?? null;
+  if (entry) {
+    entry.partyAApproved = entry.partyAApproved ?? false;
+    entry.partyBApproved = entry.partyBApproved ?? false;
+  }
+  return entry;
 }
 
 async function writePresence(id: string, entry: PresenceEntry): Promise<void> {
@@ -63,12 +75,25 @@ async function deletePresenceStore(id: string): Promise<void> {
 function makeResponse(entry: PresenceEntry): PresenceResponse {
   return {
     ...entry,
+    partyAApproved: entry.partyAApproved ?? false,
+    partyBApproved: entry.partyBApproved ?? false,
     bothConnected: !!entry.partyA && !!entry.partyB,
   };
 }
 
+const EMPTY_ENTRY = (): PresenceEntry => ({
+  partyA: null,
+  partyB: null,
+  partyAJoinedAt: null,
+  partyBJoinedAt: null,
+  termsHash: null,
+  termsSnapshot: null,
+  createdAt: Date.now(),
+  partyAApproved: false,
+  partyBApproved: false,
+});
+
 // ── SSE client registry ───────────────────────────────────────
-// Maps agreementId → Set of SSE response objects
 const sseClients = new Map<string, Set<Response>>();
 
 function notifySSE(id: string, data: PresenceResponse) {
@@ -91,36 +116,21 @@ router.get("/:id/events", async (req: Request, res: Response) => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
-  res.setHeader("X-Accel-Buffering", "no"); // nginx passthrough
+  res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders();
 
-  // Register client
   if (!sseClients.has(id)) sseClients.set(id, new Set());
   sseClients.get(id)!.add(res);
 
-  // Send current state immediately on connect
   try {
     const entry = await readPresence(id);
-    if (entry) {
-      res.write(`data: ${JSON.stringify(makeResponse(entry))}\n\n`);
-    } else {
-      const empty: PresenceResponse = {
-        partyA: null,
-        partyB: null,
-        partyAJoinedAt: null,
-        partyBJoinedAt: null,
-        termsHash: null,
-        termsSnapshot: null,
-        createdAt: Date.now(),
-        bothConnected: false,
-      };
-      res.write(`data: ${JSON.stringify(empty)}\n\n`);
-    }
+    res.write(
+      `data: ${JSON.stringify(makeResponse(entry ?? EMPTY_ENTRY()))}\n\n`,
+    );
   } catch (err) {
     console.error("[SSE] initial state error:", err);
   }
 
-  // Heartbeat every 25s to keep connection alive through proxies
   const heartbeat = setInterval(() => {
     try {
       res.write(": heartbeat\n\n");
@@ -129,7 +139,6 @@ router.get("/:id/events", async (req: Request, res: Response) => {
     }
   }, 25_000);
 
-  // Cleanup on disconnect
   req.on("close", () => {
     clearInterval(heartbeat);
     sseClients.get(id)?.delete(res);
@@ -137,31 +146,18 @@ router.get("/:id/events", async (req: Request, res: Response) => {
   });
 });
 
-// ── GET /api/agreement/:id — poll (fallback / initial load) ───
+// ── GET /api/agreement/:id ────────────────────────────────────
 router.get("/:id", async (req: Request, res: Response) => {
   try {
     const entry = await readPresence(req.params.id);
-    if (!entry) {
-      return res.json({
-        partyA: null,
-        partyB: null,
-        partyAJoinedAt: null,
-        partyBJoinedAt: null,
-        termsHash: null,
-        termsSnapshot: null,
-        bothConnected: false,
-        createdAt: null,
-      } satisfies PresenceResponse);
-    }
-    res.json(makeResponse(entry));
+    res.json(makeResponse(entry ?? EMPTY_ENTRY()));
   } catch (err) {
     console.error("[agreement GET]", err);
     res.status(500).json({ error: "Internal server error" });
   }
 });
 
-// ── POST /api/agreement/:id — register party ─────────────────
-// Body: { role, address, termsHash?, termsSnapshot? }
+// ── POST /api/agreement/:id — register party ──────────────────
 router.post("/:id", async (req: Request, res: Response) => {
   const { role, address, termsHash, termsSnapshot } = req.body as {
     role: "partyA" | "partyB";
@@ -179,17 +175,7 @@ router.post("/:id", async (req: Request, res: Response) => {
 
   try {
     let entry = await readPresence(req.params.id);
-    if (!entry) {
-      entry = {
-        partyA: null,
-        partyB: null,
-        partyAJoinedAt: null,
-        partyBJoinedAt: null,
-        termsHash: null,
-        termsSnapshot: null,
-        createdAt: Date.now(),
-      };
-    }
+    if (!entry) entry = EMPTY_ENTRY();
 
     if (role === "partyA") {
       entry.partyA = address;
@@ -202,12 +188,8 @@ router.post("/:id", async (req: Request, res: Response) => {
     }
 
     await writePresence(req.params.id, entry);
-
     const response = makeResponse(entry);
-
-    // Push to any SSE listeners immediately
     notifySSE(req.params.id, response);
-
     res.json(response);
   } catch (err) {
     console.error("[agreement POST]", err);
@@ -215,91 +197,56 @@ router.post("/:id", async (req: Request, res: Response) => {
   }
 });
 
-// ── DELETE /api/agreement/:id — cleanup ───────────────────────
+// ── POST /api/agreement/:id/approve ──────────────────────────
+router.post("/:id/approve", async (req: Request, res: Response) => {
+  const { role, address } = req.body as {
+    role: "partyA" | "partyB";
+    address: string;
+  };
+
+  if (!role || !["partyA", "partyB"].includes(role)) {
+    return res.status(400).json({ error: 'role must be "partyA" or "partyB"' });
+  }
+  if (!address || typeof address !== "string") {
+    return res.status(400).json({ error: "address is required" });
+  }
+
+  try {
+    const entry = await readPresence(req.params.id);
+    if (!entry) {
+      return res.status(404).json({ error: "Agreement not found" });
+    }
+
+    if (role === "partyA" && entry.partyA && entry.partyA !== address) {
+      return res.status(403).json({ error: "Address does not match Party A" });
+    }
+    if (role === "partyB" && entry.partyB && entry.partyB !== address) {
+      return res.status(403).json({ error: "Address does not match Party B" });
+    }
+
+    if (role === "partyA") entry.partyAApproved = true;
+    else entry.partyBApproved = true;
+
+    await writePresence(req.params.id, entry);
+    const response = makeResponse(entry);
+    notifySSE(req.params.id, response);
+    res.json(response);
+  } catch (err) {
+    console.error("[agreement /approve]", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── DELETE /api/agreement/:id ─────────────────────────────────
 router.delete("/:id", async (req: Request, res: Response) => {
   try {
     await deletePresenceStore(req.params.id);
-    notifySSE(req.params.id, {
-      partyA: null,
-      partyB: null,
-      partyAJoinedAt: null,
-      partyBJoinedAt: null,
-      termsHash: null,
-      termsSnapshot: null,
-      createdAt: Date.now(),
-      bothConnected: false,
-    });
+    notifySSE(req.params.id, makeResponse(EMPTY_ENTRY()));
     res.json({ deleted: true });
   } catch (err) {
     console.error("[agreement DELETE]", err);
     res.status(500).json({ error: "Internal server error" });
   }
 });
-
-export function addApprovalRoute(router: Router) {
-  router.post("/:id/approve", async (req: Request, res: Response) => {
-    const { role, address } = req.body as {
-      role: "partyA" | "partyB";
-      address: string;
-    };
-
-    if (!role || !["partyA", "partyB"].includes(role)) {
-      return res
-        .status(400)
-        .json({ error: 'role must be "partyA" or "partyB"' });
-    }
-    if (!address || typeof address !== "string") {
-      return res.status(400).json({ error: "address is required" });
-    }
-
-    try {
-      // readPresence / writePresence / notifySSE are already in agreement.ts
-      // This is a drop-in addition to that file.
-
-      // @ts-ignore — these are defined in the outer scope of agreement.ts
-      let entry = await readPresence(req.params.id);
-      if (!entry) {
-        return res.status(404).json({ error: "Agreement not found" });
-      }
-
-      // Verify the approving address matches the registered party
-      if (role === "partyA" && entry.partyA && entry.partyA !== address) {
-        return res
-          .status(403)
-          .json({ error: "Address does not match Party A" });
-      }
-      if (role === "partyB" && entry.partyB && entry.partyB !== address) {
-        return res
-          .status(403)
-          .json({ error: "Address does not match Party B" });
-      }
-
-      // Set approval flag
-      if (role === "partyA") {
-        (entry as any).partyAApproved = true;
-      } else {
-        (entry as any).partyBApproved = true;
-      }
-
-      // @ts-ignore
-      await writePresence(req.params.id, entry);
-
-      const response = {
-        ...entry,
-        bothConnected: !!entry.partyA && !!entry.partyB,
-        partyAApproved: (entry as any).partyAApproved ?? false,
-        partyBApproved: (entry as any).partyBApproved ?? false,
-      };
-
-      // @ts-ignore
-      notifySSE(req.params.id, response);
-
-      res.json(response);
-    } catch (err) {
-      console.error("[approval POST]", err);
-      res.status(500).json({ error: "Internal server error" });
-    }
-  });
-}
 
 export default router;

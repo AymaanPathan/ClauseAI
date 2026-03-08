@@ -14,7 +14,7 @@ import PresenceIndicator from "@/components/ui/PresenceIndicator";
 const BLOCK_PER_DAY = 144;
 function daysToBlocks(days: number, currentBlock: number): number {
   if (days === 0) return 0;
-  return currentBlock + Math.round(days * BLOCK_PER_DAY);
+  return (currentBlock ?? 0) + Math.round(days * BLOCK_PER_DAY);
 }
 function isoToDays(iso: string): number {
   if (!iso) return 0;
@@ -23,7 +23,7 @@ function isoToDays(iso: string): number {
   return Math.ceil(diff / (1000 * 60 * 60 * 24));
 }
 function totalPct(inputs: MilestoneRow[]) {
-  return inputs.reduce((s, m) => s + m.percentage, 0);
+  return inputs.reduce((s, m) => s + (m?.percentage ?? 0), 0);
 }
 
 interface MilestoneRow {
@@ -38,10 +38,12 @@ function rowsToInputs(
   rows: MilestoneRow[],
   blockHeight: number,
 ): MilestoneInput[] {
-  return rows.map((r) => ({
-    percentage: Math.round(r.percentage * 100),
-    deadlineBlock: daysToBlocks(r.deadlineDays, blockHeight),
-  }));
+  return rows
+    .filter((r) => r !== undefined && r !== null)
+    .map((r) => ({
+      percentage: Math.round((r.percentage ?? 0) * 100),
+      deadlineBlock: daysToBlocks(r.deadlineDays ?? 0, blockHeight ?? 0),
+    }));
 }
 
 const DEFAULT_ROWS: MilestoneRow[] = [
@@ -72,6 +74,9 @@ function msColor(idx: number) {
   return `hsl(${(idx * 47 + 140) % 360}, 65%, 58%)`;
 }
 
+// Fallback arbitrator — a valid burn address for testnet
+const FALLBACK_ARBITRATOR = "ST000000000000000000002AMW42H";
+
 export default function ScreenLockFunds() {
   const dispatch = useAppDispatch();
   const {
@@ -91,7 +96,7 @@ export default function ScreenLockFunds() {
         return v2.milestones.map((m, i) => ({
           id: `ms-${i}`,
           label: m.title || `Milestone ${i + 1}`,
-          percentage: m.percentage,
+          percentage: m.percentage ?? 0,
           deadlineDays: m.deadline ? isoToDays(m.deadline) : (i + 1) * 7,
           condition: m.condition || "",
         }));
@@ -113,7 +118,17 @@ export default function ScreenLockFunds() {
   const pctOk = pct === 100;
   const receiverName = String(terms?.partyB ?? terms?.receiver ?? "Receiver");
 
-  // TxStatus = "idle" | "pending" | "confirming" | "confirmed" | "failed"
+  // Resolve a safe arbitrator address — "TBD" / "" / missing all crash principalCV
+  function resolveArbitrator(): string {
+    const raw = String(terms?.arbitrator ?? "").trim();
+    if (!raw || raw === "TBD" || raw.length < 10) return FALLBACK_ARBITRATOR;
+    return raw;
+  }
+
+  const arbitratorRaw = String(terms?.arbitrator ?? "").trim();
+  const arbitratorIsFallback =
+    !arbitratorRaw || arbitratorRaw === "TBD" || arbitratorRaw.length < 10;
+
   useEffect(() => {
     if (
       (txCreate.status === "confirming" || txCreate.status === "confirmed") &&
@@ -125,15 +140,25 @@ export default function ScreenLockFunds() {
 
   async function handleDeploy() {
     if (!agreementId || !walletAddress) return;
+
+    const partyBAddress = counterpartyWallet ?? "";
+    if (!partyBAddress) {
+      console.warn(
+        "counterpartyWallet is empty — Party B may not have connected",
+      );
+    }
+
+    const arbitrator = resolveArbitrator();
     const inputs = rowsToInputs(rows, blockHeight ?? 0);
+
     dispatch(setMilestoneInputs(inputs));
     setStep("deploying");
     await dispatch(
       createAgreementThunk({
         agreementId,
         partyA: walletAddress,
-        partyB: counterpartyWallet ?? "",
-        arbitrator: String(terms?.arbitrator ?? ""),
+        partyB: partyBAddress,
+        arbitrator,
         amountUsd,
         milestones: inputs,
       }),
@@ -143,11 +168,7 @@ export default function ScreenLockFunds() {
   async function handleDeposit() {
     if (!agreementId || !walletAddress) return;
     await dispatch(
-      depositThunk({
-        agreementId,
-        amountUsd,
-        senderAddress: walletAddress,
-      }),
+      depositThunk({ agreementId, amountUsd, senderAddress: walletAddress }),
     );
   }
 
@@ -155,7 +176,6 @@ export default function ScreenLockFunds() {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   }
 
-  // TxStatus has no "loading"/"success" — use the actual union values:
   const isDeploying =
     txCreate.status === "pending" || txCreate.status === "confirming";
   const isDepositing =
@@ -270,7 +290,6 @@ export default function ScreenLockFunds() {
           >
             ← Back
           </button>
-
           <div
             className="step-counter"
             style={{ display: "block", marginBottom: 12 }}
@@ -335,6 +354,43 @@ export default function ScreenLockFunds() {
           ))}
         </div>
 
+        {/* Arbitrator fallback warning */}
+        {arbitratorIsFallback && (
+          <div
+            className="fade-in"
+            style={{
+              background: "rgba(245,158,11,0.07)",
+              border: "1px solid rgba(245,158,11,0.25)",
+              borderRadius: 10,
+              padding: "10px 14px",
+              marginBottom: 14,
+              fontSize: 12,
+              color: "#f59e0b",
+              display: "flex",
+              gap: 8,
+            }}
+          >
+            <span>⚠️</span>
+            <span>
+              No arbitrator set — disputes cannot be resolved on-chain.{" "}
+              <button
+                onClick={() => dispatch(setScreen("set-arbitrator" as never))}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "#f5c400",
+                  cursor: "pointer",
+                  fontSize: 12,
+                  textDecoration: "underline",
+                  padding: 0,
+                }}
+              >
+                Set one now →
+              </button>
+            </span>
+          </div>
+        )}
+
         {/* Party status */}
         <div className="fade-up d1" style={{ marginBottom: 16 }}>
           <PresenceIndicator compact />
@@ -367,7 +423,6 @@ export default function ScreenLockFunds() {
               </span>
             </div>
           </div>
-
           <div className="table">
             {rows.map((row, i) => (
               <div
@@ -380,7 +435,6 @@ export default function ScreenLockFunds() {
                   borderBottom:
                     i < rows.length - 1 ? "1px solid var(--border)" : "none",
                   alignItems: "center",
-                  transition: "background var(--fast) var(--ease)",
                 }}
               >
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -570,7 +624,7 @@ export default function ScreenLockFunds() {
             >
               {isDeploying ? (
                 <>
-                  <span className="spinner" style={{ width: 14, height: 14 }} />
+                  <span className="spinner" style={{ width: 14, height: 14 }} />{" "}
                   Deploying Contract...
                 </>
               ) : (
@@ -593,7 +647,7 @@ export default function ScreenLockFunds() {
                     <span
                       className="spinner"
                       style={{ width: 14, height: 14 }}
-                    />
+                    />{" "}
                     Depositing...
                   </>
                 ) : (

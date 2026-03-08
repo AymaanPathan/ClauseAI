@@ -693,6 +693,17 @@ const agreementSlice = createSlice({
           // ignore
         }
       }
+
+      // FIX: If Party B is rehydrating and hasn't approved yet,
+      // don't leave them on "dashboard" — send them to approve-agreement.
+      // This prevents the premature dashboard redirect in page.tsx.
+      if (
+        state.isPartyB &&
+        !state.partyBApproved &&
+        state.currentScreen === "dashboard"
+      ) {
+        state.currentScreen = "approve-agreement";
+      }
     },
 
     applyPresenceUpdate(state, action: PayloadAction<PresenceState>) {

@@ -1,29 +1,17 @@
 "use client";
 // ============================================================
 // ScreenApproveAgreement.tsx
-// Both parties must sign off on the full agreement terms
-// (including arbitrator) before Party A can lock funds.
-//
-// Shown to:
-//   Party A — after counterparty connects (replaces or precedes lock-funds)
-//   Party B — after joining via share link
-//
-// The approval state is tracked in the presence store.
-// Once both approve → Party A proceeds to ScreenLockFunds.
-//
-// Redux state needed (add to agreementSlice):
-//   partyAApproved: boolean
-//   partyBApproved: boolean
-//
-// Backend endpoint needed:
-//   POST /api/agreement/:id/approve  { role: "partyA"|"partyB", address }
-//   GET  /api/agreement/:id           returns { partyAApproved, partyBApproved, ... }
+// FIXES:
+//  1. Party B now sees the Approve button + full terms review
+//  2. SSE subscription syncs approval state in real-time for both parties
+//  3. Party B no longer redirected to dashboard prematurely
 // ============================================================
 
 import { useState, useEffect, useRef } from "react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import { setScreen } from "@/store/slices/agreementSlice";
 import { isV2, ParsedAgreementV2 } from "@/api/parseApi";
+import { subscribeApproval } from "@/api/approvalApi";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -56,7 +44,7 @@ export default function ScreenApproveAgreement() {
   const [approving, setApproving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [termsExpanded, setTermsExpanded] = useState(false);
-  const pollRef = useRef<NodeJS.Timeout | null>(null);
+  const unsubRef = useRef<(() => void) | null>(null);
 
   const role: "partyA" | "partyB" = isPartyB ? "partyB" : "partyA";
   const myApproved = isPartyB
@@ -75,15 +63,45 @@ export default function ScreenApproveAgreement() {
   const receiverName = terms?.receiver ?? terms?.partyB ?? "Receiver";
   const totalAmount = terms?.total_usd ?? terms?.amount_usd ?? "—";
   const otherPartyName = isPartyB ? payerName : receiverName;
+  const milestones = v2?.milestones ?? [];
 
-  // ── Poll approval state ───────────────────────────────────
+  // ── Initial fetch ─────────────────────────────────────────
   useEffect(() => {
     fetchApproval();
-    pollRef.current = setInterval(fetchApproval, 3000);
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
   }, [agreementId]);
+
+  // ── SSE subscription for real-time sync ───────────────────
+  useEffect(() => {
+    if (!agreementId || bothApproved) return;
+
+    unsubRef.current?.();
+    const unsub = subscribeApproval(
+      agreementId,
+      (state) => {
+        setApproval((prev) => ({
+          ...prev,
+          partyAApproved: state.partyAApproved ?? prev.partyAApproved,
+          partyBApproved: state.partyBApproved ?? prev.partyBApproved,
+          partyA: state.partyA ?? prev.partyA,
+          partyB: state.partyB ?? prev.partyB,
+        }));
+      },
+      () => {}, // swallow SSE errors
+    );
+    unsubRef.current = unsub;
+    return () => {
+      unsub();
+      unsubRef.current = null;
+    };
+  }, [agreementId, bothApproved]);
+
+  // ── Cleanup SSE when both approved ───────────────────────
+  useEffect(() => {
+    if (bothApproved) {
+      unsubRef.current?.();
+      unsubRef.current = null;
+    }
+  }, [bothApproved]);
 
   async function fetchApproval() {
     if (!agreementId) return;
@@ -103,13 +121,6 @@ export default function ScreenApproveAgreement() {
       /* swallow poll errors */
     }
   }
-
-  // ── Proceed when both approved ────────────────────────────
-  useEffect(() => {
-    if (bothApproved && !isPartyB) {
-      if (pollRef.current) clearInterval(pollRef.current);
-    }
-  }, [bothApproved, isPartyB]);
 
   // ── Approve ───────────────────────────────────────────────
   async function handleApprove() {
@@ -138,9 +149,6 @@ export default function ScreenApproveAgreement() {
       setApproving(false);
     }
   }
-
-  // ── Milestones ────────────────────────────────────────────
-  const milestones = v2?.milestones ?? [];
 
   // ─────────────────────────────────────────────────────────
   return (
@@ -171,7 +179,7 @@ export default function ScreenApproveAgreement() {
           <p style={subtitleStyle}>
             {isPartyB
               ? `${payerName} has set up this escrow. Review all terms carefully — especially the arbitrator — before approving.`
-              : `Both parties must approve the agreement terms before you can lock funds. Share the link if ${receiverName} hasn't joined yet.`}
+              : `Both parties must approve before you can lock funds.`}
           </p>
         </div>
 
@@ -268,7 +276,6 @@ export default function ScreenApproveAgreement() {
             </span>
           </button>
 
-          {/* Always-visible key terms */}
           <div>
             {[
               { label: "💸 Payer", value: payerName },
@@ -508,7 +515,7 @@ export default function ScreenApproveAgreement() {
                 }}
               >
                 Disputes cannot be resolved on-chain without an arbitrator. You
-                can still approve and proceed, but consider adding one.
+                can still approve and proceed.
                 {!isPartyB && (
                   <>
                     {" "}
@@ -547,8 +554,8 @@ export default function ScreenApproveAgreement() {
           className="fade-up d3"
           style={{ display: "flex", flexDirection: "column", gap: 8 }}
         >
-          {/* My approval button */}
-          {!myApproved && (
+          {/* ── PARTY B: Approve button (always show if not yet approved) ── */}
+          {isPartyB && !myApproved && (
             <button
               className="btn btn-primary btn-lg"
               onClick={handleApprove}
@@ -580,7 +587,40 @@ export default function ScreenApproveAgreement() {
             </button>
           )}
 
-          {/* Approved — waiting for other party */}
+          {/* ── PARTY A: Approve button (always show if not yet approved) ── */}
+          {!isPartyB && !myApproved && (
+            <button
+              className="btn btn-primary btn-lg"
+              onClick={handleApprove}
+              disabled={approving}
+              style={{ width: "100%" }}
+            >
+              {approving ? (
+                <>
+                  <span className="spinner" style={{ width: 14, height: 14 }} />
+                  Approving…
+                </>
+              ) : (
+                <>
+                  ✓ Approve Agreement
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M5 12h14M12 5l7 7-7 7" />
+                  </svg>
+                </>
+              )}
+            </button>
+          )}
+
+          {/* ── Approved — waiting for other party ── */}
           {myApproved && !bothApproved && (
             <div style={waitingBoxStyle}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -599,13 +639,12 @@ export default function ScreenApproveAgreement() {
                   fontFamily: "monospace",
                 }}
               >
-                {!counterpartyConnected && "They haven't joined yet. "}
                 This page updates automatically when they approve.
               </div>
             </div>
           )}
 
-          {/* Party A proceeds to lock-funds */}
+          {/* ── PARTY A: Both approved → lock funds ── */}
           {bothApproved && !isPartyB && (
             <button
               className="btn btn-primary btn-lg fade-in"
@@ -633,42 +672,63 @@ export default function ScreenApproveAgreement() {
             </button>
           )}
 
-          {/* Party B — just wait */}
+          {/* ── PARTY B: Both approved → go to dashboard ── */}
           {bothApproved && isPartyB && (
-            <div
-              className="fade-in"
-              style={{
-                background: "rgba(34,197,94,0.08)",
-                border: "1px solid rgba(34,197,94,0.2)",
-                borderRadius: 10,
-                padding: "14px 18px",
-                textAlign: "center",
-              }}
-            >
+            <div>
               <div
+                className="fade-in"
                 style={{
-                  fontSize: 14,
-                  fontWeight: 700,
-                  color: "#22c55e",
-                  marginBottom: 4,
+                  background: "rgba(34,197,94,0.08)",
+                  border: "1px solid rgba(34,197,94,0.2)",
+                  borderRadius: 10,
+                  padding: "14px 18px",
+                  textAlign: "center",
+                  marginBottom: 10,
                 }}
               >
-                ✅ Agreement fully approved
+                <div
+                  style={{
+                    fontSize: 14,
+                    fontWeight: 700,
+                    color: "#22c55e",
+                    marginBottom: 4,
+                  }}
+                >
+                  ✅ Agreement fully approved
+                </div>
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: "rgba(242,242,240,0.45)",
+                    lineHeight: 1.6,
+                  }}
+                >
+                  {payerName} will now lock funds on-chain.
+                </div>
               </div>
-              <div
-                style={{
-                  fontSize: 12,
-                  color: "rgba(242,242,240,0.45)",
-                  lineHeight: 1.6,
-                }}
+              <button
+                className="btn btn-primary btn-lg fade-in"
+                onClick={() => dispatch(setScreen("dashboard" as never))}
+                style={{ width: "100%" }}
               >
-                {payerName} will now lock funds on-chain. You'll be notified
-                when the escrow is live.
-              </div>
+                Go to Dashboard
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M5 12h14M12 5l7 7-7 7" />
+                </svg>
+              </button>
             </div>
           )}
 
-          {/* Back to arbitrator edit if Party A */}
+          {/* ── PARTY A: back to arbitrator ── */}
           {!isPartyB && !myApproved && (
             <button
               className="btn btn-ghost"

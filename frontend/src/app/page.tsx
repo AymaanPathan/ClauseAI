@@ -1,21 +1,16 @@
-"use client";
 // ============================================================
-// app/page.tsx  —  PARTY A ENTRY POINT
+// app/page.tsx  — Party A root page
 //
-// This page is exclusively for the agreement creator (Party A).
-// Party B enters via /agreement/[id] — a completely separate route.
-//
-// Party A flow:
-//   landing → select-type → describe → parsed-terms →
-//   set-arbitrator → share-link →
-//   [SSE: Party B connects & approves] →
-//   connect-wallet → approve-agreement → lock-funds → dashboard
+// This page ONLY renders Party A components.
+// It has its OWN Redux Provider wrapping partyAStore.
+// Party B state never touches this page.
 // ============================================================
 
+"use client";
 import { useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { useAppDispatch, useAppSelector } from "@/store/hooks";
-import { rehydratePartyASession } from "@/store/slices/agreementSlice";
+import { Provider, useDispatch, useSelector } from "react-redux";
+
+import { rehydratePartyAThunk } from "../store/slices/partyASlice";
 
 // Party A screens
 import ScreenLanding from "@/components/screens/Party-A/ScreenLanding";
@@ -24,60 +19,54 @@ import ScreenDescribe from "@/components/screens/Party-A/ScreenDescribe-2";
 import ReviewTerms from "@/components/screens/Party-A/ReviewTerms-3";
 import ScreenSetArbitrator from "@/components/screens/Party-A/ScreenSetArbitrator";
 import ScreenShareLink from "@/components/screens/Party-A/ScreenShareLink";
+import ScreenConnectWallet from "@/components/screens/Party-A/ScreenConnectWallet";
 import ScreenLockFunds from "@/components/screens/Party-A/ScreenLockFunds";
+import ScreenDashboard from "@/components/screens/Party-A/ScreenDashboard";
 import ScreenOutcome from "@/components/screens/Shared/ScreenOutcome";
-import Topbar from "@/components/ui/Topbar";
-import ScreenConnectWallet from "@/components/screens/Shared/ScreenConnectWallet";
-import ScreenApproveAgreement from "@/components/screens/Shared/ScreenApproveAgreement";
+import { AppDispatch, RootState, store } from "@/store";
 
-export default function PartyAHome() {
-  const dispatch = useAppDispatch();
-  const router = useRouter();
-  const screen = useAppSelector((s) => s.agreement.currentScreen);
-  const isPartyB = useAppSelector((s) => s.agreement.isPartyB);
+// Inner component uses partyAStore
+function PartyAApp() {
+  const dispatch = useDispatch<AppDispatch>();
+  const screen = useSelector((s: RootState) => s.partyA.screen);
 
-  // On mount: restore Party A session only.
-  // If somehow a Party B session is stored here, ignore it.
   useEffect(() => {
-    dispatch(rehydratePartyASession());
+    dispatch(rehydratePartyAThunk());
   }, [dispatch]);
 
-  // Guard: if this is somehow a Party B session, redirect them to their route
-  useEffect(() => {
-    if (isPartyB) {
-      const id = localStorage.getItem("clauseai_agreement_id");
-      if (id) router.replace(`/agreement/${id}`);
-    }
-  }, [isPartyB, router]);
+  switch (screen) {
+    case "landing":
+      return <ScreenLanding />;
+    case "select-type":
+      return <ScreenSelectType />;
+    case "describe":
+      return <ScreenDescribe />;
+    case "parsed-terms":
+      return <ReviewTerms />;
+    case "set-arbitrator":
+      return <ScreenSetArbitrator />;
+    case "share-link":
+      return <ScreenShareLink />;
+    case "connect-wallet":
+      return <ScreenConnectWallet />;
+    case "lock-funds":
+      return <ScreenLockFunds />;
+    case "dashboard":
+      return <ScreenDashboard />;
+    case "complete":
+    case "timeout":
+    case "dispute":
+      return <ScreenOutcome />;
+    default:
+      return <ScreenLanding />;
+  }
+}
 
-  useEffect(() => {
-    if (screen === "dashboard") {
-      router.push("/dashboard");
-    }
-  }, [screen, router]);
-
-  const showTopbar = screen !== "landing";
-
-  // Party A screens only — Party B screens are never rendered here
-  const PARTY_A_SCREENS: Record<string, React.ReactNode> = {
-    landing: <ScreenLanding />,
-    "select-type": <ScreenSelectType />,
-    describe: <ScreenDescribe />,
-    "parsed-terms": <ReviewTerms />,
-    "set-arbitrator": <ScreenSetArbitrator />,
-    "share-link": <ScreenShareLink />,
-    "connect-wallet": <ScreenConnectWallet />,
-    "approve-agreement": <ScreenApproveAgreement />,
-    "lock-funds": <ScreenLockFunds />,
-    complete: <ScreenOutcome />,
-    timeout: <ScreenOutcome />,
-    dispute: <ScreenOutcome />,
-  };
-
+// Provider creates an isolated store instance for Party A
+export default function PartyAPage() {
   return (
-    <div style={{ minHeight: "100vh", background: "var(--black)" }}>
-      {showTopbar && <Topbar />}
-      {PARTY_A_SCREENS[screen] ?? null}
-    </div>
+    <Provider store={store}>
+      <PartyAApp />
+    </Provider>
   );
 }

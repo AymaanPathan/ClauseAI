@@ -1,6 +1,7 @@
 "use client";
-import { useAppDispatch } from "@/store/hooks";
-import { setScreen } from "../../../store/slices/agreementSlice";
+import { AppDispatch } from "@/store";
+import { setScreen } from "@/store/slices/partyASlice";
+import { useDispatch } from "react-redux";
 
 const IconArrow = () => (
   <svg
@@ -106,7 +107,7 @@ const MARQUEE = [
 ];
 
 export default function ScreenLanding() {
-  const dispatch = useAppDispatch();
+  const dispatch = useDispatch<AppDispatch>();
 
   return (
     <div
@@ -116,7 +117,7 @@ export default function ScreenLanding() {
         overflowX: "hidden",
       }}
     >
-      {/* ── TOPBAR ─────────────────────────────────── */}
+      {/* TOPBAR */}
       <nav
         style={{
           position: "sticky",
@@ -169,7 +170,7 @@ export default function ScreenLanding() {
         </div>
       </nav>
 
-      {/* ── HERO ───────────────────────────────────── */}
+      {/* HERO */}
       <section
         style={{
           paddingTop: 140,
@@ -179,7 +180,6 @@ export default function ScreenLanding() {
           textAlign: "center",
         }}
       >
-        {/* Vertical grid lines */}
         <div
           style={{
             position: "absolute",
@@ -190,7 +190,6 @@ export default function ScreenLanding() {
               "repeating-linear-gradient(90deg,transparent,transparent 79px,rgba(242,242,240,0.02) 79px,rgba(242,242,240,0.02) 80px)",
           }}
         />
-        {/* Subtle center radial */}
         <div
           className="hero-glow"
           style={{
@@ -203,7 +202,6 @@ export default function ScreenLanding() {
               "radial-gradient(ellipse, rgba(242,242,240,0.04) 0%, transparent 70%)",
           }}
         />
-
         <div
           style={{
             position: "relative",
@@ -213,7 +211,6 @@ export default function ScreenLanding() {
             padding: "0 32px",
           }}
         >
-          {/* Eyebrow badge */}
           <div
             className="fade-up"
             style={{
@@ -223,12 +220,10 @@ export default function ScreenLanding() {
             }}
           >
             <div className="badge">
-              <span className="dot dot-active" />
-              Bitcoin-Enforced Smart Contracts
+              <span className="dot dot-active" /> Bitcoin-Enforced Smart
+              Contracts
             </div>
           </div>
-
-          {/* Headline */}
           <h1
             className="fade-up d1"
             style={{
@@ -252,8 +247,6 @@ export default function ScreenLanding() {
               by Bitcoin itself.
             </span>
           </h1>
-
-          {/* Subtext */}
           <p
             className="fade-up d2"
             style={{
@@ -268,8 +261,6 @@ export default function ScreenLanding() {
             Turn plain English into auditable Clarity contracts in under 60
             seconds. No lawyers. No banks. No trust required.
           </p>
-
-          {/* Flow strip */}
           <div
             className="fade-up d2"
             style={{
@@ -312,8 +303,6 @@ export default function ScreenLanding() {
               )}
             </div>
           </div>
-
-          {/* CTAs */}
           <div
             className="fade-up d3"
             style={{
@@ -331,8 +320,6 @@ export default function ScreenLanding() {
             </button>
             <button className="btn btn-ghost btn-lg">How it works</button>
           </div>
-
-          {/* Stats row */}
           <div
             className="fade-up d4"
             style={{
@@ -375,7 +362,7 @@ export default function ScreenLanding() {
                     fontFamily: "var(--mono)",
                     color: "var(--text-3)",
                     letterSpacing: "0.08em",
-                    textTransform: "uppercase",
+                    textTransform: "uppercase" as const,
                   }}
                 >
                   {s.label}
@@ -386,7 +373,7 @@ export default function ScreenLanding() {
         </div>
       </section>
 
-      {/* ── MARQUEE ────────────────────────────────── */}
+      {/* MARQUEE */}
       <div className="marquee-wrap">
         <div className="marquee-track">
           {[...MARQUEE, ...MARQUEE, ...MARQUEE].map((item, i) => (
@@ -397,7 +384,7 @@ export default function ScreenLanding() {
         </div>
       </div>
 
-      {/* ── HOW IT WORKS ───────────────────────────── */}
+      {/* HOW IT WORKS */}
       <section
         style={{ padding: "120px 0", borderTop: "1px solid var(--border)" }}
       >
@@ -430,7 +417,6 @@ export default function ScreenLanding() {
               deployed Clarity contract on Stacks.
             </p>
           </div>
-
           <div
             style={{
               display: "grid",
@@ -493,7 +479,7 @@ export default function ScreenLanding() {
         </div>
       </section>
 
-      {/* ── USE CASES ──────────────────────────────── */}
+      {/* USE CASES */}
       <section
         style={{ padding: "120px 0", borderTop: "1px solid var(--border)" }}
       >
@@ -572,7 +558,7 @@ export default function ScreenLanding() {
         </div>
       </section>
 
-      {/* ── TECH STACK ─────────────────────────────── */}
+      {/* TECH STACK */}
       <section
         style={{ padding: "120px 0", borderTop: "1px solid var(--border)" }}
       >
@@ -592,7 +578,6 @@ export default function ScreenLanding() {
               Built on proven infrastructure
             </h2>
           </div>
-
           <div className="table">
             <div
               style={{
@@ -681,7 +666,7 @@ export default function ScreenLanding() {
         </div>
       </section>
 
-      {/* ── CTA ────────────────────────────────────── */}
+      {/* CTA */}
       <section
         style={{
           padding: "140px 0",
@@ -720,8 +705,7 @@ export default function ScreenLanding() {
             }}
           >
             <div className="badge">
-              <span className="dot dot-active" />
-              Ready to deploy
+              <span className="dot dot-active" /> Ready to deploy
             </div>
           </div>
           <h2
@@ -770,7 +754,7 @@ export default function ScreenLanding() {
         </div>
       </section>
 
-      {/* ── FOOTER ─────────────────────────────────── */}
+      {/* FOOTER */}
       <footer
         style={{ borderTop: "1px solid var(--border)", padding: "32px 0" }}
       >

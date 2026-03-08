@@ -1,41 +1,30 @@
 "use client";
-// ============================================================
-// ScreenSetArbitrator.tsx
-// Step 4.5 — Party A sets an arbitrator address.
-// The address is stored in editedTerms and pushed to the
-// presence store so Party B can see it when they join.
-//
-// Flow:
-//   ScreenConnectWallet → ScreenSetArbitrator → ScreenShareLink
-//   (Party B sees ScreenApproveAgreement after connecting)
-// ============================================================
-
 import { useState } from "react";
-import { useAppDispatch, useAppSelector } from "@/store/hooks";
-import { setScreen, updateEditedTerms } from "@/store/slices/agreementSlice";
+
+import { setScreen, updateEditedTerms } from "@/store/slices/partyASlice";
+import { useDispatch, useSelector } from "react-redux";
+import { AppDispatch, RootState } from "@/store";
 
 const KNOWN_ARBITRATORS = [
   {
     address: "SP2J6ZY48GV1EZ5V2V5RB9MP66SW86PYKKNRV9EJ",
-    name: "ClauseAI Default Arbitrator",
-    desc: "Managed multi-sig arbitration service. 48h response SLA.",
+    name: "ClauseAI Default",
+    desc: "Managed multi-sig arbitration. 48h response SLA.",
     fee: "1%",
     rating: "4.9",
-    icon: "⚖️",
   },
   {
     address: "SP3FBR2AGK5H9QBDH3EEN6DF8EK8JY7RX8QJ5SVTE",
-    name: "Community Arbitrator Pool",
+    name: "Community Pool",
     desc: "Decentralised panel of vetted community arbitrators.",
     fee: "0.5%",
     rating: "4.7",
-    icon: "🏛️",
   },
 ];
 
 export default function ScreenSetArbitrator() {
-  const dispatch = useAppDispatch();
-  const { editedTerms } = useAppSelector((s) => s.agreement);
+  const dispatch = useDispatch<AppDispatch>();
+  const { editedTerms } = useSelector((s: RootState) => s.partyA);
 
   const existingArb = (editedTerms as any)?.arbitrator ?? "";
   const [address, setAddress] = useState(
@@ -51,6 +40,7 @@ export default function ScreenSetArbitrator() {
 
   const isValid =
     address.trim().length >= 10 || address.trim().toLowerCase() === "tbd";
+  const selectedPreset = KNOWN_ARBITRATORS.find((a) => a.address === address);
 
   function selectPreset(addr: string) {
     setAddress(addr);
@@ -76,44 +66,88 @@ export default function ScreenSetArbitrator() {
     dispatch(setScreen("share-link"));
   }
 
-  const selectedPreset = KNOWN_ARBITRATORS.find((a) => a.address === address);
-
   return (
     <div className="page" style={{ alignItems: "flex-start", paddingTop: 64 }}>
       <style>{css}</style>
       <div style={{ maxWidth: 560, width: "100%" }}>
-        {/* ── Header ───────────────────────────────────────── */}
+        {/* Header */}
         <div className="fade-up" style={{ marginBottom: 36 }}>
           <button
             onClick={() => dispatch(setScreen("parsed-terms"))}
-            style={backBtnStyle}
+            className="back-btn"
           >
             ← Back
           </button>
-
           <div
             className="step-counter"
             style={{ display: "block", marginBottom: 12 }}
           >
             Step 4 of 6
           </div>
-
-          <h2 style={titleStyle}>Choose an arbitrator</h2>
-          <p style={subtitleStyle}>
-            The arbitrator resolves disputes if they arise. Both parties must
-            approve the arbitrator before funds are locked.
+          <h2
+            style={{
+              fontSize: "clamp(24px, 3.5vw, 40px)",
+              fontWeight: 700,
+              letterSpacing: "-0.04em",
+              lineHeight: 1.05,
+              marginBottom: 10,
+            }}
+          >
+            Choose an arbitrator
+          </h2>
+          <p style={{ fontSize: 13, color: "var(--text-2)", lineHeight: 1.7 }}>
+            The arbitrator resolves disputes if they arise. Both parties will
+            see and approve this choice before any funds are locked.
           </p>
         </div>
 
-        {/* ── What is an arbitrator callout ───────────────── */}
-        <div className="fade-up d1" style={infoBoxStyle}>
-          <div style={{ fontSize: 20, flexShrink: 0 }}>🔐</div>
+        {/* Why this matters */}
+        <div
+          className="fade-up d1"
+          style={{
+            background: "var(--bg-1)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--r-sm)",
+            padding: "14px 16px",
+            marginBottom: 24,
+            display: "flex",
+            gap: 12,
+            alignItems: "flex-start",
+          }}
+        >
+          <div
+            style={{
+              width: 28,
+              height: 28,
+              flexShrink: 0,
+              border: "1px solid var(--border)",
+              borderRadius: "var(--r-sm)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              background: "var(--bg-3)",
+              marginTop: 1,
+            }}
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="var(--text-3)"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+            </svg>
+          </div>
           <div>
             <div
               style={{
                 fontSize: 12,
                 fontWeight: 600,
-                color: "#f2f2f0",
+                color: "var(--text-1)",
                 marginBottom: 4,
               }}
             >
@@ -122,21 +156,20 @@ export default function ScreenSetArbitrator() {
             <p
               style={{
                 fontSize: 12,
-                color: "rgba(242,242,240,0.45)",
+                color: "var(--text-3)",
                 lineHeight: 1.65,
                 margin: 0,
               }}
             >
-              If a dispute arises, the arbitrator's wallet will be able to call{" "}
-              <code style={codeStyle}>resolve-to-receiver</code> or{" "}
-              <code style={codeStyle}>resolve-to-payer</code> on the Clarity
-              contract. Both parties see and approve this address before any
-              funds are locked.
+              Their wallet can call{" "}
+              <code className="inline-code">resolve-to-receiver</code> or{" "}
+              <code className="inline-code">resolve-to-payer</code> on the
+              Clarity contract if a dispute arises.
             </p>
           </div>
         </div>
 
-        {/* ── Preset arbitrators ───────────────────────────── */}
+        {/* Preset arbitrators */}
         <div className="fade-up d2" style={{ marginBottom: 20 }}>
           <div className="label" style={{ marginBottom: 10 }}>
             Recommended arbitrators
@@ -148,149 +181,152 @@ export default function ScreenSetArbitrator() {
                 <button
                   key={arb.address}
                   onClick={() => selectPreset(arb.address)}
-                  style={{
-                    ...presetCardStyle,
-                    borderColor: isSelected
-                      ? "rgba(242,242,240,0.22)"
-                      : "rgba(242,242,240,0.08)",
-                    background: isSelected ? "#1a1a1a" : "#0f0f0f",
-                  }}
+                  className={`arb-card${isSelected ? " arb-card--selected" : ""}`}
                 >
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 12,
-                      flex: 1,
-                    }}
-                  >
-                    <div style={arbIconStyle}>{arb.icon}</div>
-                    <div style={{ textAlign: "left", flex: 1 }}>
-                      <div
+                  <div style={{ flex: 1, textAlign: "left" }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        marginBottom: 4,
+                      }}
+                    >
+                      <span
                         style={{
                           fontSize: 13,
                           fontWeight: 600,
-                          color: "#f2f2f0",
-                          marginBottom: 3,
+                          color: "var(--text-1)",
                         }}
                       >
                         {arb.name}
-                      </div>
-                      <div
+                      </span>
+                      <span
                         style={{
-                          fontSize: 11,
-                          color: "rgba(242,242,240,0.4)",
-                          lineHeight: 1.5,
-                        }}
-                      >
-                        {arb.desc}
-                      </div>
-                      <div
-                        style={{
-                          fontSize: 9,
-                          fontFamily: "monospace",
-                          color: "rgba(242,242,240,0.25)",
-                          marginTop: 5,
-                          letterSpacing: "0.04em",
-                        }}
-                      >
-                        {arb.address.slice(0, 14)}…{arb.address.slice(-6)}
-                      </div>
-                    </div>
-                    <div style={{ textAlign: "right", flexShrink: 0 }}>
-                      <div
-                        style={{
-                          fontSize: 12,
+                          fontSize: 10,
+                          fontFamily: "var(--mono)",
+                          color: "var(--green)",
                           fontWeight: 700,
-                          color: "#22c55e",
-                          marginBottom: 2,
                         }}
                       >
                         ★ {arb.rating}
-                      </div>
-                      <div
-                        style={{
-                          fontSize: 10,
-                          fontFamily: "monospace",
-                          color: "rgba(242,242,240,0.3)",
-                        }}
-                      >
-                        Fee: {arb.fee}
-                      </div>
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 11,
+                        color: "var(--text-3)",
+                        lineHeight: 1.5,
+                        marginBottom: 5,
+                      }}
+                    >
+                      {arb.desc}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 9,
+                        fontFamily: "var(--mono)",
+                        color: "var(--text-4)",
+                        letterSpacing: "0.04em",
+                      }}
+                    >
+                      {arb.address.slice(0, 14)}…{arb.address.slice(-6)}
                     </div>
                   </div>
-                  {isSelected && (
-                    <div style={checkmarkStyle}>
-                      <svg
-                        width="10"
-                        height="10"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="var(--bg)"
-                        strokeWidth="3"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
+                  <div
+                    style={{
+                      textAlign: "right",
+                      flexShrink: 0,
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "flex-end",
+                      gap: 8,
+                    }}
+                  >
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontFamily: "var(--mono)",
+                        color: "var(--text-3)",
+                      }}
+                    >
+                      Fee: {arb.fee}
+                    </span>
+                    {isSelected && (
+                      <div
+                        style={{
+                          width: 18,
+                          height: 18,
+                          borderRadius: "50%",
+                          background: "var(--text-1)",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                        }}
                       >
-                        <polyline points="20 6 9 17 4 12" />
-                      </svg>
-                    </div>
-                  )}
+                        <svg
+                          width="9"
+                          height="9"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="var(--bg)"
+                          strokeWidth="3"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        >
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                      </div>
+                    )}
+                  </div>
                 </button>
               );
             })}
           </div>
         </div>
 
-        {/* ── Custom address ───────────────────────────────── */}
+        {/* Custom address */}
         <div className="fade-up d3" style={{ marginBottom: 24 }}>
           <div
             style={{
               display: "flex",
               alignItems: "center",
               gap: 10,
-              marginBottom: customMode ? 10 : 0,
+              marginBottom: customMode ? 12 : 0,
             }}
           >
-            <div
-              style={{
-                flex: 1,
-                height: 1,
-                background: "rgba(242,242,240,0.08)",
-              }}
-            />
+            <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
             <button
-              onClick={() => {
-                setCustomMode(!customMode);
-                if (!customMode) setAddress("");
-              }}
+              onClick={() => setCustomMode(!customMode)}
               style={{
                 background: "none",
-                border: "1px solid rgba(242,242,240,0.1)",
-                borderRadius: 99,
-                color: "rgba(242,242,240,0.4)",
+                border: "none",
+                color: "var(--text-3)",
                 fontSize: 11,
-                fontFamily: "monospace",
-                padding: "5px 14px",
+                fontFamily: "var(--mono)",
                 cursor: "pointer",
+                padding: "0 4px",
                 letterSpacing: "0.04em",
-                transition: "all 0.15s",
               }}
             >
-              {customMode ? "↑ Hide custom" : "Enter custom address →"}
+              {customMode ? "Hide custom" : "Use custom address"}
             </button>
-            <div
-              style={{
-                flex: 1,
-                height: 1,
-                background: "rgba(242,242,240,0.08)",
-              }}
-            />
+            <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
           </div>
-
           {customMode && (
-            <div style={{ animation: "arb-slide-down 0.25s ease both" }}>
-              <label style={labelStyle}>
-                Custom arbitrator address (Stacks SP…)
+            <div style={{ animation: "slide-down 0.2s ease both" }}>
+              <label
+                style={{
+                  display: "block",
+                  fontSize: 11,
+                  fontFamily: "var(--mono)",
+                  color: "var(--text-3)",
+                  letterSpacing: "0.08em",
+                  textTransform: "uppercase" as const,
+                  marginBottom: 8,
+                }}
+              >
+                Custom Stacks address (SP…)
               </label>
               <input
                 className="input"
@@ -303,18 +339,16 @@ export default function ScreenSetArbitrator() {
                 onBlur={() => setFocused(false)}
                 placeholder="SP2J6ZY48GV1EZ5V2V5RB9MP66SW86PYKKNRV9EJ"
                 style={{
-                  fontFamily: "monospace",
+                  fontFamily: "var(--mono)",
                   fontSize: 12,
-                  borderColor: focused
-                    ? "rgba(242,242,240,0.22)"
-                    : "rgba(242,242,240,0.08)",
+                  borderColor: focused ? "var(--border-hi)" : "var(--border)",
                 }}
               />
               <div
                 style={{
                   fontSize: 10,
-                  fontFamily: "monospace",
-                  color: "rgba(242,242,240,0.2)",
+                  fontFamily: "var(--mono)",
+                  color: "var(--text-4)",
                   marginTop: 6,
                 }}
               >
@@ -324,14 +358,14 @@ export default function ScreenSetArbitrator() {
           )}
         </div>
 
-        {/* Selected arbitrator summary */}
+        {/* Selected summary */}
         {(selectedPreset || (customMode && address.trim().length > 10)) && (
           <div
             className="fade-in"
             style={{
               background: "rgba(34,197,94,0.06)",
-              border: "1px solid rgba(34,197,94,0.18)",
-              borderRadius: 10,
+              border: "1px solid rgba(34,197,94,0.2)",
+              borderRadius: "var(--r-sm)",
               padding: "12px 16px",
               marginBottom: 20,
               display: "flex",
@@ -339,13 +373,24 @@ export default function ScreenSetArbitrator() {
               gap: 10,
             }}
           >
-            <span style={{ color: "#22c55e", fontSize: 14 }}>✓</span>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="var(--green)"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
             <div>
               <div
                 style={{
                   fontSize: 12,
                   fontWeight: 600,
-                  color: "#22c55e",
+                  color: "var(--green)",
                   marginBottom: 2,
                 }}
               >
@@ -356,8 +401,8 @@ export default function ScreenSetArbitrator() {
               <div
                 style={{
                   fontSize: 10,
-                  fontFamily: "monospace",
-                  color: "rgba(242,242,240,0.3)",
+                  fontFamily: "var(--mono)",
+                  color: "var(--text-4)",
                 }}
               >
                 {address.slice(0, 18)}…{address.slice(-8)}
@@ -366,7 +411,6 @@ export default function ScreenSetArbitrator() {
           </div>
         )}
 
-        {/* Error */}
         {error && (
           <div className="error-box fade-in" style={{ marginBottom: 16 }}>
             ⚠ {error}
@@ -384,7 +428,7 @@ export default function ScreenSetArbitrator() {
             disabled={!isValid && address.trim().length > 0}
             style={{ width: "100%" }}
           >
-            Confirm Arbitrator & Continue
+            Confirm & Share Agreement
             <svg
               width="12"
               height="12"
@@ -398,7 +442,6 @@ export default function ScreenSetArbitrator() {
               <path d="M5 12h14M12 5l7 7-7 7" />
             </svg>
           </button>
-
           <button
             className="btn btn-ghost"
             onClick={handleSkip}
@@ -406,18 +449,16 @@ export default function ScreenSetArbitrator() {
           >
             Skip — decide later (TBD)
           </button>
-
           <p
             style={{
               textAlign: "center",
               fontSize: 11,
-              fontFamily: "monospace",
-              color: "rgba(242,242,240,0.2)",
+              fontFamily: "var(--mono)",
+              color: "var(--text-4)",
               marginTop: 4,
             }}
           >
-            Party B will see and must approve this choice before funds are
-            locked
+            Party B will review and must approve this choice
           </p>
         </div>
       </div>
@@ -425,108 +466,11 @@ export default function ScreenSetArbitrator() {
   );
 }
 
-// ── Styles ────────────────────────────────────────────────────
-
-const backBtnStyle: React.CSSProperties = {
-  background: "none",
-  border: "none",
-  color: "rgba(242,242,240,0.35)",
-  fontSize: 11,
-  cursor: "pointer",
-  marginBottom: 20,
-  fontFamily: "monospace",
-  letterSpacing: "0.04em",
-  padding: 0,
-};
-
-const titleStyle: React.CSSProperties = {
-  fontSize: "clamp(24px, 3.5vw, 36px)",
-  fontWeight: 700,
-  letterSpacing: "-0.04em",
-  lineHeight: 1.1,
-  marginBottom: 10,
-};
-
-const subtitleStyle: React.CSSProperties = {
-  fontSize: 13,
-  color: "rgba(242,242,240,0.55)",
-  lineHeight: 1.7,
-};
-
-const infoBoxStyle: React.CSSProperties = {
-  display: "flex",
-  gap: 14,
-  background: "#0f0f0f",
-  border: "1px solid rgba(242,242,240,0.07)",
-  borderRadius: 10,
-  padding: "14px 16px",
-  marginBottom: 24,
-  alignItems: "flex-start",
-};
-
-const codeStyle: React.CSSProperties = {
-  fontFamily: "monospace",
-  fontSize: 11,
-  background: "rgba(242,242,240,0.08)",
-  border: "1px solid rgba(242,242,240,0.1)",
-  borderRadius: 4,
-  padding: "1px 5px",
-  color: "#f5c400",
-};
-
-const presetCardStyle: React.CSSProperties = {
-  position: "relative",
-  display: "flex",
-  alignItems: "center",
-  gap: 12,
-  border: "1px solid",
-  borderRadius: 12,
-  padding: "14px 16px",
-  cursor: "pointer",
-  transition: "all 0.15s",
-  width: "100%",
-  textAlign: "left",
-};
-
-const arbIconStyle: React.CSSProperties = {
-  width: 40,
-  height: 40,
-  borderRadius: 10,
-  background: "rgba(242,242,240,0.05)",
-  border: "1px solid rgba(242,242,240,0.08)",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  fontSize: 18,
-  flexShrink: 0,
-};
-
-const checkmarkStyle: React.CSSProperties = {
-  position: "absolute",
-  top: 12,
-  right: 12,
-  width: 20,
-  height: 20,
-  borderRadius: "50%",
-  background: "#f2f2f0",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-};
-
-const labelStyle: React.CSSProperties = {
-  display: "block",
-  fontSize: 11,
-  fontFamily: "monospace",
-  color: "rgba(242,242,240,0.35)",
-  letterSpacing: "0.08em",
-  textTransform: "uppercase",
-  marginBottom: 8,
-};
-
 const css = `
-@keyframes arb-slide-down {
-  from { opacity: 0; transform: translateY(-8px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
+.back-btn { background: none; border: none; color: var(--text-3); font-size: 11px; cursor: pointer; margin-bottom: 20px; font-family: var(--mono); letter-spacing: 0.04em; padding: 0; }
+.arb-card { display: flex; align-items: center; gap: 14px; border: 1px solid var(--border); border-radius: var(--r-md); padding: 14px 16px; cursor: pointer; transition: all var(--fast) var(--ease); background: var(--bg-1); width: 100%; text-align: left; }
+.arb-card:hover { background: var(--bg-2); border-color: var(--border-hi); }
+.arb-card--selected { background: var(--bg-3); border-color: var(--border-hi); }
+.inline-code { font-family: var(--mono); font-size: 11px; background: var(--bg-3); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; color: var(--amber); }
+@keyframes slide-down { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
 `;

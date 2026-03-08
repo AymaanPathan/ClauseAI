@@ -1,443 +1,325 @@
 "use client";
+// ============================================================
+// components/partyA/ScreenShareLink.tsx
+//
+// Party A Step 5: Share link with Party B.
+// SSE watches for:
+//   1. Party B connects + approves  → partyBApproved = true
+//   2. When partyBApproved, Party A sees a notification and CTA
+//      to connect their wallet and lock funds.
+// ============================================================
+
 import { useState, useEffect, useRef } from "react";
-import { useAppDispatch, useAppSelector } from "@/store/hooks";
+
 import {
   setScreen,
   generateShareLink,
-  registerPresenceThunk,
-  applyPresenceUpdate,
-} from "@/store/slices/agreementSlice";
-import { hashTerms, subscribePresence } from "../../../api/PresenceaApi";
+  registerPartyAPresenceThunk,
+  applyApprovalUpdate,
+  setPartyBConnected,
+} from "@/store/slices/partyASlice";
+import { subscribeApproval } from "@/api/approvalApi";
+import { hashTerms } from "@/api/PresenceaApi";
+import { AppDispatch, RootState } from "@/store";
+import { useDispatch, useSelector } from "react-redux";
 
 export default function ScreenShareLink() {
-  const dispatch = useAppDispatch();
+  const dispatch = useDispatch<AppDispatch>();
   const {
     shareLink,
     agreementId,
     walletAddress,
     editedTerms,
-    counterpartyConnected,
-    counterpartyWallet,
+    partyBConnected,
+    partyBWallet,
+    partyBApproved,
     presenceRegistered,
-    isPartyB,
-  } = useAppSelector((s) => s.agreement);
+  } = useSelector((s: RootState) => s.partyA);
 
   const [copied, setCopied] = useState(false);
-  const [regError, setRegError] = useState<string | null>(null);
   const unsubRef = useRef<(() => void) | null>(null);
-  const receiverName = editedTerms?.partyB || "the receiver";
+  const receiverName =
+    (editedTerms as any)?.receiver ??
+    (editedTerms as any)?.partyB ??
+    "the receiver";
 
+  // Generate share link on mount
   useEffect(() => {
     if (!shareLink) dispatch(generateShareLink());
   }, []);
 
+  // Register Party A's presence with terms snapshot
   useEffect(() => {
-    if (!agreementId || !walletAddress || presenceRegistered || isPartyB)
-      return;
+    if (!agreementId || !walletAddress || presenceRegistered) return;
     const termsHash = editedTerms
       ? hashTerms(editedTerms as unknown as Record<string, unknown>)
       : undefined;
     dispatch(
-      registerPresenceThunk({
+      registerPartyAPresenceThunk({
         agreementId,
-        role: "partyA",
         address: walletAddress,
         termsHash,
         termsSnapshot: editedTerms
           ? (editedTerms as unknown as Record<string, unknown>)
           : undefined,
       }),
-    ).then((result) => {
-      if (!registerPresenceThunk.fulfilled.match(result))
-        setRegError("Failed to register. Please refresh.");
-    });
-  }, [
-    agreementId,
-    walletAddress,
-    presenceRegistered,
-    isPartyB,
-    editedTerms,
-    dispatch,
-  ]);
-
-  useEffect(() => {
-    if (!agreementId || counterpartyConnected) return;
-    unsubRef.current?.();
-    const unsub = subscribePresence(
-      agreementId,
-      (p) => dispatch(applyPresenceUpdate(p)),
-      () => {},
     );
-    unsubRef.current = unsub;
-    return () => {
-      unsub();
-    };
-  }, [agreementId, counterpartyConnected, dispatch]);
+  }, [agreementId, walletAddress, presenceRegistered]);
 
+  // SSE: watch for Party B joining + approving
   useEffect(() => {
-    if (counterpartyConnected) {
-      unsubRef.current?.();
-      unsubRef.current = null;
-    }
-  }, [counterpartyConnected]);
+    if (!agreementId) return;
+
+    unsubRef.current = subscribeApproval(agreementId, (state) => {
+      dispatch(
+        applyApprovalUpdate({
+          partyAApproved: state.partyAApproved,
+          partyBApproved: state.partyBApproved,
+          partyB: state.partyB,
+        }),
+      );
+      if (state.partyB && !partyBConnected) {
+        dispatch(setPartyBConnected({ wallet: state.partyB }));
+      }
+    });
+
+    return () => unsubRef.current?.();
+  }, [agreementId]);
 
   function handleCopy() {
     if (!shareLink) return;
-    navigator.clipboard.writeText(shareLink).catch(() => {});
+    navigator.clipboard.writeText(shareLink);
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    setTimeout(() => setCopied(false), 2500);
   }
 
   return (
-    <div className="page">
-      <div style={{ maxWidth: 520, width: "100%" }}>
-        {/* Header */}
-        <div className="fade-up" style={{ marginBottom: 36 }}>
+    <div className="page" style={{ alignItems: "flex-start", paddingTop: 56 }}>
+      <style>{css}</style>
+      <div style={{ maxWidth: 560, width: "100%" }}>
+        <div className="fade-up" style={{ marginBottom: 32 }}>
           <button
+            className="back-btn"
             onClick={() => dispatch(setScreen("set-arbitrator"))}
-            style={{
-              background: "none",
-              border: "none",
-              color: "var(--text-3)",
-              fontSize: 11,
-              cursor: "pointer",
-              marginBottom: 20,
-              fontFamily: "var(--mono)",
-              letterSpacing: "0.04em",
-              padding: 0,
-            }}
           >
             ← Back
           </button>
-
-          <div
-            className="step-counter"
-            style={{ marginBottom: 12, display: "block" }}
-          >
-            Step 5 of 6
-          </div>
-
-          <h2
-            style={{
-              fontSize: 32,
-              fontWeight: 700,
-              letterSpacing: "-0.04em",
-              lineHeight: 1.1,
-              marginBottom: 8,
-            }}
-          >
-            Invite {receiverName}
-          </h2>
-          <p style={{ color: "var(--text-2)", fontSize: 13, lineHeight: 1.7 }}>
-            Send this link to{" "}
-            <strong style={{ color: "var(--text-1)", fontWeight: 500 }}>
-              {receiverName}
-            </strong>
-            . They'll review the terms and connect their wallet.{" "}
-            <strong style={{ color: "var(--text-1)", fontWeight: 500 }}>
-              They don't need to deposit anything
-            </strong>{" "}
-            — only you lock funds as the payer.
+          <div className="step-badge">Step 5 of 6</div>
+          <h2 className="page-title">Share with {receiverName}</h2>
+          <p style={{ fontSize: 13, color: "var(--text-2)", lineHeight: 1.7 }}>
+            Send this link to the receiver. They'll review terms, connect their
+            wallet, and approve the agreement. You'll be notified here in real
+            time.
           </p>
         </div>
 
-        {regError && (
-          <div className="error-box fade-in" style={{ marginBottom: 14 }}>
-            ⚠ {regError}
-          </div>
-        )}
-
-        {/* Agreement ID */}
-        {agreementId && (
-          <div
-            className="fade-up d1"
-            style={{
-              background: "var(--bg-2)",
-              border: "1px solid var(--border)",
-              borderRadius: "var(--r-sm)",
-              padding: "10px 16px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              marginBottom: 10,
-            }}
-          >
-            <span
-              style={{
-                fontSize: 10,
-                fontFamily: "var(--mono)",
-                color: "var(--text-3)",
-                letterSpacing: "0.08em",
-                textTransform: "uppercase",
-              }}
-            >
-              Escrow ID
-            </span>
-            <span
-              style={{
-                fontSize: 12,
-                fontFamily: "var(--mono)",
-                color: "var(--text-1)",
-                fontWeight: 500,
-              }}
-            >
-              #{agreementId}
-            </span>
-          </div>
-        )}
-
         {/* Link box */}
-        <div
-          className="fade-up d2"
-          style={{
-            background: "var(--bg-1)",
-            border: "1px solid var(--border)",
-            borderRadius: "var(--r)",
-            padding: 4,
-            marginBottom: 16,
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-          }}
-        >
-          <div
-            style={{
-              flex: 1,
-              padding: "10px 12px",
-              fontSize: 12,
-              fontFamily: "var(--mono)",
-              color: "var(--text-2)",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {shareLink ?? "Generating..."}
+        <div className="fade-up d1" style={{ marginBottom: 20 }}>
+          <label className="field-label">Agreement Link</label>
+          <div className="link-box">
+            <span className="link-text">{shareLink ?? "Generating…"}</span>
+            <button
+              className="copy-btn"
+              onClick={handleCopy}
+              disabled={!shareLink}
+            >
+              {copied ? (
+                <>
+                  <svg
+                    width="11"
+                    height="11"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="var(--green)"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                  Copied
+                </>
+              ) : (
+                <>
+                  <svg
+                    width="11"
+                    height="11"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                  </svg>
+                  Copy
+                </>
+              )}
+            </button>
           </div>
-          <button
-            onClick={handleCopy}
-            className="btn btn-ghost"
+        </div>
+
+        {/* Status */}
+        <div className="fade-up d2 status-card" style={{ marginBottom: 20 }}>
+          <div className="status-label">Waiting for counterparty</div>
+          <div className="status-rows">
+            <StatusRow
+              label="Party B opened link"
+              done={partyBConnected}
+              pending="Waiting for them to open the link…"
+              wallet={partyBWallet}
+            />
+            <StatusRow
+              label="Party B approved agreement"
+              done={partyBApproved}
+              pending={
+                partyBConnected
+                  ? "They've connected — waiting for approval…"
+                  : "Waiting for them to review terms…"
+              }
+              wallet={null}
+            />
+          </div>
+        </div>
+
+        {/* Party B approved → CTA to connect wallet */}
+        {partyBApproved ? (
+          <div className="fade-in approved-banner" style={{ marginBottom: 16 }}>
+            <div
+              style={{
+                display: "flex",
+                gap: 10,
+                alignItems: "center",
+                marginBottom: 12,
+              }}
+            >
+              <span style={{ fontSize: 20 }}>🎉</span>
+              <div>
+                <div
+                  style={{
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: "var(--green)",
+                  }}
+                >
+                  {receiverName} approved the agreement!
+                </div>
+                <div
+                  style={{ fontSize: 11, color: "var(--text-3)", marginTop: 2 }}
+                >
+                  Now connect your wallet and lock the funds to make it
+                  official.
+                </div>
+              </div>
+            </div>
+            <button
+              className="btn btn-primary btn-lg"
+              onClick={() => dispatch(setScreen("connect-wallet"))}
+              style={{
+                width: "100%",
+                background: "var(--green)",
+                borderColor: "var(--green)",
+                color: "#0a0a0a",
+              }}
+            >
+              Connect Wallet & Lock Funds →
+            </button>
+          </div>
+        ) : (
+          <p
             style={{
               fontSize: 11,
               fontFamily: "var(--mono)",
-              padding: "8px 14px",
-              letterSpacing: "0.04em",
-              background: copied ? "rgba(34,197,94,0.06)" : undefined,
-              borderColor: copied ? "rgba(34,197,94,0.2)" : undefined,
-              color: copied ? "var(--green)" : undefined,
-            }}
-          >
-            {copied ? "✓ Copied" : "Copy"}
-          </button>
-        </div>
-
-        {/* Roles */}
-        <div
-          className="fade-up d2"
-          style={{
-            background: "var(--bg-1)",
-            border: "1px solid var(--border)",
-            borderRadius: "var(--r)",
-            padding: "14px 16px",
-            marginBottom: 16,
-          }}
-        >
-          <div className="label" style={{ marginBottom: 10 }}>
-            Who does what
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-            {[
-              {
-                role: "You (Payer)",
-                action: "Lock funds in escrow",
-                color: "var(--text-1)",
-              },
-              {
-                role: receiverName,
-                action: "Connect wallet, review terms",
-                color: "var(--text-2)",
-              },
-              {
-                role: "Arbitrator",
-                action: "Resolves disputes if needed",
-                color: "var(--text-3)",
-              },
-            ].map(({ role, action, color }) => (
-              <div key={role} style={{ display: "flex", gap: 8, fontSize: 12 }}>
-                <span
-                  style={{
-                    color,
-                    fontWeight: 500,
-                    flexShrink: 0,
-                    minWidth: 130,
-                  }}
-                >
-                  {role}
-                </span>
-                <span style={{ color: "var(--text-3)" }}>— {action}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Status cards */}
-        <div
-          className="fade-up d3"
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: 8,
-            marginBottom: 24,
-          }}
-        >
-          <StatusCard
-            connected={presenceRegistered}
-            label={
-              presenceRegistered
-                ? "You're registered (Payer)"
-                : "Registering..."
-            }
-            address={walletAddress}
-            pulsing={false}
-          />
-          <StatusCard
-            connected={counterpartyConnected}
-            label={
-              counterpartyConnected
-                ? `${receiverName} connected`
-                : `Waiting for ${receiverName} to join...`
-            }
-            address={counterpartyConnected ? counterpartyWallet : null}
-            pulsing={!counterpartyConnected}
-            subtext={
-              !counterpartyConnected ? "Live updates via SSE" : undefined
-            }
-          />
-        </div>
-
-        {/* CTA — now goes to approve-agreement instead of lock-funds */}
-        {counterpartyConnected ? (
-          <button
-            className="btn btn-primary btn-lg fade-in"
-            onClick={() => dispatch(setScreen("connect-wallet"))}
-            style={{ width: "100%" }}
-          >
-            {receiverName} Connected — Connect Your Wallet
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M5 12h14M12 5l7 7-7 7" />
-            </svg>
-          </button>
-        ) : (
-          <div
-            style={{
-              width: "100%",
-              padding: "14px",
-              background: "var(--bg-2)",
-              border: "1px dashed var(--border)",
-              borderRadius: "var(--r)",
-              fontSize: 13,
-              color: "var(--text-3)",
+              color: "var(--text-4)",
               textAlign: "center",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 8,
             }}
           >
-            <span
-              className="dot"
-              style={{
-                background: "var(--text-4)",
-                animation: "pulse-dot 1.5s ease-in-out infinite",
-              }}
-            />
-            Waiting for {receiverName} to connect...
-            <span
-              style={{
-                fontSize: 10,
-                fontFamily: "var(--mono)",
-                color: "var(--text-4)",
-                marginLeft: 4,
-              }}
-            >
-              LIVE
-            </span>
-          </div>
+            Live updates via SSE ●
+          </p>
         )}
-
-        <p
-          style={{
-            marginTop: 16,
-            fontSize: 11,
-            fontFamily: "var(--mono)",
-            color: "var(--text-4)",
-            textAlign: "center",
-            lineHeight: 1.6,
-          }}
-        >
-          When {receiverName} opens the link and connects their wallet, this
-          page updates automatically.
-        </p>
       </div>
     </div>
   );
 }
 
-function StatusCard({
-  connected,
+function StatusRow({
   label,
-  address,
-  pulsing,
-  subtext,
+  done,
+  pending,
+  wallet,
 }: {
-  connected: boolean;
   label: string;
-  address: string | null;
-  pulsing: boolean;
-  subtext?: string;
+  done: boolean;
+  pending: string;
+  wallet: string | null;
 }) {
   return (
     <div
       style={{
-        background: "var(--bg-1)",
-        border: `1px solid ${connected ? "rgba(34,197,94,0.15)" : "var(--border)"}`,
-        borderRadius: "var(--r-sm)",
-        padding: "12px 14px",
         display: "flex",
-        alignItems: "center",
-        gap: 10,
+        alignItems: "flex-start",
+        gap: 12,
+        padding: "12px 16px",
+        borderBottom: "1px solid var(--border)",
       }}
     >
-      <span
-        className="dot"
+      <div
         style={{
-          background: connected ? "var(--green)" : "var(--bg-5)",
-          animation: pulsing ? "pulse-dot 1.5s ease-in-out infinite" : "none",
+          width: 20,
+          height: 20,
           flexShrink: 0,
+          borderRadius: "50%",
+          background: done ? "rgba(34,197,94,0.15)" : "var(--bg-3)",
+          border: `1px solid ${done ? "rgba(34,197,94,0.4)" : "var(--border)"}`,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          marginTop: 1,
+          transition: "all 0.3s",
         }}
-      />
-      <div style={{ flex: 1 }}>
+      >
+        {done ? (
+          <svg
+            width="8"
+            height="8"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="var(--green)"
+            strokeWidth="3"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+        ) : (
+          <span className="spinner" style={{ width: 10, height: 10 }} />
+        )}
+      </div>
+      <div>
         <div
           style={{
             fontSize: 12,
-            fontWeight: 500,
-            color: connected ? "var(--green)" : "var(--text-2)",
-            letterSpacing: "-0.01em",
+            fontWeight: done ? 600 : 400,
+            color: done ? "var(--text-1)" : "var(--text-3)",
           }}
         >
-          {connected ? "✓ " : ""}
           {label}
         </div>
-        {address ? (
+        {!done && (
+          <div
+            style={{
+              fontSize: 11,
+              color: "var(--text-4)",
+              fontFamily: "var(--mono)",
+              marginTop: 2,
+            }}
+          >
+            {pending}
+          </div>
+        )}
+        {done && wallet && (
           <div
             style={{
               fontSize: 10,
@@ -446,21 +328,58 @@ function StatusCard({
               marginTop: 2,
             }}
           >
-            {address.slice(0, 8)}...{address.slice(-6)}
+            {wallet.slice(0, 10)}…{wallet.slice(-6)}
           </div>
-        ) : subtext ? (
-          <div
-            style={{
-              fontSize: 10,
-              fontFamily: "var(--mono)",
-              color: "var(--text-4)",
-              marginTop: 2,
-            }}
-          >
-            {subtext}
-          </div>
-        ) : null}
+        )}
       </div>
     </div>
   );
 }
+
+const css = `
+.back-btn {
+  background: none; border: none; color: var(--text-3); font-size: 12px;
+  cursor: pointer; margin-bottom: 20px; font-family: var(--mono); letter-spacing: 0.04em; padding: 0;
+}
+.step-badge {
+  font-size: 11px; font-family: var(--mono); color: var(--text-4);
+  letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 14px; display: block;
+}
+.page-title {
+  font-size: clamp(24px, 3.5vw, 38px); font-weight: 700;
+  letter-spacing: -0.04em; line-height: 1.05; margin-bottom: 8px;
+}
+.field-label {
+  display: block; font-size: 11px; font-family: var(--mono);
+  color: var(--text-3); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 7px;
+}
+.link-box {
+  display: flex; align-items: center; gap: 10;
+  background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--r-sm);
+  padding: 10px 14px;
+}
+.link-text {
+  flex: 1; font-size: 11px; font-family: var(--mono); color: var(--text-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.copy-btn {
+  display: flex; align-items: center; gap: 5; flex-shrink: 0;
+  background: var(--bg-3); border: 1px solid var(--border); border-radius: var(--r-xs);
+  padding: 5px 10px; font-size: 10px; font-family: var(--mono); color: var(--text-2);
+  cursor: pointer; transition: all var(--fast) var(--ease);
+}
+.copy-btn:hover { background: var(--bg-1); border-color: var(--border-hi); }
+.status-card {
+  background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--r); overflow: hidden;
+}
+.status-label {
+  font-size: 9px; font-family: var(--mono); color: var(--text-4);
+  text-transform: uppercase; letter-spacing: 0.1em; padding: 10px 16px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.status-rows .div:last-child { border-bottom: none; }
+.approved-banner {
+  background: rgba(34,197,94,0.06); border: 1px solid rgba(34,197,94,0.2);
+  border-radius: var(--r); padding: 16px 18px;
+}
+`;

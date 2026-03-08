@@ -1,20 +1,18 @@
 "use client";
+
 import { useState } from "react";
-import { useAppDispatch, useAppSelector } from "@/store/hooks";
-import { setScreen, connectWalletThunk } from "@/store/slices/agreementSlice";
+
+import { setScreen, connectWalletThunk } from "@/store/slices/partyASlice";
+import { AppDispatch, RootState } from "@/store";
+import { useDispatch, useSelector } from "react-redux";
 
 export default function ScreenConnectWallet() {
-  const dispatch = useAppDispatch();
-  const { walletConnected, walletAddress, isPartyB } = useAppSelector(
-    (s) => s.agreement,
+  const dispatch = useDispatch<AppDispatch>();
+  const { walletConnected, walletAddress } = useSelector(
+    (s: RootState) => s.partyA,
   );
   const [isConnecting, setIsConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // After wallet connect, both Party A and Party B go to approve-agreement
-  function nextScreen() {
-    dispatch(setScreen("approve-agreement"));
-  }
 
   async function handleConnect() {
     setIsConnecting(true);
@@ -22,7 +20,7 @@ export default function ScreenConnectWallet() {
     try {
       const result = await dispatch(connectWalletThunk());
       if (connectWalletThunk.fulfilled.match(result)) {
-        nextScreen();
+        dispatch(setScreen("lock-funds"));
       } else {
         setError((result.payload as string) ?? "Wallet connect failed");
       }
@@ -35,40 +33,25 @@ export default function ScreenConnectWallet() {
 
   return (
     <div className="page">
+      <style>{css}</style>
       <div style={{ maxWidth: 440, width: "100%", textAlign: "center" }}>
         <div className="fade-up">
           <button
-            onClick={() =>
-              dispatch(setScreen(isPartyB ? "parsed-terms" : "share-link"))
-            }
-            style={{
-              background: "none",
-              border: "none",
-              color: "var(--text-3)",
-              fontSize: 11,
-              cursor: "pointer",
-              marginBottom: 32,
-              fontFamily: "var(--mono)",
-              letterSpacing: "0.04em",
-            }}
+            className="back-btn"
+            onClick={() => dispatch(setScreen("share-link"))}
           >
             ← Back
           </button>
 
-          {/* Status icon */}
           <div
+            className="wallet-icon"
             style={{
-              width: 64,
-              height: 64,
-              borderRadius: "50%",
               background: walletConnected
                 ? "rgba(34,197,94,0.06)"
                 : "var(--bg-3)",
-              border: `1px solid ${walletConnected ? "rgba(34,197,94,0.2)" : "var(--border-hi)"}`,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              margin: "0 auto 28px",
+              borderColor: walletConnected
+                ? "rgba(34,197,94,0.2)"
+                : "var(--border-hi)",
             }}
           >
             {walletConnected ? (
@@ -97,40 +80,26 @@ export default function ScreenConnectWallet() {
                 strokeLinecap="round"
                 strokeLinejoin="round"
               >
-                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
               </svg>
             )}
           </div>
 
-          <div
-            className="step-counter"
-            style={{ marginBottom: 12, display: "block" }}
-          >
-            {isPartyB ? "Step 1 of 2" : "Step 5 of 6"}
-          </div>
-
-          <h2
-            style={{
-              fontSize: 32,
-              fontWeight: 700,
-              letterSpacing: "-0.04em",
-              lineHeight: 1.1,
-              marginBottom: 10,
-            }}
-          >
-            {walletConnected ? "Wallet Connected" : "Connect your wallet"}
+          <div className="step-badge">Step 6 of 6</div>
+          <h2 className="page-title">
+            {walletConnected ? "Wallet connected" : "Connect your wallet"}
           </h2>
-
           <p
             style={{
               color: "var(--text-2)",
               fontSize: 13,
               lineHeight: 1.7,
-              marginBottom: 32,
+              marginBottom: 28,
             }}
           >
             {walletConnected
-              ? `Connected: ${walletAddress?.slice(0, 10)}...${walletAddress?.slice(-6)}`
+              ? `Connected: ${walletAddress?.slice(0, 10)}…${walletAddress?.slice(-6)}`
               : "Connect your Leather wallet to deploy the escrow contract and lock funds on Stacks."}
           </p>
         </div>
@@ -149,7 +118,7 @@ export default function ScreenConnectWallet() {
               strokeWidth="2"
               strokeLinecap="round"
               strokeLinejoin="round"
-              style={{ flexShrink: 0, marginTop: 1 }}
+              style={{ flexShrink: 0 }}
             >
               <circle cx="12" cy="12" r="10" />
               <line x1="15" y1="9" x2="9" y2="15" />
@@ -166,10 +135,10 @@ export default function ScreenConnectWallet() {
           {walletConnected ? (
             <button
               className="btn btn-primary btn-lg"
-              onClick={nextScreen}
+              onClick={() => dispatch(setScreen("lock-funds"))}
               style={{ width: "100%" }}
             >
-              Continue — {isPartyB ? "Review Agreement" : "Review & Approve"}
+              Continue — Lock Funds
               <svg
                 width="12"
                 height="12"
@@ -192,15 +161,14 @@ export default function ScreenConnectWallet() {
             >
               {isConnecting ? (
                 <>
-                  <span className="spinner" style={{ width: 14, height: 14 }} />
-                  Connecting to Leather...
+                  <span className="spinner" style={{ width: 14, height: 14 }} />{" "}
+                  Connecting to Leather…
                 </>
               ) : (
                 "Connect Leather Wallet"
               )}
             </button>
           )}
-
           <div
             style={{
               fontSize: 11,
@@ -221,20 +189,20 @@ export default function ScreenConnectWallet() {
           </div>
         </div>
 
-        {/* Info cards */}
+        {/* Info */}
         <div
           className="fade-up d3"
           style={{
             display: "flex",
             flexDirection: "column",
             gap: 8,
-            marginTop: 32,
+            marginTop: 28,
           }}
         >
           {[
             {
               title: "Non-custodial escrow",
-              desc: "ClauseAi never holds your keys. Funds go directly into the smart contract, enforced by Bitcoin.",
+              desc: "ClauseAI never holds your keys. Funds go directly into the smart contract, enforced by Bitcoin.",
             },
             {
               title: "Only payers deposit",
@@ -244,7 +212,7 @@ export default function ScreenConnectWallet() {
             <div
               key={title}
               style={{
-                padding: "14px 16px",
+                padding: "12px 14px",
                 background: "var(--bg-1)",
                 border: "1px solid var(--border)",
                 borderRadius: "var(--r-sm)",
@@ -296,6 +264,7 @@ export default function ScreenConnectWallet() {
                     fontSize: 11,
                     color: "var(--text-3)",
                     lineHeight: 1.6,
+                    margin: 0,
                   }}
                 >
                   {desc}
@@ -308,3 +277,21 @@ export default function ScreenConnectWallet() {
     </div>
   );
 }
+
+const css = `
+.back-btn {
+  background: none; border: none; color: var(--text-3); font-size: 11px;
+  cursor: pointer; margin-bottom: 32px; font-family: var(--mono); letter-spacing: 0.04em; display: block;
+}
+.wallet-icon {
+  width: 64px; height: 64px; border-radius: 50%; border: 1px solid;
+  display: flex; align-items: center; justify-content: center; margin: 0 auto 28px; transition: all 0.3s;
+}
+.step-badge {
+  font-size: 10px; font-family: var(--mono); color: var(--text-4);
+  letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 12px; display: block;
+}
+.page-title {
+  font-size: 32px; font-weight: 700; letter-spacing: -0.04em; line-height: 1.1; margin-bottom: 10px;
+}
+`;

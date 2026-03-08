@@ -1,12 +1,14 @@
 "use client";
 import { useState } from "react";
-import { useAppDispatch, useAppSelector } from "@/store/hooks";
+
 import {
   parseAgreementThunk,
   setPartyNames,
   setRawText,
   setScreen,
-} from "../../../store/slices/agreementSlice";
+} from "@/store/slices/partyASlice";
+import { useDispatch, useSelector } from "react-redux";
+import { AppDispatch, RootState } from "@/store";
 
 const PLACEHOLDERS: Record<string, string> = {
   freelance:
@@ -40,69 +42,9 @@ const TYPE_LABELS: Record<
   bet: { label: "Simple Bet", payerRole: "Bettor A", receiverRole: "Bettor B" },
 };
 
-function InputField({
-  label,
-  value,
-  onChange,
-  placeholder,
-  hint,
-  accentColor,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  placeholder?: string;
-  hint?: string;
-  accentColor?: string;
-}) {
-  const [focused, setFocused] = useState(false);
-  return (
-    <div>
-      <label
-        style={{
-          display: "block",
-          fontSize: 11,
-          fontFamily: "var(--mono)",
-          color: accentColor ?? "var(--text-3)",
-          letterSpacing: "0.08em",
-          textTransform: "uppercase",
-          marginBottom: 7,
-        }}
-      >
-        {label}
-      </label>
-      <input
-        className="input"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
-        placeholder={placeholder}
-        style={{
-          borderColor: focused
-            ? (accentColor ?? "var(--border-hi)")
-            : "var(--border)",
-        }}
-      />
-      {hint && (
-        <div
-          style={{
-            fontSize: 10,
-            fontFamily: "var(--mono)",
-            color: "var(--text-4)",
-            marginTop: 5,
-          }}
-        >
-          {hint}
-        </div>
-      )}
-    </div>
-  );
-}
-
 export default function ScreenDescribe() {
-  const dispatch = useAppDispatch();
-  const { agreementType, parseLoading } = useAppSelector((s) => s.agreement);
+  const dispatch = useDispatch<AppDispatch>();
+  const { agreementType, parseLoading } = useSelector((s: RootState) => s.partyA);
   const typeMeta = agreementType ? TYPE_LABELS[agreementType] : null;
 
   const [text, setText] = useState(
@@ -110,15 +52,18 @@ export default function ScreenDescribe() {
   );
   const [payer, setPayer] = useState("Aymaan");
   const [receiver, setReceiver] = useState("Bob");
-  const [arbitrator, setArbitrator] = useState("TBD");
   const [textFocus, setTextFocus] = useState(false);
+  const [payerFocus, setPayerFocus] = useState(false);
+  const [receiverFocus, setReceiverFocus] = useState(false);
 
   const canParse = text.trim().length > 10 && payer.trim() && receiver.trim();
 
   async function handleParse() {
     if (!canParse || !agreementType) return;
     dispatch(setRawText(text));
-    dispatch(setPartyNames({ partyA: payer, partyB: receiver, arbitrator }));
+    dispatch(
+      setPartyNames({ partyA: payer, partyB: receiver, arbitrator: "TBD" }),
+    );
     const result = await dispatch(
       parseAgreementThunk({ type: agreementType, text }),
     );
@@ -129,29 +74,16 @@ export default function ScreenDescribe() {
 
   return (
     <div className="page" style={{ alignItems: "flex-start", paddingTop: 64 }}>
-      <div style={{ maxWidth: 640, width: "100%" }}>
+      <style>{css}</style>
+      <div style={{ maxWidth: 620, width: "100%" }}>
         {/* Header */}
-        <div className="fade-up" style={{ marginBottom: 40 }}>
+        <div className="fade-up" style={{ marginBottom: 36 }}>
           <button
             onClick={() => dispatch(setScreen("select-type"))}
-            style={{
-              background: "none",
-              border: "none",
-              color: "var(--text-3)",
-              fontSize: 12,
-              cursor: "pointer",
-              marginBottom: 20,
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              fontFamily: "var(--mono)",
-              letterSpacing: "0.04em",
-              padding: 0,
-            }}
+            className="back-btn"
           >
             ← Back
           </button>
-
           <div
             style={{
               display: "flex",
@@ -163,50 +95,36 @@ export default function ScreenDescribe() {
             <div className="step-counter">Step 2 of 6</div>
             {typeMeta && <div className="tag">{typeMeta.label}</div>}
           </div>
-
           <h2
             style={{
-              fontSize: "clamp(24px, 3.5vw, 38px)",
+              fontSize: "clamp(24px, 3.5vw, 40px)",
               fontWeight: 700,
               letterSpacing: "-0.04em",
-              lineHeight: 1.1,
+              lineHeight: 1.05,
               marginBottom: 8,
             }}
           >
-            Describe your agreement
+            Describe your deal
           </h2>
           <p style={{ fontSize: 13, color: "var(--text-2)", lineHeight: 1.7 }}>
-            Name the payer and receiver, then describe the deal in plain
-            English.
+            Name the parties, then describe the agreement in plain English.
           </p>
         </div>
 
-        {/* Role info strip */}
-        <div
-          className="fade-up d1"
-          style={{
-            background: "var(--bg-2)",
-            border: "1px solid var(--border)",
-            borderRadius: "var(--r-sm)",
-            padding: "11px 16px",
-            marginBottom: 22,
-            display: "flex",
-            gap: 16,
-            fontSize: 11,
-            fontFamily: "var(--mono)",
-            color: "var(--text-3)",
-            letterSpacing: "0.04em",
-            flexWrap: "wrap",
-          }}
-        >
-          <span>Payer — locks funds in escrow</span>
+        {/* Role legend */}
+        <div className="fade-up d1 role-strip">
+          <span>
+            <span className="role-dot payer-dot" /> Payer locks funds
+          </span>
           <span style={{ color: "var(--text-4)" }}>·</span>
-          <span>Receiver — gets paid on completion</span>
+          <span>
+            <span className="role-dot receiver-dot" /> Receiver gets paid
+          </span>
           <span style={{ color: "var(--text-4)" }}>·</span>
-          <span>Arbitrator — resolves disputes</span>
+          <span>Arbitrator resolves disputes</span>
         </div>
 
-        {/* Party names */}
+        {/* Names row */}
         <div
           className="fade-up d2"
           style={{
@@ -216,47 +134,47 @@ export default function ScreenDescribe() {
             marginBottom: 14,
           }}
         >
-          <InputField
-            label={`${typeMeta?.payerRole ?? "Payer"} (locks funds)`}
-            value={payer}
-            onChange={setPayer}
-            placeholder="e.g. Ahmed"
-            hint="Deposits into escrow"
-          />
-          <InputField
-            label={`${typeMeta?.receiverRole ?? "Receiver"} (gets paid)`}
-            value={receiver}
-            onChange={setReceiver}
-            placeholder="e.g. Bob"
-            hint="Receives on completion"
-          />
+          <div>
+            <label className="field-label">
+              {typeMeta?.payerRole ?? "Payer"} — locks funds
+            </label>
+            <input
+              className="input"
+              value={payer}
+              onChange={(e) => setPayer(e.target.value)}
+              onFocus={() => setPayerFocus(true)}
+              onBlur={() => setPayerFocus(false)}
+              placeholder="e.g. Ahmed"
+              style={{
+                borderColor: payerFocus ? "var(--border-hi)" : "var(--border)",
+              }}
+            />
+            <div className="field-hint">Deposits into escrow</div>
+          </div>
+          <div>
+            <label className="field-label">
+              {typeMeta?.receiverRole ?? "Receiver"} — gets paid
+            </label>
+            <input
+              className="input"
+              value={receiver}
+              onChange={(e) => setReceiver(e.target.value)}
+              onFocus={() => setReceiverFocus(true)}
+              onBlur={() => setReceiverFocus(false)}
+              placeholder="e.g. Bob"
+              style={{
+                borderColor: receiverFocus
+                  ? "var(--border-hi)"
+                  : "var(--border)",
+              }}
+            />
+            <div className="field-hint">Receives on completion</div>
+          </div>
         </div>
 
-        {/* Arbitrator */}
-        <div className="fade-up d3" style={{ marginBottom: 20 }}>
-          <InputField
-            label="Arbitrator (optional)"
-            value={arbitrator}
-            onChange={setArbitrator}
-            placeholder="e.g. mediator.btc or leave blank"
-          />
-        </div>
-
-        {/* Textarea */}
+        {/* Description */}
         <div className="fade-up d3" style={{ marginBottom: 24 }}>
-          <label
-            style={{
-              display: "block",
-              fontSize: 11,
-              fontFamily: "var(--mono)",
-              color: "var(--text-3)",
-              letterSpacing: "0.08em",
-              textTransform: "uppercase",
-              marginBottom: 7,
-            }}
-          >
-            Agreement Description
-          </label>
+          <label className="field-label">Agreement description</label>
           <textarea
             className="input"
             value={text}
@@ -282,25 +200,57 @@ export default function ScreenDescribe() {
               marginTop: 6,
             }}
           >
-            <span
-              style={{
-                fontSize: 10,
-                fontFamily: "var(--mono)",
-                color: "var(--text-4)",
-              }}
-            >
+            <span className="field-hint">
               Include: amount, deadline, and what triggers payment
             </span>
-            <span
-              style={{
-                fontSize: 10,
-                fontFamily: "var(--mono)",
-                color: "var(--text-4)",
-              }}
-            >
-              {text.length} chars
-            </span>
+            <span className="field-hint">{text.length} chars</span>
           </div>
+        </div>
+
+        {/* Arbitrator note */}
+        <div
+          className="fade-up d3"
+          style={{
+            background: "var(--bg-2)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--r-sm)",
+            padding: "10px 14px",
+            marginBottom: 24,
+            display: "flex",
+            gap: 10,
+            alignItems: "flex-start",
+          }}
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="var(--text-3)"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            style={{ flexShrink: 0, marginTop: 1 }}
+          >
+            <circle cx="12" cy="12" r="10" />
+            <line x1="12" y1="8" x2="12" y2="12" />
+            <line x1="12" y1="16" x2="12.01" y2="16" />
+          </svg>
+          <p
+            style={{
+              fontSize: 11,
+              color: "var(--text-3)",
+              lineHeight: 1.6,
+              margin: 0,
+            }}
+          >
+            You'll set an{" "}
+            <strong style={{ color: "var(--text-2)", fontWeight: 500 }}>
+              arbitrator
+            </strong>{" "}
+            in the next step. They'll resolve disputes if needed. Both parties
+            must approve them before funds are locked.
+          </p>
         </div>
 
         {/* CTA */}
@@ -313,12 +263,12 @@ export default function ScreenDescribe() {
           >
             {parseLoading ? (
               <>
-                <span className="spinner" style={{ width: 14, height: 14 }} />
+                <span className="spinner" style={{ width: 14, height: 14 }} />{" "}
                 Parsing with AI...
               </>
             ) : (
               <>
-                Parse Agreement with AI
+                Parse Agreement with AI{" "}
                 <svg
                   width="12"
                   height="12"
@@ -334,7 +284,6 @@ export default function ScreenDescribe() {
               </>
             )}
           </button>
-
           {!canParse && !parseLoading && (
             <p
               style={{
@@ -345,7 +294,7 @@ export default function ScreenDescribe() {
                 marginTop: 10,
               }}
             >
-              Fill in payer and receiver names to continue
+              Fill in both party names to continue
             </p>
           )}
         </div>
@@ -353,3 +302,13 @@ export default function ScreenDescribe() {
     </div>
   );
 }
+
+const css = `
+.back-btn { background: none; border: none; color: var(--text-3); font-size: 12px; cursor: pointer; margin-bottom: 20px; display: flex; align-items: center; gap: 6px; font-family: var(--mono); letter-spacing: 0.04em; padding: 0; }
+.field-label { display: block; font-size: 11px; font-family: var(--mono); color: var(--text-3); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 7px; }
+.field-hint { font-size: 10px; font-family: var(--mono); color: var(--text-4); margin-top: 5px; }
+.role-strip { background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 10px 16px; margin-bottom: 20px; display: flex; gap: 14px; font-size: 11px; font-family: var(--mono); color: var(--text-3); letter-spacing: 0.04em; flex-wrap: wrap; align-items: center; }
+.role-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+.payer-dot { background: var(--amber); }
+.receiver-dot { background: var(--green); }
+`;

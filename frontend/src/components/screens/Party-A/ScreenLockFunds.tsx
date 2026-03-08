@@ -1,17 +1,20 @@
 "use client";
 import { useState, useEffect } from "react";
-import { useAppDispatch, useAppSelector } from "@/store/hooks";
+
 import {
   setScreen,
   setMilestoneInputs,
   createAgreementThunk,
   depositThunk,
-} from "../../../store/slices/agreementSlice";
+} from "@/store/slices/partyASlice";
 import { MilestoneInput } from "@/lib/contractCalls";
 import { isV2, ParsedAgreementV2 } from "@/api/parseApi";
-import PresenceIndicator from "@/components/ui/PresenceIndicator";
+import { useDispatch, useSelector } from "react-redux";
+import { AppDispatch, RootState } from "@/store";
 
 const BLOCK_PER_DAY = 144;
+const FALLBACK_ARBITRATOR = "ST000000000000000000002AMW42H";
+
 function daysToBlocks(days: number, currentBlock: number): number {
   if (days === 0) return 0;
   return (currentBlock ?? 0) + Math.round(days * BLOCK_PER_DAY);
@@ -24,6 +27,9 @@ function isoToDays(iso: string): number {
 }
 function totalPct(inputs: MilestoneRow[]) {
   return inputs.reduce((s, m) => s + (m?.percentage ?? 0), 0);
+}
+function msColor(idx: number) {
+  return `hsl(${(idx * 47 + 140) % 360}, 65%, 58%)`;
 }
 
 interface MilestoneRow {
@@ -38,12 +44,10 @@ function rowsToInputs(
   rows: MilestoneRow[],
   blockHeight: number,
 ): MilestoneInput[] {
-  return rows
-    .filter((r) => r !== undefined && r !== null)
-    .map((r) => ({
-      percentage: Math.round((r.percentage ?? 0) * 100),
-      deadlineBlock: daysToBlocks(r.deadlineDays ?? 0, blockHeight ?? 0),
-    }));
+  return rows.filter(Boolean).map((r) => ({
+    percentage: Math.round((r.percentage ?? 0) * 100),
+    deadlineBlock: daysToBlocks(r.deadlineDays ?? 0, blockHeight ?? 0),
+  }));
 }
 
 const DEFAULT_ROWS: MilestoneRow[] = [
@@ -70,15 +74,8 @@ const DEFAULT_ROWS: MilestoneRow[] = [
   },
 ];
 
-function msColor(idx: number) {
-  return `hsl(${(idx * 47 + 140) % 360}, 65%, 58%)`;
-}
-
-// Fallback arbitrator — a valid burn address for testnet
-const FALLBACK_ARBITRATOR = "ST000000000000000000002AMW42H";
-
 export default function ScreenLockFunds() {
-  const dispatch = useAppDispatch();
+  const dispatch = useDispatch<AppDispatch>();
   const {
     editedTerms,
     walletAddress,
@@ -87,7 +84,7 @@ export default function ScreenLockFunds() {
     txCreate,
     txDeposit,
     blockHeight,
-  } = useAppSelector((s) => s.agreement);
+  } = useSelector((s: RootState) => s.partyA);
 
   function seedRows(): MilestoneRow[] {
     if (editedTerms && isV2(editedTerms)) {
@@ -118,7 +115,6 @@ export default function ScreenLockFunds() {
   const pctOk = pct === 100;
   const receiverName = String(terms?.partyB ?? terms?.receiver ?? "Receiver");
 
-  // Resolve a safe arbitrator address — "TBD" / "" / missing all crash principalCV
   function resolveArbitrator(): string {
     const raw = String(terms?.arbitrator ?? "").trim();
     if (!raw || raw === "TBD" || raw.length < 10) return FALLBACK_ARBITRATOR;
@@ -140,24 +136,15 @@ export default function ScreenLockFunds() {
 
   async function handleDeploy() {
     if (!agreementId || !walletAddress) return;
-
-    const partyBAddress = counterpartyWallet ?? "";
-    if (!partyBAddress) {
-      console.warn(
-        "counterpartyWallet is empty — Party B may not have connected",
-      );
-    }
-
     const arbitrator = resolveArbitrator();
     const inputs = rowsToInputs(rows, blockHeight ?? 0);
-
     dispatch(setMilestoneInputs(inputs));
     setStep("deploying");
     await dispatch(
       createAgreementThunk({
         agreementId,
         partyA: walletAddress,
-        partyB: partyBAddress,
+        partyB: counterpartyWallet ?? "",
         arbitrator,
         amountUsd,
         milestones: inputs,
@@ -182,17 +169,19 @@ export default function ScreenLockFunds() {
     txDeposit.status === "pending" || txDeposit.status === "confirming";
   const depositDone = txDeposit.status === "confirmed";
 
+  // ── Funds Locked Success ───────────────────────────────────
   if (depositDone) {
     return (
       <div className="page">
-        <div style={{ maxWidth: 440, width: "100%", textAlign: "center" }}>
+        <style>{css}</style>
+        <div style={{ maxWidth: 480, width: "100%", textAlign: "center" }}>
           <div
             style={{
-              width: 64,
-              height: 64,
+              width: 72,
+              height: 72,
               borderRadius: "50%",
-              background: "rgba(34,197,94,0.06)",
-              border: "1px solid rgba(34,197,94,0.2)",
+              background: "rgba(34,197,94,0.08)",
+              border: "1px solid rgba(34,197,94,0.25)",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -200,8 +189,8 @@ export default function ScreenLockFunds() {
             }}
           >
             <svg
-              width="24"
-              height="24"
+              width="28"
+              height="28"
               viewBox="0 0 24 24"
               fill="none"
               stroke="var(--green)"
@@ -209,18 +198,19 @@ export default function ScreenLockFunds() {
               strokeLinecap="round"
               strokeLinejoin="round"
             >
-              <polyline points="20 6 9 17 4 12" />
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+              <path d="M7 11V7a5 5 0 0 1 10 0v4" />
             </svg>
           </div>
           <h2
             style={{
-              fontSize: 28,
+              fontSize: 32,
               fontWeight: 700,
               letterSpacing: "-0.04em",
-              marginBottom: 10,
+              marginBottom: 8,
             }}
           >
-            Funds Locked
+            Funds Locked 🎉
           </h2>
           <p
             style={{
@@ -230,19 +220,97 @@ export default function ScreenLockFunds() {
               marginBottom: 28,
             }}
           >
-            ${amountUsd} USD locked on Stacks. {receiverName} will be notified
-            and can track milestones on the dashboard.
+            <strong style={{ color: "var(--text-1)" }}>${amountUsd} USD</strong>{" "}
+            is now secured on Stacks.{" "}
+            <strong style={{ color: "var(--text-1)" }}>{receiverName}</strong>{" "}
+            has been notified and can track milestones on the dashboard.
           </p>
+          <div
+            style={{
+              background: "var(--bg-1)",
+              border: "1px solid var(--border)",
+              borderRadius: "var(--r)",
+              padding: "16px 18px",
+              marginBottom: 24,
+              textAlign: "left",
+            }}
+          >
+            <div className="label" style={{ marginBottom: 12 }}>
+              Both parties are notified
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div
+                style={{ display: "flex", gap: 10, alignItems: "flex-start" }}
+              >
+                <div
+                  className="notif-dot"
+                  style={{ background: "var(--amber)" }}
+                />
+                <span
+                  style={{
+                    fontSize: 12,
+                    color: "var(--text-2)",
+                    lineHeight: 1.5,
+                  }}
+                >
+                  <strong style={{ color: "var(--text-1)" }}>
+                    You (Payer):
+                  </strong>{" "}
+                  Redirected to the dashboard to track milestones and release
+                  payments.
+                </span>
+              </div>
+              <div
+                style={{ display: "flex", gap: 10, alignItems: "flex-start" }}
+              >
+                <div
+                  className="notif-dot"
+                  style={{ background: "var(--green)" }}
+                />
+                <span
+                  style={{
+                    fontSize: 12,
+                    color: "var(--text-2)",
+                    lineHeight: 1.5,
+                  }}
+                >
+                  <strong style={{ color: "var(--text-1)" }}>
+                    {receiverName}:
+                  </strong>{" "}
+                  Their waiting screen automatically redirects to the dashboard.
+                </span>
+              </div>
+            </div>
+          </div>
           {txDeposit.txId && (
             <div
-              className="code-block"
               style={{
                 marginBottom: 24,
-                textAlign: "center",
                 padding: "10px 14px",
+                background: "var(--bg-2)",
+                border: "1px solid var(--border)",
+                borderRadius: "var(--r-sm)",
+                textAlign: "center",
               }}
             >
-              TX: {txDeposit.txId.slice(0, 12)}...{txDeposit.txId.slice(-8)}
+              <span
+                style={{
+                  fontSize: 10,
+                  fontFamily: "var(--mono)",
+                  color: "var(--text-4)",
+                }}
+              >
+                TX:{" "}
+              </span>
+              <span
+                style={{
+                  fontSize: 10,
+                  fontFamily: "var(--mono)",
+                  color: "var(--text-2)",
+                }}
+              >
+                {txDeposit.txId.slice(0, 12)}…{txDeposit.txId.slice(-8)}
+              </span>
             </div>
           )}
           <button
@@ -269,24 +337,16 @@ export default function ScreenLockFunds() {
     );
   }
 
+  // ── Main Lock Funds Screen ─────────────────────────────────
   return (
     <div className="page" style={{ alignItems: "flex-start", paddingTop: 64 }}>
-      <div style={{ maxWidth: 620, width: "100%" }}>
+      <style>{css}</style>
+      <div style={{ maxWidth: 600, width: "100%" }}>
         {/* Header */}
-        <div className="fade-up" style={{ marginBottom: 36 }}>
+        <div className="fade-up" style={{ marginBottom: 32 }}>
           <button
-            onClick={() => dispatch(setScreen("share-link"))}
-            style={{
-              background: "none",
-              border: "none",
-              color: "var(--text-3)",
-              fontSize: 11,
-              cursor: "pointer",
-              marginBottom: 20,
-              fontFamily: "var(--mono)",
-              letterSpacing: "0.04em",
-              padding: 0,
-            }}
+            onClick={() => dispatch(setScreen("approve-agreement"))}
+            className="back-btn"
           >
             ← Back
           </button>
@@ -298,106 +358,139 @@ export default function ScreenLockFunds() {
           </div>
           <h2
             style={{
-              fontSize: "clamp(24px, 3.5vw, 38px)",
+              fontSize: "clamp(24px, 3.5vw, 40px)",
               fontWeight: 700,
               letterSpacing: "-0.04em",
-              lineHeight: 1.1,
+              lineHeight: 1.05,
               marginBottom: 8,
             }}
           >
             Lock funds in escrow
           </h2>
           <p style={{ fontSize: 13, color: "var(--text-2)", lineHeight: 1.7 }}>
-            Review milestone breakdown and deploy the contract. Funds will be
-            locked on-chain.
+            Confirm milestones and deploy the escrow contract. Both parties have
+            already approved.
           </p>
         </div>
 
-        {/* Summary row */}
+        {/* Summary */}
         <div
           className="fade-up d1"
           style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 1fr 1fr",
+            background: "var(--bg-1)",
             border: "1px solid var(--border)",
             borderRadius: "var(--r)",
-            overflow: "hidden",
+            padding: "14px 16px",
             marginBottom: 20,
           }}
         >
-          {[
-            { label: "Total Amount", value: `$${amountUsd}` },
-            { label: "Milestones", value: String(rows.length) },
-            { label: "Receiver", value: receiverName },
-          ].map(({ label, value }, i) => (
-            <div
-              key={label}
-              style={{
-                padding: "16px 18px",
-                borderRight: i < 2 ? "1px solid var(--border)" : "none",
-              }}
-            >
-              <div className="label" style={{ marginBottom: 6 }}>
-                {label}
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}
+          >
+            <div>
+              <div className="label" style={{ marginBottom: 4 }}>
+                Locking for
               </div>
               <div
                 style={{
-                  fontSize: 14,
+                  fontSize: 13,
                   fontWeight: 600,
                   color: "var(--text-1)",
-                  letterSpacing: "-0.02em",
                 }}
               >
-                {value}
+                {receiverName}
+              </div>
+              {counterpartyWallet && (
+                <div
+                  style={{
+                    fontSize: 10,
+                    fontFamily: "var(--mono)",
+                    color: "var(--text-4)",
+                    marginTop: 2,
+                  }}
+                >
+                  {counterpartyWallet.slice(0, 10)}…
+                  {counterpartyWallet.slice(-6)}
+                </div>
+              )}
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div className="label" style={{ marginBottom: 4 }}>
+                Total amount
+              </div>
+              <div
+                style={{
+                  fontSize: 20,
+                  fontWeight: 700,
+                  color: "var(--text-1)",
+                  letterSpacing: "-0.03em",
+                }}
+              >
+                ${amountUsd}
+              </div>
+              <div
+                style={{
+                  fontSize: 10,
+                  fontFamily: "var(--mono)",
+                  color: "var(--text-4)",
+                }}
+              >
+                USD
               </div>
             </div>
-          ))}
+          </div>
         </div>
 
-        {/* Arbitrator fallback warning */}
+        {/* Arbitrator warning */}
         {arbitratorIsFallback && (
           <div
-            className="fade-in"
+            className="fade-up d1"
             style={{
-              background: "rgba(245,158,11,0.07)",
-              border: "1px solid rgba(245,158,11,0.25)",
-              borderRadius: 10,
-              padding: "10px 14px",
-              marginBottom: 14,
-              fontSize: 12,
-              color: "#f59e0b",
+              background: "rgba(245,158,11,0.05)",
+              border: "1px solid rgba(245,158,11,0.15)",
+              borderRadius: "var(--r-sm)",
+              padding: "12px 16px",
+              marginBottom: 20,
               display: "flex",
-              gap: 8,
+              gap: 10,
+              alignItems: "flex-start",
             }}
           >
-            <span>⚠️</span>
-            <span>
-              No arbitrator set — disputes cannot be resolved on-chain.{" "}
-              <button
-                onClick={() => dispatch(setScreen("set-arbitrator" as never))}
-                style={{
-                  background: "none",
-                  border: "none",
-                  color: "#f5c400",
-                  cursor: "pointer",
-                  fontSize: 12,
-                  textDecoration: "underline",
-                  padding: 0,
-                }}
-              >
-                Set one now →
-              </button>
-            </span>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="var(--amber)"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{ flexShrink: 0, marginTop: 1 }}
+            >
+              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+              <line x1="12" y1="9" x2="12" y2="13" />
+              <line x1="12" y1="17" x2="12.01" y2="17" />
+            </svg>
+            <p
+              style={{
+                fontSize: 11,
+                color: "var(--amber)",
+                lineHeight: 1.6,
+                margin: 0,
+              }}
+            >
+              No arbitrator set — using fallback burn address. Disputes won't be
+              resolvable on-chain.
+            </p>
           </div>
         )}
 
-        {/* Party status */}
-        <div className="fade-up d1" style={{ marginBottom: 16 }}>
-          <PresenceIndicator compact />
-        </div>
-
-        {/* Milestones table */}
-        <div className="fade-up d2" style={{ marginBottom: 24 }}>
+        {/* Milestones */}
+        <div className="fade-up d2" style={{ marginBottom: 20 }}>
           <div
             style={{
               display: "flex",
@@ -406,7 +499,7 @@ export default function ScreenLockFunds() {
               marginBottom: 10,
             }}
           >
-            <div className="label">Milestone breakdown</div>
+            <div className="label">Milestones</div>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <span
                 className="dot"
@@ -458,7 +551,7 @@ export default function ScreenLockFunds() {
                     {row.label}
                   </span>
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                   <span
                     style={{
                       fontSize: 10,
@@ -483,7 +576,7 @@ export default function ScreenLockFunds() {
                     }}
                   />
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                   <span
                     style={{
                       fontSize: 10,
@@ -526,7 +619,7 @@ export default function ScreenLockFunds() {
           </div>
         </div>
 
-        {/* TX status */}
+        {/* TX Status */}
         {(txCreate.status !== "idle" || txDeposit.status !== "idle") && (
           <div
             className="fade-in"
@@ -582,12 +675,12 @@ export default function ScreenLockFunds() {
                           ? "var(--green)"
                           : status === "failed"
                             ? "var(--red)"
-                            : status === "pending" || status === "confirming"
-                              ? "var(--text-2)"
-                              : "var(--text-4)",
+                            : status === "idle"
+                              ? "var(--text-4)"
+                              : "var(--text-2)",
                     }}
                   >
-                    {status === "idle" ? "pending" : status}
+                    {status === "idle" ? "waiting" : status}
                   </span>
                   {tx && url && (
                     <a
@@ -610,6 +703,17 @@ export default function ScreenLockFunds() {
           </div>
         )}
 
+        {txCreate.status === "failed" && (
+          <div className="error-box" style={{ marginBottom: 16 }}>
+            {txCreate.error ?? "Deployment failed."}
+          </div>
+        )}
+        {txDeposit.status === "failed" && (
+          <div className="error-box" style={{ marginBottom: 16 }}>
+            {txDeposit.error ?? "Deposit failed."}
+          </div>
+        )}
+
         {/* CTAs */}
         <div
           className="fade-up d4"
@@ -625,14 +729,28 @@ export default function ScreenLockFunds() {
               {isDeploying ? (
                 <>
                   <span className="spinner" style={{ width: 14, height: 14 }} />{" "}
-                  Deploying Contract...
+                  Deploying Contract…
                 </>
               ) : (
-                <>Deploy & Lock ${amountUsd}</>
+                <>
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                  </svg>{" "}
+                  Deploy & Lock ${amountUsd}
+                </>
               )}
             </button>
           )}
-
           {step === "depositing" &&
             (txCreate.status === "confirming" ||
               txCreate.status === "confirmed") && (
@@ -648,21 +766,20 @@ export default function ScreenLockFunds() {
                       className="spinner"
                       style={{ width: 14, height: 14 }}
                     />{" "}
-                    Depositing...
+                    Depositing…
                   </>
                 ) : (
                   <>Deposit ${amountUsd} to Escrow</>
                 )}
               </button>
             )}
-
-          {txCreate.status === "failed" && (
-            <div className="error-box">
-              {txCreate.error ?? "Deployment failed. Please try again."}
-            </div>
-          )}
         </div>
       </div>
     </div>
   );
 }
+
+const css = `
+.back-btn { background: none; border: none; color: var(--text-3); font-size: 11px; cursor: pointer; margin-bottom: 20px; font-family: var(--mono); letter-spacing: 0.04em; padding: 0; }
+.notif-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 3px; }
+`;

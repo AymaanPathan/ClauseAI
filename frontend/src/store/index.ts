@@ -1,14 +1,21 @@
-// store/index.ts — Redux store
 import { configureStore } from "@reduxjs/toolkit";
-import agreementReducer, { AgreementState } from "./slices/agreementSlice";
+import partyAReducer from "./slices/partyASlice";
+import partyBReducer from "./slices/partyBSlice";
 
 export const store = configureStore({
   reducer: {
-    agreement: agreementReducer,
+    partyA: partyAReducer,
+    partyB: partyBReducer,
   },
+  middleware: (getDefaultMiddleware) =>
+    getDefaultMiddleware({
+      serializableCheck: {
+        ignoredActions: ["partyA/parse/fulfilled"],
+      },
+    }),
 });
 
-export type RootState = {
-  agreement: AgreementState;
-};
+// Types
+export type RootState = ReturnType<typeof store.getState>;
 export type AppDispatch = typeof store.dispatch;
+export type StoreType = typeof store;

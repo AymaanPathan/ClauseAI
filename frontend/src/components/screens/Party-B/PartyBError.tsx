@@ -1,6 +1,4 @@
 "use client";
-// components/screens/party-b/PartyBError.tsx
-// Shown when the agreement link is invalid or the server can't be reached.
 
 export default function PartyBError({
   message,

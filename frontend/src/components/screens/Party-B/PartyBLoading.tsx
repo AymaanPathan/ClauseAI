@@ -1,6 +1,4 @@
 "use client";
-// components/screens/party-b/PartyBLoading.tsx
-// Shown while Party B's agreement data is being fetched from the server.
 
 export default function PartyBLoading({
   agreementId,

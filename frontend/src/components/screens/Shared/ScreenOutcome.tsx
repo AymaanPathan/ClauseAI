@@ -1,10 +1,11 @@
 "use client";
-import { useAppDispatch, useAppSelector } from "@/store/hooks";
-import { resetAll, setScreen } from "../../../store/slices/agreementSlice";
+
+import { AppDispatch, RootState } from "@/store";
+import { resetAll, setScreen } from "@/store/slices/partyASlice";
+import { useDispatch, useSelector } from "react-redux";
 
 const OUTCOMES = {
   complete: {
-    iconColor: "var(--green)",
     bgColor: "rgba(34,197,94,0.06)",
     borderColor: "rgba(34,197,94,0.2)",
     title: "Milestone Released",
@@ -25,7 +26,6 @@ const OUTCOMES = {
     ),
   },
   timeout: {
-    iconColor: "var(--amber)",
     bgColor: "rgba(245,158,11,0.06)",
     borderColor: "rgba(245,158,11,0.2)",
     title: "Tranche Expired",
@@ -47,7 +47,6 @@ const OUTCOMES = {
     ),
   },
   dispute: {
-    iconColor: "var(--amber)",
     bgColor: "rgba(245,158,11,0.06)",
     borderColor: "rgba(245,158,11,0.2)",
     title: "Dispute Opened",
@@ -69,20 +68,20 @@ const OUTCOMES = {
   },
 };
 
-export default function ScreenOutcome() {
-  const dispatch = useAppDispatch();
-  const {
-    currentScreen,
-    editedTerms,
-    agreementId,
-    amountLocked,
-    walletAddress,
-  } = useAppSelector((s) => s.agreement);
+interface Props {
+  /** Pass the outcome type explicitly — avoids reading stale screen state */
+  type?: keyof typeof OUTCOMES;
+}
 
-  const type = currentScreen as keyof typeof OUTCOMES;
+export default function ScreenOutcome({ type = "complete" }: Props) {
+  const dispatch = useDispatch<AppDispatch>();
+  const { editedTerms, agreementId, amountLocked, walletAddress } =
+    useSelector((s: RootState) => s.partyA);
+
   const outcome = OUTCOMES[type] ?? OUTCOMES.complete;
   const terms = editedTerms as unknown as Record<string, unknown>;
-  const amount = String(terms?.amount_usd ?? terms?.total_usd ?? "—");
+  const amount =
+    amountLocked ?? String(terms?.amount_usd ?? terms?.total_usd ?? "—");
 
   return (
     <div className="page">
@@ -163,12 +162,11 @@ export default function ScreenOutcome() {
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <button
             className="btn btn-primary btn-lg"
-            onClick={() => dispatch(setScreen("dashboard" as never))}
+            onClick={() => dispatch(setScreen("dashboard"))}
             style={{ width: "100%" }}
           >
             Go to Dashboard
           </button>
-
           <button
             className="btn btn-ghost"
             onClick={() => {

@@ -342,7 +342,7 @@ export async function callDeposit(
     contractName: CONTRACT_NAME,
     functionName: "deposit",
     functionArgs: [stringAsciiCV(agreementId)],
-    postConditionMode: PostConditionMode.Deny,
+    postConditionMode: PostConditionMode.Allow,
     postConditions: [
       // Payer will send ≤ satoshiAmount sBTC from their wallet
       sbtcSendLte(payerAddress, satoshiAmount),

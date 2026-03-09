@@ -1,7 +1,5 @@
 // ============================================================
 // lib/stacksConfig.ts
-// All Stacks network + contract constants live here.
-// Swap NETWORK to "mainnet" when going live.
 // ============================================================
 
 import { STACKS_TESTNET, STACKS_MAINNET } from "@stacks/network";
@@ -12,19 +10,27 @@ export const NETWORK_NAME: "testnet" | "mainnet" = "testnet";
 export const STACKS_NETWORK =
   NETWORK_NAME === ("mainnet" as any) ? STACKS_MAINNET : STACKS_TESTNET;
 
-// ── Deployed contract ─────────────────────────────────────────
-// Update CONTRACT_ADDRESS after you deploy the Clarity contract
+// ── Deployed escrow contract ──────────────────────────────────
 export const CONTRACT_ADDRESS = "ST2BRZZ2514G61W0VVHAXC4ZHCWPS897Z030TXWEY";
 export const CONTRACT_NAME = "clauseai-escrow-v3";
-
-// Full principal used in contract calls
 export const CONTRACT_PRINCIPAL =
   `${CONTRACT_ADDRESS}.${CONTRACT_NAME}` as const;
 
 // ── sBTC token contract (testnet) ─────────────────────────────
 export const SBTC_CONTRACT_ADDRESS =
-  "ST1F7QA2MDF17S807EPA36TSS8AMEFY4KDYQ8DXJD";
+  "ST17RSQ4ZNZP43FE1HW30KQZHJKBM6XCRMB8NR7C9";
+
 export const SBTC_CONTRACT_NAME = "sbtc-token";
+
+// Full principal used in Pc post condition builder
+export const SBTC_CONTRACT_PRINCIPAL =
+  `${SBTC_CONTRACT_ADDRESS}.${SBTC_CONTRACT_NAME}` as const;
+
+// Asset name as defined in the SIP-010 contract
+export const SBTC_ASSET_NAME = "sbtc";
+
+// ── sBTC unit constants ───────────────────────────────────────
+export const SATOSHIS_PER_BTC = 100_000_000;
 
 // ── Block explorer ────────────────────────────────────────────
 export const EXPLORER_BASE =
@@ -54,3 +60,14 @@ export const CONTRACT_STATE = {
 
 export type ContractState =
   (typeof CONTRACT_STATE)[keyof typeof CONTRACT_STATE];
+
+// ── Display helpers ───────────────────────────────────────────
+
+/**
+ * Format satoshis for human-readable display.
+ * e.g. 100000 → "0.00100000 sBTC"
+ */
+export function formatSats(sats: number): string {
+  const btc = sats / SATOSHIS_PER_BTC;
+  return `${btc.toFixed(8)} sBTC`;
+}

@@ -391,22 +391,17 @@ const partyASlice = createSlice({
       }
     },
     generateShareLink(state) {
-      if (!state.agreementId) {
-        state.agreementId = Math.random()
-          .toString(36)
-          .substring(2, 8)
-          .toUpperCase();
-      }
+      state.agreementId = crypto.randomUUID().slice(0, 6).toUpperCase();
+
       const origin =
         typeof window !== "undefined"
           ? window.location.origin
           : "https://clauseai.xyz";
+
       state.shareLink = `${origin}/agreement/${state.agreementId}`;
+
       if (typeof window !== "undefined") {
         localStorage.setItem("pA_agreementId", state.agreementId);
-        if (state.editedTerms) {
-          localStorage.setItem("pA_terms", JSON.stringify(state.editedTerms));
-        }
       }
     },
     setMilestoneInputs(state, action: PayloadAction<MilestoneInput[]>) {

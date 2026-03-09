@@ -53,7 +53,7 @@ const ESCROW_ABI: any = {
       name: "create-agreement",
       access: "public",
       args: [
-        { name: "agreement-id", type: { "string-ascii": { length: 36 } } },
+        { name: "agreement-id", type: { "string-ascii": { length: 64 } } },
         { name: "payer", type: "principal" },
         { name: "receiver", type: "principal" },
         { name: "arbitrator", type: "principal" },
@@ -67,7 +67,7 @@ const ESCROW_ABI: any = {
       name: "deposit",
       access: "public",
       args: [
-        { name: "agreement-id", type: { "string-ascii": { length: 36 } } },
+        { name: "agreement-id", type: { "string-ascii": { length: 64 } } },
       ],
       outputs: { type: { response: { ok: "bool", error: "uint128" } } },
     },
@@ -75,7 +75,7 @@ const ESCROW_ABI: any = {
       name: "complete-milestone",
       access: "public",
       args: [
-        { name: "agreement-id", type: { "string-ascii": { length: 36 } } },
+        { name: "agreement-id", type: { "string-ascii": { length: 64 } } },
         { name: "milestone-index", type: "uint128" },
       ],
       outputs: { type: { response: { ok: "bool", error: "uint128" } } },
@@ -84,7 +84,7 @@ const ESCROW_ABI: any = {
       name: "dispute-milestone",
       access: "public",
       args: [
-        { name: "agreement-id", type: { "string-ascii": { length: 36 } } },
+        { name: "agreement-id", type: { "string-ascii": { length: 64 } } },
         { name: "milestone-index", type: "uint128" },
       ],
       outputs: { type: { response: { ok: "bool", error: "uint128" } } },
@@ -93,7 +93,7 @@ const ESCROW_ABI: any = {
       name: "resolve-to-receiver",
       access: "public",
       args: [
-        { name: "agreement-id", type: { "string-ascii": { length: 36 } } },
+        { name: "agreement-id", type: { "string-ascii": { length: 64 } } },
         { name: "milestone-index", type: "uint128" },
       ],
       outputs: { type: { response: { ok: "bool", error: "uint128" } } },
@@ -102,7 +102,7 @@ const ESCROW_ABI: any = {
       name: "resolve-to-payer",
       access: "public",
       args: [
-        { name: "agreement-id", type: { "string-ascii": { length: 36 } } },
+        { name: "agreement-id", type: { "string-ascii": { length: 64 } } },
         { name: "milestone-index", type: "uint128" },
       ],
       outputs: { type: { response: { ok: "bool", error: "uint128" } } },
@@ -111,7 +111,7 @@ const ESCROW_ABI: any = {
       name: "trigger-milestone-timeout",
       access: "public",
       args: [
-        { name: "agreement-id", type: { "string-ascii": { length: 36 } } },
+        { name: "agreement-id", type: { "string-ascii": { length: 64 } } },
         { name: "milestone-index", type: "uint128" },
       ],
       outputs: { type: { response: { ok: "bool", error: "uint128" } } },
@@ -120,7 +120,7 @@ const ESCROW_ABI: any = {
       name: "trigger-arb-timeout",
       access: "public",
       args: [
-        { name: "agreement-id", type: { "string-ascii": { length: 36 } } },
+        { name: "agreement-id", type: { "string-ascii": { length: 64 } } },
         { name: "milestone-index", type: "uint128" },
       ],
       outputs: { type: { response: { ok: "bool", error: "uint128" } } },
@@ -129,7 +129,7 @@ const ESCROW_ABI: any = {
       name: "cancel-agreement",
       access: "public",
       args: [
-        { name: "agreement-id", type: { "string-ascii": { length: 36 } } },
+        { name: "agreement-id", type: { "string-ascii": { length: 64 } } },
       ],
       outputs: { type: { response: { ok: "bool", error: "uint128" } } },
     },

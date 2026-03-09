@@ -11,8 +11,8 @@ path = 'contracts/sbtc-token.clar'
 clarity_version = 3
 epoch = '3.2'
 
-[contracts.clauseai-escrow-v3]
-path = 'contracts/clauseai-escrow-v3.clar'
+[contracts.clauseai-escrow-v4]
+path = 'contracts/clauseai-escrow-v4.clar'
 clarity_version = 3
 epoch = '3.2'
 

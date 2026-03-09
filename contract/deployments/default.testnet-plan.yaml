@@ -9,10 +9,10 @@ plan:
     - id: 0
       transactions:
         - contract-publish:
-            contract-name: clauseai-escrow-v3
+            contract-name: clauseai-escrow-v4
             expected-sender: ST2BRZZ2514G61W0VVHAXC4ZHCWPS897Z030TXWEY
             cost: 229590
-            path: "contracts\\clauseai-escrow-v3.clar"
+            path: "contracts\\clauseai-escrow-v4.clar"
             anchor-block-only: true
             clarity-version: 3
       epoch: "3.2"

@@ -12,7 +12,7 @@
 
   // ── Deployed escrow contract ──────────────────────────────────
   export const CONTRACT_ADDRESS = "ST2BRZZ2514G61W0VVHAXC4ZHCWPS897Z030TXWEY";
-  export const CONTRACT_NAME = "clauseai-escrow-v3";
+  export const CONTRACT_NAME = "clauseai-escrow-v4";
   export const CONTRACT_PRINCIPAL =
     `${CONTRACT_ADDRESS}.${CONTRACT_NAME}` as const;
 

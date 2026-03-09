@@ -1,20 +1,48 @@
 "use client";
+// ============================================================
+// components/partyA/ScreenDashboard.tsx — PRODUCTION
+//
+// Real on-chain milestone actions:
+//   ✓ Release  → callCompleteMilestone  → wallet signs → tx confirmed → UI updates
+//   ⚑ Dispute  → callDisputeMilestone   → wallet signs → tx confirmed → UI updates
+//   ⏱ Timeout  → callTriggerMilestoneTimeout → ...
+//
+// After each tx, polls Stacks explorer until confirmed/failed,
+// then updates milestone status in Redux and re-reads on-chain state.
+// ============================================================
 
-import { useState } from "react";
-
-import { setScreen, markComplete, resetAll } from "@/store/slices/partyASlice";
-import { isV2, ParsedAgreementV2 } from "@/api/parseApi";
-import { AppDispatch, RootState } from "@/store";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useDispatch, useSelector } from "react-redux";
+import { AppDispatch, RootState } from "@/store";
+import {
+  setScreen,
+  markComplete,
+  resetAll,
+  completeMilestoneThunk,
+  disputeMilestoneThunk,
+  triggerTimeoutThunk,
+  setMilestoneTxState,
+  setMilestoneOnChainStatus,
+  pollMilestoneTxThunk,
+} from "@/store/slices/partyASlice";
+import { isV2, ParsedAgreementV2 } from "@/api/parseApi";
 import { usdToSatsPreview } from "@/lib/contractCalls";
-import { formatSats } from "@/lib/stacksConfig";
+import { formatSats, explorerTxUrl } from "@/lib/stacksConfig";
+import {
+  getAllMilestones,
+  MILESTONE_STATUS,
+  type OnChainMilestone,
+} from "@/lib/contractReads";
 
-type MilestoneStatus =
-  | "locked"
-  | "pending"
-  | "complete"
-  | "disputed"
-  | "refunded";
+// ── Types ──────────────────────────────────────────────────────
+
+type MilestoneUIStatus =
+  | "locked" // funds in escrow, waiting
+  | "pending" // tx submitted, waiting confirmation
+  | "complete" // released to receiver ✓
+  | "disputed" // in arbitration
+  | "refunded" // returned to payer
+  | "failed"; // tx failed
 
 interface MilestoneUI {
   index: number;
@@ -22,25 +50,46 @@ interface MilestoneUI {
   percentage: number;
   condition: string;
   deadline: string;
-  status: MilestoneStatus;
   amountUsd: string;
   amountSats: number;
 }
 
-function statusColor(s: MilestoneStatus) {
-  if (s === "complete") return "var(--green)";
-  if (s === "disputed") return "var(--amber)";
-  if (s === "refunded") return "var(--red)";
-  return "var(--text-3)";
+// ── Helpers ────────────────────────────────────────────────────
+
+function onChainStatusToUI(s: number): MilestoneUIStatus {
+  switch (s) {
+    case MILESTONE_STATUS.COMPLETE:
+      return "complete";
+    case MILESTONE_STATUS.REFUNDED:
+      return "refunded";
+    case MILESTONE_STATUS.DISPUTED:
+      return "disputed";
+    case MILESTONE_STATUS.ACTIVE:
+      return "locked";
+    default:
+      return "locked";
+  }
 }
 
-function statusLabel(s: MilestoneStatus) {
+function statusColor(s: MilestoneUIStatus) {
+  if (s === "complete") return "var(--green)";
+  if (s === "disputed") return "var(--amber)";
+  if (s === "refunded") return "#ef4444";
+  if (s === "failed") return "#ef4444";
+  if (s === "pending") return "var(--text-3)";
+  return "var(--text-4)";
+}
+
+function statusLabel(s: MilestoneUIStatus) {
   if (s === "complete") return "Released ✓";
   if (s === "disputed") return "In Dispute";
   if (s === "refunded") return "Refunded";
-  if (s === "pending") return "Pending";
+  if (s === "failed") return "Tx Failed";
+  if (s === "pending") return "Confirming…";
   return "Locked";
 }
+
+// ── Component ──────────────────────────────────────────────────
 
 export default function ScreenDashboard() {
   const dispatch = useDispatch<AppDispatch>();
@@ -49,8 +98,8 @@ export default function ScreenDashboard() {
     agreementId,
     walletAddress,
     amountLocked,
-    fundState,
     txMilestone,
+    milestoneOnChainStatuses,
   } = useSelector((s: RootState) => s.partyA);
 
   const t = editedTerms as any;
@@ -65,101 +114,137 @@ export default function ScreenDashboard() {
   const totalSats = usdToSatsPreview(totalAmountUsd);
   const arbitrator = t?.arbitrator ?? "TBD";
 
-  // Build milestone list
-  const milestones: MilestoneUI[] = v2?.milestones?.map((ms, i) => {
-    const msSats = Math.round((totalSats * ms.percentage) / 100);
-    return {
-      index: i,
-      title: ms.title || `Milestone ${i + 1}`,
-      percentage: ms.percentage,
-      condition: ms.condition,
-      deadline: ms.deadline,
-      status: "locked" as MilestoneStatus,
-      amountUsd: (((totalAmountUsd || 0) * ms.percentage) / 100).toFixed(2),
-      amountSats: msSats,
-    };
-  }) ?? [
+  // Build milestone list from parsed terms
+  const milestones: MilestoneUI[] = v2?.milestones?.map((ms, i) => ({
+    index: i,
+    title: ms.title || `Milestone ${i + 1}`,
+    percentage: ms.percentage,
+    condition: ms.condition ?? "",
+    deadline: ms.deadline ?? "",
+    amountUsd: (((totalAmountUsd || 0) * ms.percentage) / 100).toFixed(2),
+    amountSats: Math.round((totalSats * ms.percentage) / 100),
+  })) ?? [
     {
       index: 0,
       title: "Full Payment",
       percentage: 100,
       condition: t?.condition ?? "Payer confirms work is complete.",
       deadline: t?.deadline ?? "",
-      status: "locked" as MilestoneStatus,
       amountUsd: String(totalAmountUsd),
       amountSats: totalSats,
     },
   ];
 
-  const [msStatuses, setMsStatuses] = useState<Record<number, MilestoneStatus>>(
-    Object.fromEntries(milestones.map((m) => [m.index, m.status])),
+  // ── On-chain status sync ────────────────────────────────────
+  // Merge Redux on-chain statuses with local UI optimism
+  const getStatus = useCallback(
+    (index: number): MilestoneUIStatus => {
+      // If we have an in-flight tx for this milestone, show pending
+      const tx = txMilestone?.[index];
+      if (tx?.status === "pending" || tx?.status === "confirming")
+        return "pending";
+      if (tx?.status === "failed") return "failed";
+      // Use on-chain status if available
+      const onChain = milestoneOnChainStatuses?.[index];
+      if (onChain !== undefined) return onChainStatusToUI(onChain);
+      return "locked";
+    },
+    [txMilestone, milestoneOnChainStatuses],
   );
-  const [actionLoading, setActionLoading] = useState<Record<number, string>>(
-    {},
-  );
-  const [actionError, setActionError] = useState<Record<number, string>>({});
 
-  const allComplete = milestones.every((m) =>
-    ["complete", "refunded"].includes(msStatuses[m.index] ?? "locked"),
-  );
+  // Poll on-chain state on mount and after any tx completes
+  const [lastRefresh, setLastRefresh] = useState(0);
 
-  async function handleAction(
-    index: number,
-    action: "complete" | "dispute" | "timeout",
-  ) {
-    setActionLoading((prev) => ({ ...prev, [index]: action }));
-    setActionError((prev) => ({ ...prev, [index]: "" }));
-    try {
-      // TODO: dispatch real thunks:
-      // complete → callCompleteMilestone(agreementId, index, BigInt(msSats))
-      // dispute  → callDisputeMilestone(agreementId, index)
-      // timeout  → callTriggerMilestoneTimeout(agreementId, index, BigInt(msSats))
-      await new Promise((r) => setTimeout(r, 1200)); // placeholder
+  useEffect(() => {
+    if (!agreementId || milestones.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const onChainMs = await getAllMilestones(agreementId, milestones.length);
+      if (cancelled) return;
+      onChainMs.forEach((ms) => {
+        dispatch(
+          setMilestoneOnChainStatus({ index: ms.index, status: ms.status }),
+        );
+      });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [agreementId, lastRefresh, milestones.length]);
 
-      const nextStatus: MilestoneStatus =
-        action === "complete"
-          ? "complete"
-          : action === "dispute"
-            ? "disputed"
-            : "refunded";
-
-      setMsStatuses((prev) => ({ ...prev, [index]: nextStatus }));
-
-      if (
-        action === "complete" &&
-        milestones.every((m, i) =>
-          i === index
-            ? true
-            : ["complete", "refunded"].includes(
-                msStatuses[m.index] ?? "locked",
-              ),
-        )
-      ) {
-        dispatch(markComplete());
+  // Poll pending txs
+  useEffect(() => {
+    if (!txMilestone) return;
+    Object.entries(txMilestone).forEach(([idxStr, tx]) => {
+      if ((tx.status === "pending" || tx.status === "confirming") && tx.txId) {
+        dispatch(
+          pollMilestoneTxThunk({
+            milestoneIndex: parseInt(idxStr),
+            txId: tx.txId,
+            onConfirmed: () => setLastRefresh(Date.now()),
+          }),
+        );
       }
-    } catch (err) {
-      setActionError((prev) => ({
-        ...prev,
-        [index]: err instanceof Error ? err.message : "Action failed",
-      }));
-    } finally {
-      setActionLoading((prev) => ({ ...prev, [index]: "" }));
-    }
+    });
+  }, [txMilestone]);
+
+  // ── Actions ─────────────────────────────────────────────────
+
+  async function handleRelease(ms: MilestoneUI) {
+    if (!agreementId || !walletAddress) return;
+    await dispatch(
+      completeMilestoneThunk({
+        agreementId,
+        milestoneIndex: ms.index,
+        milestoneAmountSats: BigInt(ms.amountSats),
+      }),
+    );
+    // Auto-check if all done
+    setTimeout(() => setLastRefresh(Date.now()), 3000);
   }
 
-  const completedCount = milestones.filter(
-    (m) => msStatuses[m.index] === "complete",
+  async function handleDispute(ms: MilestoneUI) {
+    if (!agreementId) return;
+    await dispatch(
+      disputeMilestoneThunk({
+        agreementId,
+        milestoneIndex: ms.index,
+      }),
+    );
+  }
+
+  async function handleTimeout(ms: MilestoneUI) {
+    if (!agreementId) return;
+    await dispatch(
+      triggerTimeoutThunk({
+        agreementId,
+        milestoneIndex: ms.index,
+        milestoneAmountSats: BigInt(ms.amountSats),
+      }),
+    );
+    setTimeout(() => setLastRefresh(Date.now()), 3000);
+  }
+
+  // ── Derived state ───────────────────────────────────────────
+
+  const completedCount = milestones.filter((m) =>
+    ["complete", "refunded"].includes(getStatus(m.index)),
   ).length;
   const progressPct =
     milestones.length > 0
       ? Math.round((completedCount / milestones.length) * 100)
       : 0;
+  const allComplete = milestones.every((m) =>
+    ["complete", "refunded"].includes(getStatus(m.index)),
+  );
+
+  // ── Render ──────────────────────────────────────────────────
 
   return (
     <div className="page" style={{ alignItems: "flex-start", paddingTop: 48 }}>
       <style>{css}</style>
       <div style={{ maxWidth: 680, width: "100%" }}>
-        {/* Header */}
+        {/* ── Header ── */}
         <div className="fade-up" style={{ marginBottom: 32 }}>
           <div
             style={{
@@ -180,7 +265,7 @@ export default function ScreenDashboard() {
           </div>
         </div>
 
-        {/* Summary cards */}
+        {/* ── Summary cards ── */}
         <div className="fade-up d1 summary-grid" style={{ marginBottom: 24 }}>
           {[
             {
@@ -215,7 +300,7 @@ export default function ScreenDashboard() {
           ))}
         </div>
 
-        {/* Progress bar */}
+        {/* ── Progress bar ── */}
         <div className="fade-up d1" style={{ marginBottom: 24 }}>
           <div
             style={{
@@ -237,22 +322,23 @@ export default function ScreenDashboard() {
           </div>
         </div>
 
-        {/* Milestone cards */}
+        {/* ── Milestone cards ── */}
         <div className="fade-up d2" style={{ marginBottom: 24 }}>
           <div className="mono-label" style={{ marginBottom: 12 }}>
             Milestones
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {milestones.map((ms) => {
-              const status = msStatuses[ms.index] ?? "locked";
-              const loading = actionLoading[ms.index];
-              const error = actionError[ms.index];
+              const status = getStatus(ms.index);
+              const tx = txMilestone?.[ms.index];
               const isDone = status === "complete" || status === "refunded";
+              const isPending = status === "pending";
+              const isFailed = status === "failed";
 
               return (
                 <div
                   key={ms.index}
-                  className={`ms-card${isDone ? " ms-card--done" : ""}`}
+                  className={`ms-card${isDone ? " ms-card--done" : ""}${isPending ? " ms-card--pending" : ""}`}
                 >
                   {/* MS header */}
                   <div
@@ -312,7 +398,41 @@ export default function ScreenDashboard() {
                     </div>
                   )}
 
-                  {/* Status */}
+                  {/* Tx link when pending/confirmed */}
+                  {tx?.txId && (
+                    <div
+                      style={{
+                        marginTop: 6,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                      }}
+                    >
+                      <span className="mono-label">TX:</span>
+                      <a
+                        href={explorerTxUrl(tx.txId)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{
+                          fontSize: 10,
+                          fontFamily: "var(--mono)",
+                          color: "var(--text-3)",
+                          textDecoration: "none",
+                        }}
+                      >
+                        {tx.txId.slice(0, 14)}… ↗
+                      </a>
+                      {(tx.status === "pending" ||
+                        tx.status === "confirming") && (
+                        <span
+                          className="spinner"
+                          style={{ width: 10, height: 10 }}
+                        />
+                      )}
+                    </div>
+                  )}
+
+                  {/* Status + Actions row */}
                   <div
                     style={{
                       display: "flex",
@@ -328,51 +448,67 @@ export default function ScreenDashboard() {
                       {statusLabel(status)}
                     </span>
 
-                    {/* Actions */}
-                    {!isDone && (
+                    {/* Show retry if failed */}
+                    {isFailed && (
+                      <button
+                        className="action-btn action-btn--retry"
+                        onClick={() =>
+                          dispatch(
+                            setMilestoneTxState({
+                              index: ms.index,
+                              tx: {
+                                status: "idle",
+                                txId: null,
+                                txUrl: null,
+                                error: null,
+                              },
+                            }),
+                          )
+                        }
+                      >
+                        ↺ Retry
+                      </button>
+                    )}
+
+                    {/* Active milestone actions */}
+                    {!isDone && !isPending && !isFailed && (
                       <div style={{ display: "flex", gap: 6 }}>
                         <button
                           className="action-btn action-btn--complete"
-                          onClick={() => handleAction(ms.index, "complete")}
-                          disabled={!!loading}
+                          onClick={() => handleRelease(ms)}
                         >
-                          {loading === "complete" ? (
-                            <span
-                              className="spinner"
-                              style={{ width: 10, height: 10 }}
-                            />
-                          ) : (
-                            "✓ Release"
-                          )}
+                          ✓ Release
                         </button>
                         <button
                           className="action-btn action-btn--dispute"
-                          onClick={() => handleAction(ms.index, "dispute")}
-                          disabled={!!loading}
+                          onClick={() => handleDispute(ms)}
                         >
-                          {loading === "dispute" ? (
-                            <span
-                              className="spinner"
-                              style={{ width: 10, height: 10 }}
-                            />
-                          ) : (
-                            "⚑ Dispute"
-                          )}
+                          ⚑ Dispute
                         </button>
+                        {ms.deadline && (
+                          <button
+                            className="action-btn action-btn--timeout"
+                            onClick={() => handleTimeout(ms)}
+                            title="Trigger timeout refund if deadline has passed"
+                          >
+                            ⏱
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
 
-                  {error && (
+                  {/* Tx error */}
+                  {tx?.error && (
                     <div
                       style={{
                         fontSize: 10,
-                        color: "var(--red)",
+                        color: "#ef4444",
                         fontFamily: "var(--mono)",
                         marginTop: 6,
                       }}
                     >
-                      ⚠ {error}
+                      ⚠ {tx.error}
                     </div>
                   )}
                 </div>
@@ -381,7 +517,7 @@ export default function ScreenDashboard() {
           </div>
         </div>
 
-        {/* Info strip */}
+        {/* ── Info strip ── */}
         <div className="fade-up d3 info-strip" style={{ marginBottom: 20 }}>
           <svg
             width="12"
@@ -407,14 +543,15 @@ export default function ScreenDashboard() {
             }}
           >
             Click <strong style={{ color: "var(--text-2)" }}>Release</strong> to
-            send sBTC to the receiver on-chain. Click{" "}
-            <strong style={{ color: "var(--text-2)" }}>Dispute</strong> to open
-            arbitration — the arbitrator will review both sides and decide where
-            the sBTC goes.
+            send sBTC to the receiver on-chain via the Leather wallet popup.
+            Click <strong style={{ color: "var(--text-2)" }}>Dispute</strong> to
+            open arbitration — the arbitrator will review both sides and decide
+            where the sBTC goes. Each action requires a wallet signature and is
+            recorded permanently on Stacks.
           </p>
         </div>
 
-        {/* Footer actions */}
+        {/* ── Footer actions ── */}
         <div className="fade-up d3" style={{ display: "flex", gap: 10 }}>
           {allComplete && (
             <button
@@ -470,6 +607,7 @@ const css = `
 .progress-fill { height: 100%; background: var(--green); border-radius: 2px; transition: width 0.6s ease; min-width: 4px; }
 .ms-card { background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--r); padding: 16px 18px; transition: all 0.3s; }
 .ms-card--done { opacity: 0.6; }
+.ms-card--pending { border-color: rgba(255,255,255,0.15); background: var(--bg-2); }
 .ms-index { width: 20px; height: 20px; border-radius: 50%; background: var(--bg-3); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 9px; font-family: var(--mono); color: var(--text-3); font-weight: 700; flex-shrink: 0; }
 .ms-title { font-size: 13px; font-weight: 600; color: var(--text-1); }
 .ms-condition { font-size: 11px; color: var(--text-3); line-height: 1.6; max-width: 420px; }
@@ -480,8 +618,10 @@ const css = `
 .action-btn { padding: 5px 12px; border-radius: var(--r-xs); font-size: 11px; font-family: var(--mono); cursor: pointer; border: 1px solid; transition: all var(--fast) var(--ease); display: flex; align-items: center; gap: 5px; }
 .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .action-btn--complete { background: rgba(34,197,94,0.08); border-color: rgba(34,197,94,0.3); color: var(--green); }
-.action-btn--complete:hover:not(:disabled) { background: rgba(34,197,94,0.15); border-color: rgba(34,197,94,0.5); }
+.action-btn--complete:hover { background: rgba(34,197,94,0.15); border-color: rgba(34,197,94,0.5); }
 .action-btn--dispute { background: rgba(245,158,11,0.08); border-color: rgba(245,158,11,0.3); color: var(--amber); }
-.action-btn--dispute:hover:not(:disabled) { background: rgba(245,158,11,0.15); border-color: rgba(245,158,11,0.5); }
+.action-btn--dispute:hover { background: rgba(245,158,11,0.15); border-color: rgba(245,158,11,0.5); }
+.action-btn--timeout { background: var(--bg-3); border-color: var(--border); color: var(--text-3); padding: 5px 8px; }
+.action-btn--retry { background: rgba(239,68,68,0.08); border-color: rgba(239,68,68,0.3); color: #ef4444; }
 .info-strip { display: flex; gap: 10px; align-items: flex-start; background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 12px 14px; }
 `;

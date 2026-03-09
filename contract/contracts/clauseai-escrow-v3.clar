@@ -12,7 +12,8 @@
 (define-constant ERR-INVALID-PERCENTAGES (err u111))
 (define-constant ERR-MILESTONE-NOT-FOUND (err u112))
 (define-constant ERR-TRANSFER-FAILED     (err u113))
-(define-constant SBTC-TOKEN .sbtc-token)
+(define-constant SBTC-TOKEN 'ST17RSQ4ZNZP43FE1HW30KQZHJKBM6XCRMB8NR7C9.sbtc-token)
+
 
 (define-constant STATE-PENDING  u0)
 (define-constant STATE-ACTIVE   u1)
@@ -264,7 +265,7 @@
     (asserts! (is-eq caller (get party-a agreement))      ERR-NOT-AUTHORIZED)
     (asserts! (not (get deposited agreement))             ERR-ALREADY-DEPOSITED)
 
-    (try! (contract-call? .sbtc-token transfer amt caller escrow none))
+    (try! (contract-call? SBTC-TOKEN transfer amt caller escrow none))
 
     (let (
       (ms0    (unwrap! (map-get? milestones { agreement-id: id, index: u0 }) ERR-MILESTONE-NOT-FOUND))
@@ -412,7 +413,11 @@
       ERR-TIMEOUT-ACTIVE
     )
 
-    (try! (as-contract (contract-call? .sbtc-token transfer bal tx-sender receiver none)))
+    (try!
+      (as-contract
+        (contract-call? SBTC-TOKEN transfer bal tx-sender receiver none)
+      )
+    )
 
     (map-set milestones { agreement-id: id, index: index }
       (merge ms { status: MS-COMPLETE, amount: u0 })
@@ -480,7 +485,11 @@
     (asserts! (is-eq (get status ms) MS-DISPUTED)         ERR-WRONG-STATE)
     (asserts! (> bal u0)                                  ERR-ZERO-BALANCE)
 
-    (try! (as-contract (contract-call? .sbtc-token transfer bal tx-sender receiver none)))
+    (try!
+      (as-contract
+        (contract-call? SBTC-TOKEN transfer bal tx-sender receiver none)
+      )
+    )
 
     (map-set milestones { agreement-id: id, index: index }
       (merge ms { status: MS-COMPLETE, amount: u0 })
@@ -519,7 +528,7 @@
     (asserts! (is-eq (get status ms) MS-DISPUTED)         ERR-WRONG-STATE)
     (asserts! (> bal u0)                                  ERR-ZERO-BALANCE)
 
-    (try! (as-contract (contract-call? .sbtc-token transfer bal tx-sender payer none)))
+    (try! (as-contract (contract-call? SBTC-TOKEN transfer bal tx-sender payer none)))
 
     (map-set milestones { agreement-id: id, index: index }
       (merge ms { status: MS-REFUNDED, amount: u0 })
@@ -559,7 +568,7 @@
     (asserts! (>= stacks-block-height (get deadline-block ms)) ERR-TIMEOUT-NOT-MET)
     (asserts! (> bal u0)                                       ERR-ZERO-BALANCE)
 
-    (try! (as-contract (contract-call? .sbtc-token transfer bal tx-sender payer none)))
+    (try! (as-contract (contract-call? SBTC-TOKEN transfer bal tx-sender payer none)))
 
     (map-set milestones { agreement-id: id, index: index }
       (merge ms { status: MS-REFUNDED, amount: u0 })
@@ -601,7 +610,7 @@
     )
     (asserts! (> bal u0) ERR-ZERO-BALANCE)
 
-    (try! (as-contract (contract-call? .sbtc-token transfer bal tx-sender payer none)))
+    (try! (as-contract (contract-call? SBTC-TOKEN transfer bal tx-sender payer none)))
 
     (map-set milestones { agreement-id: id, index: index }
       (merge ms { status: MS-REFUNDED, amount: u0 })

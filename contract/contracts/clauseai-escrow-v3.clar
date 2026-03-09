@@ -1,4 +1,3 @@
-
 (define-constant ERR-NOT-AUTHORIZED      (err u100))
 (define-constant ERR-WRONG-STATE         (err u101))
 (define-constant ERR-ALREADY-DEPOSITED   (err u102))
@@ -12,6 +11,8 @@
 (define-constant ERR-INVALID-MILESTONES  (err u110))
 (define-constant ERR-INVALID-PERCENTAGES (err u111))
 (define-constant ERR-MILESTONE-NOT-FOUND (err u112))
+(define-constant ERR-TRANSFER-FAILED     (err u113))
+(define-constant SBTC-TOKEN .sbtc-token)
 
 (define-constant STATE-PENDING  u0)
 (define-constant STATE-ACTIVE   u1)
@@ -57,7 +58,6 @@
   }
 )
 
-
 (define-read-only (get-owner)
   (var-get contract-owner)
 )
@@ -90,7 +90,6 @@
   )
     (ok {
       agreement: agreement,
-
       milestones: {
         m0: (map-get? milestones { agreement-id: id, index: u0 }),
         m1: (map-get? milestones { agreement-id: id, index: u1 }),
@@ -106,7 +105,6 @@
     })
   )
 )
-
 
 (define-read-only (is-milestone-timed-out (id (string-ascii 64)) (index uint))
   (match (map-get? milestones { agreement-id: id, index: index })
@@ -133,7 +131,6 @@
     ERR-MILESTONE-NOT-FOUND
   )
 )
-
 
 (define-private (validate-percentages (id (string-ascii 64)) (count uint))
   (let (
@@ -181,7 +178,6 @@
   )
 )
 
-
 (define-public (create-agreement
     (id    (string-ascii 64))
     (a     principal)
@@ -201,10 +197,10 @@
     (pct-9 uint) (dl-9 uint)
   )
   (begin
-    (asserts! (>= amt MIN-AMOUNT)                              ERR-INVALID-AMOUNT)
-    (asserts! (not (is-eq a b))                                ERR-NOT-AUTHORIZED)
-    (asserts! (is-none (map-get? agreements id))               ERR-WRONG-STATE)
-    (asserts! (and (>= count u1) (<= count MAX-MILESTONES))    ERR-INVALID-MILESTONES)
+    (asserts! (>= amt MIN-AMOUNT)                           ERR-INVALID-AMOUNT)
+    (asserts! (not (is-eq a b))                             ERR-NOT-AUTHORIZED)
+    (asserts! (is-none (map-get? agreements id))            ERR-WRONG-STATE)
+    (asserts! (and (>= count u1) (<= count MAX-MILESTONES)) ERR-INVALID-MILESTONES)
 
     (map-set milestones { agreement-id: id, index: u0 }
       { percentage: pct-0, amount: u0, status: MS-PENDING, deadline-block: dl-0, dispute-block: u0 })
@@ -248,13 +244,13 @@
       party-b:         b,
       arbitrator:      arb,
       total-amount:    amt,
-      milestone-count: count
+      milestone-count: count,
+      token:           "sbtc"
     })
 
     (ok true)
   )
 )
-
 
 (define-public (deposit (id (string-ascii 64)))
   (let (
@@ -262,12 +258,13 @@
     (caller    tx-sender)
     (amt       (get total-amount agreement))
     (count     (get milestone-count agreement))
+    (escrow    (as-contract tx-sender))
   )
     (asserts! (is-eq (get state agreement) STATE-PENDING) ERR-WRONG-STATE)
     (asserts! (is-eq caller (get party-a agreement))      ERR-NOT-AUTHORIZED)
     (asserts! (not (get deposited agreement))             ERR-ALREADY-DEPOSITED)
 
-    (try! (stx-transfer? amt caller (as-contract tx-sender)))
+    (try! (contract-call? .sbtc-token transfer amt caller escrow none))
 
     (let (
       (ms0    (unwrap! (map-get? milestones { agreement-id: id, index: u0 }) ERR-MILESTONE-NOT-FOUND))
@@ -387,13 +384,13 @@
       agreement-id: id,
       by:           caller,
       amount:       amt,
-      milestones:   count
+      milestones:   count,
+      token:        "sbtc"
     })
 
     (ok { deposited-by: caller, amount: amt, milestones: count })
   )
 )
-
 
 (define-public (complete-milestone (id (string-ascii 64)) (index uint))
   (let (
@@ -401,6 +398,7 @@
     (ms        (unwrap! (map-get? milestones { agreement-id: id, index: index }) ERR-MILESTONE-NOT-FOUND))
     (bal       (get amount ms))
     (count     (get milestone-count agreement))
+    (receiver  (get party-b agreement))
   )
     (asserts! (is-eq (get state agreement) STATE-ACTIVE) ERR-WRONG-STATE)
     (asserts! (is-eq tx-sender (get party-a agreement))  ERR-NOT-AUTHORIZED)
@@ -414,7 +412,7 @@
       ERR-TIMEOUT-ACTIVE
     )
 
-    (try! (as-contract (stx-transfer? bal tx-sender (get party-b agreement))))
+    (try! (as-contract (contract-call? .sbtc-token transfer bal tx-sender receiver none)))
 
     (map-set milestones { agreement-id: id, index: index }
       (merge ms { status: MS-COMPLETE, amount: u0 })
@@ -431,14 +429,14 @@
       event:        "milestone-complete",
       agreement-id: id,
       milestone:    index,
-      released-to:  (get party-b agreement),
-      amount:       bal
+      released-to:  receiver,
+      amount:       bal,
+      token:        "sbtc"
     })
 
-    (ok { milestone: index, released-to: (get party-b agreement), amount: bal })
+    (ok { milestone: index, released-to: receiver, amount: bal })
   )
 )
-
 
 (define-public (dispute-milestone (id (string-ascii 64)) (index uint))
   (let (
@@ -469,20 +467,20 @@
   )
 )
 
-
 (define-public (resolve-to-receiver (id (string-ascii 64)) (index uint))
   (let (
     (agreement (unwrap! (map-get? agreements id) ERR-NOT-FOUND))
     (ms        (unwrap! (map-get? milestones { agreement-id: id, index: index }) ERR-MILESTONE-NOT-FOUND))
     (bal       (get amount ms))
     (count     (get milestone-count agreement))
+    (receiver  (get party-b agreement))
   )
     (asserts! (is-eq (get state agreement) STATE-ACTIVE)  ERR-WRONG-STATE)
     (asserts! (is-eq tx-sender (get arbitrator agreement)) ERR-NOT-ARBITRATOR)
     (asserts! (is-eq (get status ms) MS-DISPUTED)         ERR-WRONG-STATE)
     (asserts! (> bal u0)                                  ERR-ZERO-BALANCE)
 
-    (try! (as-contract (stx-transfer? bal tx-sender (get party-b agreement))))
+    (try! (as-contract (contract-call? .sbtc-token transfer bal tx-sender receiver none)))
 
     (map-set milestones { agreement-id: id, index: index }
       (merge ms { status: MS-COMPLETE, amount: u0 })
@@ -499,14 +497,14 @@
       event:        "resolved",
       agreement-id: id,
       milestone:    index,
-      winner:       (get party-b agreement),
-      amount:       bal
+      winner:       receiver,
+      amount:       bal,
+      token:        "sbtc"
     })
 
-    (ok { milestone: index, released-to: (get party-b agreement), amount: bal })
+    (ok { milestone: index, released-to: receiver, amount: bal })
   )
 )
-
 
 (define-public (resolve-to-payer (id (string-ascii 64)) (index uint))
   (let (
@@ -514,13 +512,14 @@
     (ms        (unwrap! (map-get? milestones { agreement-id: id, index: index }) ERR-MILESTONE-NOT-FOUND))
     (bal       (get amount ms))
     (count     (get milestone-count agreement))
+    (payer     (get party-a agreement))
   )
     (asserts! (is-eq (get state agreement) STATE-ACTIVE)  ERR-WRONG-STATE)
     (asserts! (is-eq tx-sender (get arbitrator agreement)) ERR-NOT-ARBITRATOR)
     (asserts! (is-eq (get status ms) MS-DISPUTED)         ERR-WRONG-STATE)
     (asserts! (> bal u0)                                  ERR-ZERO-BALANCE)
 
-    (try! (as-contract (stx-transfer? bal tx-sender (get party-a agreement))))
+    (try! (as-contract (contract-call? .sbtc-token transfer bal tx-sender payer none)))
 
     (map-set milestones { agreement-id: id, index: index }
       (merge ms { status: MS-REFUNDED, amount: u0 })
@@ -537,14 +536,14 @@
       event:        "resolved",
       agreement-id: id,
       milestone:    index,
-      winner:       (get party-a agreement),
-      amount:       bal
+      winner:       payer,
+      amount:       bal,
+      token:        "sbtc"
     })
 
-    (ok { milestone: index, refunded-to: (get party-a agreement), amount: bal })
+    (ok { milestone: index, refunded-to: payer, amount: bal })
   )
 )
-
 
 (define-public (trigger-milestone-timeout (id (string-ascii 64)) (index uint))
   (let (
@@ -552,6 +551,7 @@
     (ms        (unwrap! (map-get? milestones { agreement-id: id, index: index }) ERR-MILESTONE-NOT-FOUND))
     (bal       (get amount ms))
     (count     (get milestone-count agreement))
+    (payer     (get party-a agreement))
   )
     (asserts! (is-eq (get state agreement) STATE-ACTIVE)       ERR-WRONG-STATE)
     (asserts! (is-eq (get status ms) MS-ACTIVE)                ERR-WRONG-STATE)
@@ -559,7 +559,7 @@
     (asserts! (>= stacks-block-height (get deadline-block ms)) ERR-TIMEOUT-NOT-MET)
     (asserts! (> bal u0)                                       ERR-ZERO-BALANCE)
 
-    (try! (as-contract (stx-transfer? bal tx-sender (get party-a agreement))))
+    (try! (as-contract (contract-call? .sbtc-token transfer bal tx-sender payer none)))
 
     (map-set milestones { agreement-id: id, index: index }
       (merge ms { status: MS-REFUNDED, amount: u0 })
@@ -576,14 +576,14 @@
       event:        "milestone-timeout",
       agreement-id: id,
       milestone:    index,
-      refunded-to:  (get party-a agreement),
-      amount:       bal
+      refunded-to:  payer,
+      amount:       bal,
+      token:        "sbtc"
     })
 
-    (ok { milestone: index, refunded-to: (get party-a agreement), amount: bal })
+    (ok { milestone: index, refunded-to: payer, amount: bal })
   )
 )
-
 
 (define-public (trigger-arb-timeout (id (string-ascii 64)) (index uint))
   (let (
@@ -591,6 +591,7 @@
     (ms        (unwrap! (map-get? milestones { agreement-id: id, index: index }) ERR-MILESTONE-NOT-FOUND))
     (bal       (get amount ms))
     (count     (get milestone-count agreement))
+    (payer     (get party-a agreement))
   )
     (asserts! (is-eq (get state agreement) STATE-ACTIVE)  ERR-WRONG-STATE)
     (asserts! (is-eq (get status ms) MS-DISPUTED)         ERR-WRONG-STATE)
@@ -600,7 +601,7 @@
     )
     (asserts! (> bal u0) ERR-ZERO-BALANCE)
 
-    (try! (as-contract (stx-transfer? bal tx-sender (get party-a agreement))))
+    (try! (as-contract (contract-call? .sbtc-token transfer bal tx-sender payer none)))
 
     (map-set milestones { agreement-id: id, index: index }
       (merge ms { status: MS-REFUNDED, amount: u0 })
@@ -617,14 +618,14 @@
       event:        "arb-timeout",
       agreement-id: id,
       milestone:    index,
-      refunded-to:  (get party-a agreement),
-      amount:       bal
+      refunded-to:  payer,
+      amount:       bal,
+      token:        "sbtc"
     })
 
-    (ok { milestone: index, refunded-to: (get party-a agreement), amount: bal })
+    (ok { milestone: index, refunded-to: payer, amount: bal })
   )
 )
-
 
 (define-public (cancel-agreement (id (string-ascii 64)))
   (let (

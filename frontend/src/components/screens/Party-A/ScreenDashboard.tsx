@@ -6,6 +6,8 @@ import { setScreen, markComplete, resetAll } from "@/store/slices/partyASlice";
 import { isV2, ParsedAgreementV2 } from "@/api/parseApi";
 import { AppDispatch, RootState } from "@/store";
 import { useDispatch, useSelector } from "react-redux";
+import { usdToSatsPreview } from "@/lib/contractCalls";
+import { formatSats } from "@/lib/stacksConfig";
 
 type MilestoneStatus =
   | "locked"
@@ -22,6 +24,7 @@ interface MilestoneUI {
   deadline: string;
   status: MilestoneStatus;
   amountUsd: string;
+  amountSats: number;
 }
 
 function statusColor(s: MilestoneStatus) {
@@ -56,21 +59,26 @@ export default function ScreenDashboard() {
     : null;
   const payerName = t?.payer ?? t?.partyA ?? "Payer";
   const receiverName = t?.receiver ?? t?.partyB ?? "Receiver";
-  const totalAmount = t?.total_usd ?? t?.amount_usd ?? amountLocked ?? "—";
+  const totalAmountUsd = parseFloat(
+    String(t?.total_usd ?? t?.amount_usd ?? amountLocked ?? "0"),
+  );
+  const totalSats = usdToSatsPreview(totalAmountUsd);
   const arbitrator = t?.arbitrator ?? "TBD";
 
   // Build milestone list
-  const milestones: MilestoneUI[] = v2?.milestones?.map((ms, i) => ({
-    index: i,
-    title: ms.title || `Milestone ${i + 1}`,
-    percentage: ms.percentage,
-    condition: ms.condition,
-    deadline: ms.deadline,
-    status: "locked" as MilestoneStatus,
-    amountUsd: (((parseFloat(totalAmount) || 0) * ms.percentage) / 100).toFixed(
-      2,
-    ),
-  })) ?? [
+  const milestones: MilestoneUI[] = v2?.milestones?.map((ms, i) => {
+    const msSats = Math.round((totalSats * ms.percentage) / 100);
+    return {
+      index: i,
+      title: ms.title || `Milestone ${i + 1}`,
+      percentage: ms.percentage,
+      condition: ms.condition,
+      deadline: ms.deadline,
+      status: "locked" as MilestoneStatus,
+      amountUsd: (((totalAmountUsd || 0) * ms.percentage) / 100).toFixed(2),
+      amountSats: msSats,
+    };
+  }) ?? [
     {
       index: 0,
       title: "Full Payment",
@@ -78,7 +86,8 @@ export default function ScreenDashboard() {
       condition: t?.condition ?? "Payer confirms work is complete.",
       deadline: t?.deadline ?? "",
       status: "locked" as MilestoneStatus,
-      amountUsd: totalAmount,
+      amountUsd: String(totalAmountUsd),
+      amountSats: totalSats,
     },
   ];
 
@@ -101,10 +110,10 @@ export default function ScreenDashboard() {
     setActionLoading((prev) => ({ ...prev, [index]: action }));
     setActionError((prev) => ({ ...prev, [index]: "" }));
     try {
-      // In real implementation, dispatch the appropriate thunk:
-      // complete → completeMilestoneThunk
-      // dispute  → disputeMilestoneThunk
-      // timeout  → triggerMilestoneTimeoutThunk
+      // TODO: dispatch real thunks:
+      // complete → callCompleteMilestone(agreementId, index, BigInt(msSats))
+      // dispute  → callDisputeMilestone(agreementId, index)
+      // timeout  → callTriggerMilestoneTimeout(agreementId, index, BigInt(msSats))
       await new Promise((r) => setTimeout(r, 1200)); // placeholder
 
       const nextStatus: MilestoneStatus =
@@ -166,7 +175,7 @@ export default function ScreenDashboard() {
             </div>
             <div className="status-pill">
               <div className="status-dot" />
-              Escrow Active
+              sBTC Escrow Active
             </div>
           </div>
         </div>
@@ -176,8 +185,8 @@ export default function ScreenDashboard() {
           {[
             {
               label: "Total Locked",
-              value: `$${totalAmount}`,
-              sub: "in escrow",
+              value: formatSats(totalSats),
+              sub: `≈ $${totalAmountUsd} USD`,
             },
             {
               label: "Payer",
@@ -275,8 +284,12 @@ export default function ScreenDashboard() {
                         marginLeft: 12,
                       }}
                     >
-                      <div className="ms-amount">${ms.amountUsd}</div>
-                      <div className="ms-pct">{ms.percentage}%</div>
+                      <div className="ms-amount">
+                        {formatSats(ms.amountSats)}
+                      </div>
+                      <div className="ms-pct">
+                        {ms.percentage}% · ≈ ${ms.amountUsd}
+                      </div>
                     </div>
                   </div>
 
@@ -315,7 +328,7 @@ export default function ScreenDashboard() {
                       {statusLabel(status)}
                     </span>
 
-                    {/* Actions — only shown when locked/pending */}
+                    {/* Actions */}
                     {!isDone && (
                       <div style={{ display: "flex", gap: 6 }}>
                         <button
@@ -394,9 +407,10 @@ export default function ScreenDashboard() {
             }}
           >
             Click <strong style={{ color: "var(--text-2)" }}>Release</strong> to
-            send a milestone payment to the receiver. Click{" "}
+            send sBTC to the receiver on-chain. Click{" "}
             <strong style={{ color: "var(--text-2)" }}>Dispute</strong> to open
-            arbitration — the arbitrator will review both sides and decide.
+            arbitration — the arbitrator will review both sides and decide where
+            the sBTC goes.
           </p>
         </div>
 
@@ -446,67 +460,28 @@ const css = `
   animation: pulse 2s ease-in-out infinite;
 }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
-.summary-grid {
-  display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
-}
+.summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
 @media (max-width: 640px) { .summary-grid { grid-template-columns: 1fr 1fr; } }
-.summary-card {
-  background: var(--bg-1); border: 1px solid var(--border);
-  border-radius: var(--r-sm); padding: 14px 16px;
-}
+.summary-card { background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 14px 16px; }
 .summary-label { font-size: 9px; font-family: var(--mono); color: var(--text-4); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 6px; }
-.summary-value { font-size: 14px; font-weight: 700; color: var(--text-1); letter-spacing: -0.02em; margin-bottom: 3px; }
+.summary-value { font-size: 13px; font-weight: 700; color: var(--text-1); letter-spacing: -0.02em; margin-bottom: 3px; word-break: break-all; }
 .summary-sub { font-size: 10px; font-family: var(--mono); color: var(--text-4); }
-.progress-track {
-  height: 4px; background: var(--bg-3); border-radius: 2px; overflow: hidden;
-}
-.progress-fill {
-  height: 100%; background: var(--green); border-radius: 2px;
-  transition: width 0.6s ease; min-width: 4px;
-}
-.ms-card {
-  background: var(--bg-1); border: 1px solid var(--border);
-  border-radius: var(--r); padding: 16px 18px; transition: all 0.3s;
-}
-.ms-card--done {
-  opacity: 0.6;
-}
-.ms-index {
-  width: 20px; height: 20px; border-radius: 50%;
-  background: var(--bg-3); border: 1px solid var(--border);
-  display: flex; align-items: center; justify-content: center;
-  font-size: 9px; font-family: var(--mono); color: var(--text-3); font-weight: 700; flex-shrink: 0;
-}
+.progress-track { height: 4px; background: var(--bg-3); border-radius: 2px; overflow: hidden; }
+.progress-fill { height: 100%; background: var(--green); border-radius: 2px; transition: width 0.6s ease; min-width: 4px; }
+.ms-card { background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--r); padding: 16px 18px; transition: all 0.3s; }
+.ms-card--done { opacity: 0.6; }
+.ms-index { width: 20px; height: 20px; border-radius: 50%; background: var(--bg-3); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 9px; font-family: var(--mono); color: var(--text-3); font-weight: 700; flex-shrink: 0; }
 .ms-title { font-size: 13px; font-weight: 600; color: var(--text-1); }
 .ms-condition { font-size: 11px; color: var(--text-3); line-height: 1.6; max-width: 420px; }
 .ms-amount { font-size: 14px; font-weight: 700; color: var(--text-1); font-family: var(--mono); }
 .ms-pct { font-size: 10px; color: var(--text-4); font-family: var(--mono); }
-.ms-deadline {
-  display: inline-flex; align-items: center; gap: 5px;
-  font-size: 10px; font-family: var(--mono); color: var(--text-4);
-}
+.ms-deadline { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; font-family: var(--mono); color: var(--text-4); }
 .ms-status { font-size: 11px; font-family: var(--mono); font-weight: 600; }
-.action-btn {
-  padding: 5px 12px; border-radius: var(--r-xs); font-size: 11px;
-  font-family: var(--mono); cursor: pointer; border: 1px solid;
-  transition: all var(--fast) var(--ease); display: flex; align-items: center; gap: 5px;
-}
+.action-btn { padding: 5px 12px; border-radius: var(--r-xs); font-size: 11px; font-family: var(--mono); cursor: pointer; border: 1px solid; transition: all var(--fast) var(--ease); display: flex; align-items: center; gap: 5px; }
 .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.action-btn--complete {
-  background: rgba(34,197,94,0.08); border-color: rgba(34,197,94,0.3); color: var(--green);
-}
-.action-btn--complete:hover:not(:disabled) {
-  background: rgba(34,197,94,0.15); border-color: rgba(34,197,94,0.5);
-}
-.action-btn--dispute {
-  background: rgba(245,158,11,0.08); border-color: rgba(245,158,11,0.3); color: var(--amber);
-}
-.action-btn--dispute:hover:not(:disabled) {
-  background: rgba(245,158,11,0.15); border-color: rgba(245,158,11,0.5);
-}
-.info-strip {
-  display: flex; gap: 10px; align-items: flex-start;
-  background: var(--bg-2); border: 1px solid var(--border);
-  border-radius: var(--r-sm); padding: 12px 14px;
-}
+.action-btn--complete { background: rgba(34,197,94,0.08); border-color: rgba(34,197,94,0.3); color: var(--green); }
+.action-btn--complete:hover:not(:disabled) { background: rgba(34,197,94,0.15); border-color: rgba(34,197,94,0.5); }
+.action-btn--dispute { background: rgba(245,158,11,0.08); border-color: rgba(245,158,11,0.3); color: var(--amber); }
+.action-btn--dispute:hover:not(:disabled) { background: rgba(245,158,11,0.15); border-color: rgba(245,158,11,0.5); }
+.info-strip { display: flex; gap: 10px; align-items: flex-start; background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 12px 14px; }
 `;

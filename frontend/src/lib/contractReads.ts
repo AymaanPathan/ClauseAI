@@ -1,11 +1,7 @@
 // ============================================================
-// lib/contractReads.ts — MILESTONE ESCROW v3
+// lib/contractReads.ts — MILESTONE ESCROW v3 (sBTC edition)
 //
-// New exports:
-//   • OnChainMilestone — per-milestone on-chain data
-//   • getMilestone(id, index) — read single milestone
-//   • getAllMilestones(id, count) — read all milestones for an agreement
-//   • OnChainAgreement — updated with milestone-count field
+// Amounts returned from the chain are in satoshis (sBTC's base unit).
 // All BigInt values converted to number (Redux serialization safe).
 // ============================================================
 
@@ -22,6 +18,8 @@ import {
   NETWORK_NAME,
   CONTRACT_STATE,
   ContractState,
+  SATOSHIS_PER_BTC,
+  formatSats,
 } from "./stacksConfig";
 
 const STACKS_NETWORK =
@@ -44,10 +42,10 @@ export type MilestoneStatus =
 export interface OnChainMilestone {
   index: number;
   percentage: number; // basis points (0–10000)
-  amount: number; // microSTX allocated to this tranche
+  amount: number; // satoshis allocated to this tranche
   status: MilestoneStatus;
-  deadlineBlock: number; // 0 = no deadline
-  disputeBlock: number; // 0 = not disputed
+  deadlineBlock: number;
+  disputeBlock: number;
 }
 
 export interface OnChainAgreement {
@@ -55,10 +53,12 @@ export interface OnChainAgreement {
   partyA: string;
   partyB: string;
   arbitrator: string;
+  /** Total escrow amount in satoshis */
   totalAmount: number;
   deposited: boolean;
+  /** Remaining satoshis held in escrow */
   totalDeposited: number;
-  milestoneCount: number; // NEW in v3
+  milestoneCount: number;
   createdAt: number;
 }
 
@@ -128,10 +128,10 @@ export async function getAgreement(
       partyA: String(safeVal(v["party-a"]) ?? ""),
       partyB: String(safeVal(v["party-b"]) ?? ""),
       arbitrator: String(safeVal(v["arbitrator"]) ?? ""),
-      totalAmount: toNum(safeVal(v["total-amount"])),
+      totalAmount: toNum(safeVal(v["total-amount"])), // satoshis
       deposited:
         safeVal(v["deposited"]) === true || safeVal(v["deposited"]) === "true",
-      totalDeposited: toNum(safeVal(v["total-deposited"])),
+      totalDeposited: toNum(safeVal(v["total-deposited"])), // satoshis
       milestoneCount: toNum(safeVal(v["milestone-count"])),
       createdAt: toNum(safeVal(v["created-at"])),
     };
@@ -169,7 +169,7 @@ export async function getMilestone(
     return {
       index,
       percentage: toNum(safeVal(v["percentage"])),
-      amount: toNum(safeVal(v["amount"])),
+      amount: toNum(safeVal(v["amount"])), // satoshis
       status: toNum(safeVal(v["status"])) as MilestoneStatus,
       deadlineBlock: toNum(safeVal(v["deadline-block"])),
       disputeBlock: toNum(safeVal(v["dispute-block"])),
@@ -181,7 +181,6 @@ export async function getMilestone(
 }
 
 // ── getAllMilestones ───────────────────────────────────────────
-// Fetches all milestones for an agreement in parallel.
 export async function getAllMilestones(
   agreementId: string,
   count: number,
@@ -279,7 +278,37 @@ export async function getCurrentBlockHeight(): Promise<number> {
   }
 }
 
-// ── stateLabel ────────────────────────────────────────────────
+// ── getSbtcBalance ────────────────────────────────────────────
+/**
+ * Read an address's sBTC balance via the SIP-010 `get-balance` call.
+ * Returns satoshis as a number.
+ */
+export async function getSbtcBalance(address: string): Promise<number> {
+  try {
+    const { SBTC_CONTRACT_ADDRESS, SBTC_CONTRACT_NAME } =
+      await import("./stacksConfig");
+    const result = await fetchCallReadOnlyFunction({
+      contractAddress: SBTC_CONTRACT_ADDRESS,
+      contractName: SBTC_CONTRACT_NAME,
+      functionName: "get-balance",
+      functionArgs: [principalCV(address)],
+      network: STACKS_NETWORK,
+      senderAddress: address,
+    });
+    const json = cvToJSON(result);
+    if (!json || json.value == null) return 0;
+    const val = safeVal(json.value);
+    return toNum(val);
+  } catch {
+    return 0;
+  }
+}
+
+// Need principalCV for getSbtcBalance
+import { principalCV } from "@stacks/transactions";
+
+// ── Display helpers ───────────────────────────────────────────
+
 export function stateLabel(state: ContractState): string {
   switch (state) {
     case CONTRACT_STATE.PENDING:
@@ -297,7 +326,6 @@ export function stateLabel(state: ContractState): string {
   }
 }
 
-// ── milestoneStatusLabel ──────────────────────────────────────
 export function milestoneStatusLabel(status: MilestoneStatus): string {
   switch (status) {
     case MILESTONE_STATUS.PENDING:
@@ -313,4 +341,21 @@ export function milestoneStatusLabel(status: MilestoneStatus): string {
     default:
       return "Unknown";
   }
+}
+
+/**
+ * Format satoshis for display in the UI.
+ * Re-exported from stacksConfig for convenience.
+ */
+export { formatSats };
+
+/**
+ * Convert satoshis to a USD-equivalent display string.
+ * On testnet uses the same placeholder rate as contractCalls.
+ * (1000 sats = $1 USD on testnet)
+ */
+export function satsToUsdDisplay(sats: number): string {
+  if (NETWORK_NAME === "mainnet") return "—"; // needs live price feed
+  const usd = sats / 1000;
+  return `$${usd.toFixed(2)}`;
 }

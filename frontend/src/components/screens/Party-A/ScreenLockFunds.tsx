@@ -8,6 +8,8 @@ import {
   depositThunk,
 } from "@/store/slices/partyASlice";
 import { MilestoneInput } from "@/lib/contractCalls";
+import { usdToSatsPreview } from "@/lib/contractCalls";
+import { formatSats } from "@/lib/stacksConfig";
 import { isV2, ParsedAgreementV2 } from "@/api/parseApi";
 import { useDispatch, useSelector } from "react-redux";
 import { AppDispatch, RootState } from "@/store";
@@ -111,6 +113,9 @@ export default function ScreenLockFunds() {
   const amountUsd = parseFloat(
     String(terms?.amount_usd ?? terms?.total_usd ?? "0"),
   );
+  const satoshiTotal = usdToSatsPreview(amountUsd);
+  const sbtcDisplay = formatSats(satoshiTotal);
+
   const pct = totalPct(rows);
   const pctOk = pct === 100;
   const receiverName = String(terms?.partyB ?? terms?.receiver ?? "Receiver");
@@ -188,6 +193,7 @@ export default function ScreenLockFunds() {
               margin: "0 auto 28px",
             }}
           >
+            {/* Bitcoin lock icon */}
             <svg
               width="28"
               height="28"
@@ -210,7 +216,7 @@ export default function ScreenLockFunds() {
               marginBottom: 8,
             }}
           >
-            Funds Locked 🎉
+            sBTC Locked 🎉
           </h2>
           <p
             style={{
@@ -220,8 +226,8 @@ export default function ScreenLockFunds() {
               marginBottom: 28,
             }}
           >
-            <strong style={{ color: "var(--text-1)" }}>${amountUsd} USD</strong>{" "}
-            is now secured on Stacks.{" "}
+            <strong style={{ color: "var(--text-1)" }}>{sbtcDisplay}</strong> (≈
+            ${amountUsd} USD) is now secured on-chain via sBTC.{" "}
             <strong style={{ color: "var(--text-1)" }}>{receiverName}</strong>{" "}
             has been notified and can track milestones on the dashboard.
           </p>
@@ -365,11 +371,11 @@ export default function ScreenLockFunds() {
               marginBottom: 8,
             }}
           >
-            Lock funds in escrow
+            Lock sBTC in escrow
           </h2>
           <p style={{ fontSize: 13, color: "var(--text-2)", lineHeight: 1.7 }}>
-            Confirm milestones and deploy the escrow contract. Both parties have
-            already approved.
+            Confirm milestones and deploy the escrow contract. Funds are secured
+            as sBTC on Bitcoin via Stacks.
           </p>
         </div>
 
@@ -430,7 +436,7 @@ export default function ScreenLockFunds() {
                   letterSpacing: "-0.03em",
                 }}
               >
-                ${amountUsd}
+                {sbtcDisplay}
               </div>
               <div
                 style={{
@@ -439,10 +445,48 @@ export default function ScreenLockFunds() {
                   color: "var(--text-4)",
                 }}
               >
-                USD
+                ≈ ${amountUsd} USD · {satoshiTotal.toLocaleString()} sats
               </div>
             </div>
           </div>
+        </div>
+
+        {/* sBTC info banner */}
+        <div
+          className="fade-up d1"
+          style={{
+            background: "rgba(247,147,26,0.05)",
+            border: "1px solid rgba(247,147,26,0.15)",
+            borderRadius: "var(--r-sm)",
+            padding: "10px 14px",
+            marginBottom: 20,
+            display: "flex",
+            gap: 10,
+            alignItems: "flex-start",
+          }}
+        >
+          <span style={{ fontSize: 14, flexShrink: 0, marginTop: 1 }}>₿</span>
+          <p
+            style={{
+              fontSize: 11,
+              color: "var(--text-3)",
+              lineHeight: 1.6,
+              margin: 0,
+            }}
+          >
+            Funds are held as{" "}
+            <strong style={{ color: "var(--text-2)" }}>sBTC</strong> — a 1:1
+            Bitcoin-backed token on Stacks. Your wallet must hold sufficient
+            sBTC before depositing.{" "}
+            <a
+              href="https://sbtc.tech"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: "var(--text-2)", textDecoration: "none" }}
+            >
+              Learn about sBTC →
+            </a>
+          </p>
         </div>
 
         {/* Arbitrator warning */}
@@ -517,105 +561,126 @@ export default function ScreenLockFunds() {
             </div>
           </div>
           <div className="table">
-            {rows.map((row, i) => (
-              <div
-                key={row.id}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr auto auto auto",
-                  gap: 12,
-                  padding: "12px 16px",
-                  borderBottom:
-                    i < rows.length - 1 ? "1px solid var(--border)" : "none",
-                  alignItems: "center",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span
-                    style={{
-                      width: 6,
-                      height: 6,
-                      borderRadius: "50%",
-                      background: msColor(i),
-                      flexShrink: 0,
-                      display: "inline-block",
-                    }}
-                  />
-                  <span
-                    style={{
-                      fontSize: 12,
-                      fontWeight: 500,
-                      color: "var(--text-1)",
-                    }}
-                  >
-                    {row.label}
-                  </span>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                  <span
-                    style={{
-                      fontSize: 10,
-                      fontFamily: "var(--mono)",
-                      color: "var(--text-3)",
-                    }}
-                  >
-                    %
-                  </span>
-                  <input
-                    type="number"
-                    className="input"
-                    value={row.percentage}
-                    onChange={(e) =>
-                      updateRow(row.id, { percentage: Number(e.target.value) })
-                    }
-                    style={{
-                      width: 60,
-                      padding: "5px 8px",
-                      fontSize: 12,
-                      textAlign: "center",
-                    }}
-                  />
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                  <span
-                    style={{
-                      fontSize: 10,
-                      fontFamily: "var(--mono)",
-                      color: "var(--text-3)",
-                    }}
-                  >
-                    days
-                  </span>
-                  <input
-                    type="number"
-                    className="input"
-                    value={row.deadlineDays}
-                    onChange={(e) =>
-                      updateRow(row.id, {
-                        deadlineDays: Number(e.target.value),
-                      })
-                    }
-                    style={{
-                      width: 60,
-                      padding: "5px 8px",
-                      fontSize: 12,
-                      textAlign: "center",
-                    }}
-                  />
-                </div>
-                <span
+            {rows.map((row, i) => {
+              const msSats = Math.round((satoshiTotal * row.percentage) / 100);
+              return (
+                <div
+                  key={row.id}
                   style={{
-                    fontSize: 12,
-                    fontWeight: 600,
-                    color: "var(--text-1)",
-                    minWidth: 52,
-                    textAlign: "right",
+                    display: "grid",
+                    gridTemplateColumns: "1fr auto auto auto",
+                    gap: 12,
+                    padding: "12px 16px",
+                    borderBottom:
+                      i < rows.length - 1 ? "1px solid var(--border)" : "none",
+                    alignItems: "center",
                   }}
                 >
-                  ${((amountUsd * row.percentage) / 100).toFixed(0)}
-                </span>
-              </div>
-            ))}
+                  <div
+                    style={{ display: "flex", alignItems: "center", gap: 8 }}
+                  >
+                    <span
+                      style={{
+                        width: 6,
+                        height: 6,
+                        borderRadius: "50%",
+                        background: msColor(i),
+                        flexShrink: 0,
+                        display: "inline-block",
+                      }}
+                    />
+                    <span
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 500,
+                        color: "var(--text-1)",
+                      }}
+                    >
+                      {row.label}
+                    </span>
+                  </div>
+                  <div
+                    style={{ display: "flex", alignItems: "center", gap: 4 }}
+                  >
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontFamily: "var(--mono)",
+                        color: "var(--text-3)",
+                      }}
+                    >
+                      %
+                    </span>
+                    <input
+                      type="number"
+                      className="input"
+                      value={row.percentage}
+                      onChange={(e) =>
+                        updateRow(row.id, {
+                          percentage: Number(e.target.value),
+                        })
+                      }
+                      style={{
+                        width: 60,
+                        padding: "5px 8px",
+                        fontSize: 12,
+                        textAlign: "center",
+                      }}
+                    />
+                  </div>
+                  <div
+                    style={{ display: "flex", alignItems: "center", gap: 4 }}
+                  >
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontFamily: "var(--mono)",
+                        color: "var(--text-3)",
+                      }}
+                    >
+                      days
+                    </span>
+                    <input
+                      type="number"
+                      className="input"
+                      value={row.deadlineDays}
+                      onChange={(e) =>
+                        updateRow(row.id, {
+                          deadlineDays: Number(e.target.value),
+                        })
+                      }
+                      style={{
+                        width: 60,
+                        padding: "5px 8px",
+                        fontSize: 12,
+                        textAlign: "center",
+                      }}
+                    />
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <span
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 600,
+                        color: "var(--text-1)",
+                        display: "block",
+                      }}
+                    >
+                      {formatSats(msSats)}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 9,
+                        fontFamily: "var(--mono)",
+                        color: "var(--text-4)",
+                      }}
+                    >
+                      ≈ ${((amountUsd * row.percentage) / 100).toFixed(0)}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
 
@@ -642,7 +707,7 @@ export default function ScreenLockFunds() {
                 url: txCreate.txUrl,
               },
               {
-                label: "Deposit funds",
+                label: "Deposit sBTC",
                 status: txDeposit.status,
                 tx: txDeposit.txId,
                 url: txDeposit.txUrl,
@@ -710,7 +775,7 @@ export default function ScreenLockFunds() {
         )}
         {txDeposit.status === "failed" && (
           <div className="error-box" style={{ marginBottom: 16 }}>
-            {txDeposit.error ?? "Deposit failed."}
+            {txDeposit.error ?? "sBTC deposit failed."}
           </div>
         )}
 
@@ -746,7 +811,7 @@ export default function ScreenLockFunds() {
                     <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
                     <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                   </svg>{" "}
-                  Deploy & Lock ${amountUsd}
+                  Deploy & Lock {sbtcDisplay}
                 </>
               )}
             </button>
@@ -766,10 +831,10 @@ export default function ScreenLockFunds() {
                       className="spinner"
                       style={{ width: 14, height: 14 }}
                     />{" "}
-                    Depositing…
+                    Depositing sBTC…
                   </>
                 ) : (
-                  <>Deposit ${amountUsd} to Escrow</>
+                  <>Deposit {sbtcDisplay} to Escrow</>
                 )}
               </button>
             )}

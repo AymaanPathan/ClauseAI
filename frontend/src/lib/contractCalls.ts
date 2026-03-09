@@ -1,5 +1,8 @@
 // ============================================================
-// lib/contractCalls.ts — MILESTONE ESCROW v3
+// lib/contractCalls.ts — MILESTONE ESCROW v3 (sBTC edition)
+//
+// All STX transfers replaced with sBTC SIP-010 token transfers.
+// Post conditions use fungible-token assertions instead of ustx.
 // ============================================================
 
 import { openContractCall } from "@stacks/connect";
@@ -14,7 +17,9 @@ import {
   CONTRACT_ADDRESS,
   CONTRACT_NAME,
   NETWORK_NAME,
-  MICRO_STX,
+  SBTC_CONTRACT_PRINCIPAL,
+  SBTC_ASSET_NAME,
+  SATOSHIS_PER_BTC,
 } from "./stacksConfig";
 
 const NETWORK = NETWORK_NAME;
@@ -29,20 +34,8 @@ export interface MilestoneInput {
 }
 
 // ── Inline ABI ────────────────────────────────────────────────
-//
-// ROOT CAUSE OF THE LEATHER CRASH:
-//
-//   Leather's FunctionArgumentList (index.js:51857) does:
-//     abi.functions.find(f => f.name === functionName).args.map(a => a.name)
-//
-//   Without an explicit `abi` in openContractCall, Leather fetches
-//   it from the Stacks node. On testnet with a freshly deployed or
-//   not-yet-indexed contract, the fetch returns null/undefined —
-//   so `.args` is undefined and `.map(a => a.name)` throws:
-//     TypeError: Cannot read properties of undefined (reading 'name')
-//
-//   FIX: pass the ABI inline so Leather never hits the network.
-//   Every arg object MUST have a { name, type } shape.
+// Passed to openContractCall so Leather never needs to fetch it
+// from the node (prevents crash on un-indexed testnet contracts).
 
 function milestoneArgPairs(count: number): { name: string; type: "uint128" }[] {
   const out: { name: string; type: "uint128" }[] = [];
@@ -66,7 +59,7 @@ const ESCROW_ABI: any = {
         { name: "arbitrator", type: "principal" },
         { name: "amount", type: "uint128" },
         { name: "milestone-count", type: "uint128" },
-        ...milestoneArgPairs(10), // m0-pct, m0-deadline … m9-pct, m9-deadline
+        ...milestoneArgPairs(10),
       ],
       outputs: { type: { response: { ok: "bool", error: "uint128" } } },
     },
@@ -147,7 +140,7 @@ const ESCROW_ABI: any = {
   non_fungible_tokens: [],
 };
 
-// ── Helper ────────────────────────────────────────────────────
+// ── Core helper ───────────────────────────────────────────────
 
 function callContract(options: {
   contractAddress: string;
@@ -164,19 +157,61 @@ function callContract(options: {
     (openContractCall as (o: any) => void)({
       ...options,
       network: NETWORK,
-      // ▼▼▼ THE FIX — without this, Leather fetches ABI from node,
-      //     which fails on testnet and crashes FunctionArgumentList
       abi: ESCROW_ABI,
-      // ▲▲▲
       onFinish: (data: { txId: string }) => resolve(data.txId),
       onCancel: () => reject(new Error("User cancelled transaction")),
     });
   });
 }
 
-function usdToMicroStx(_usd: number): bigint {
-  return BigInt(1_000_000); // 1 STX placeholder — replace with price feed on mainnet
+// ── Amount conversion ─────────────────────────────────────────
+
+/**
+ * Convert a USD amount to satoshis for the contract call.
+ *
+ * On TESTNET this is a static placeholder (1 USD = 1,000 sats).
+ * On MAINNET replace this with a live BTC/USD price feed.
+ *
+ * 1,000 sats minimum keeps test transactions cheap and above the
+ * contract's MIN-AMOUNT (1000 sats) constant.
+ */
+function usdToSats(usd: number): bigint {
+  if (NETWORK === "mainnet") {
+    // TODO: integrate price feed (e.g. Pyth, Stacks oracle)
+    throw new Error(
+      "usdToSats: mainnet price feed not configured. " +
+        "Replace this with a live BTC/USD rate before deploying.",
+    );
+  }
+  // Testnet placeholder: 1 USD → 1,000 sats (0.00001 BTC)
+  return BigInt(Math.max(1000, Math.round(usd * 1000)));
 }
+
+/**
+ * Expose the conversion so UI components can show the sBTC equivalent.
+ * Returns satoshis as a number.
+ */
+export function usdToSatsPreview(usd: number): number {
+  if (NETWORK === "mainnet") return 0; // won't be accurate without price feed
+  return Math.max(1000, Math.round(usd * 1000));
+}
+
+// ── Post condition builder ────────────────────────────────────
+
+/**
+ * Build an sBTC fungible-token post condition asserting that
+ * `sender` will send AT MOST `sats` sBTC tokens.
+ *
+ * Format expected by @stacks/transactions Pc builder:
+ *   Pc.principal(addr).willSendLte(amount).ft(contractId, assetName)
+ */
+function sbtcSendLte(sender: string, sats: bigint) {
+  return Pc.principal(sender)
+    .willSendLte(sats)
+    .ft(SBTC_CONTRACT_PRINCIPAL, SBTC_ASSET_NAME);
+}
+
+// ── Validation helpers ────────────────────────────────────────
 
 function validateAddress(address: string, label: string) {
   if (!address || address.trim() === "") {
@@ -212,8 +247,7 @@ function validateMilestones(milestones: MilestoneInput[]) {
   const total = milestones.reduce((sum, m) => sum + m.percentage, 0);
   if (total !== 10000) {
     throw new Error(
-      `Milestone percentages must sum to 10000 (100%). Got ${total}. ` +
-        `Check that your percentages × 100 sum correctly.`,
+      `Milestone percentages must sum to 10000 (100%). Got ${total}.`,
     );
   }
 }
@@ -236,6 +270,7 @@ function padMilestones(
 }
 
 // ── create-agreement ──────────────────────────────────────────
+// No sBTC transfer happens here — just writes the agreement to chain.
 
 export async function callCreateAgreement(
   agreementId: string,
@@ -250,7 +285,7 @@ export async function callCreateAgreement(
   validateAddress(arbitrator, "Arbitrator");
   validateMilestones(milestones);
 
-  const microStxAmount = usdToMicroStx(amountUsd);
+  const satoshiAmount = usdToSats(amountUsd);
   const p = padMilestones(milestones);
 
   return callContract({
@@ -262,7 +297,7 @@ export async function callCreateAgreement(
       principalCV(payer),
       principalCV(receiver),
       principalCV(arbitrator),
-      uintCV(microStxAmount),
+      uintCV(satoshiAmount),
       uintCV(BigInt(milestones.length)),
       uintCV(p[0].pct),
       uintCV(p[0].dl),
@@ -285,48 +320,60 @@ export async function callCreateAgreement(
       uintCV(p[9].pct),
       uintCV(p[9].dl),
     ],
-    postConditionMode: PostConditionMode.Allow,
+    // create-agreement doesn't move tokens — Deny mode is safe here
+    postConditionMode: PostConditionMode.Deny,
     postConditions: [],
   });
 }
 
 // ── deposit ───────────────────────────────────────────────────
+// Party A sends sBTC to the escrow contract.
+// Post condition: payer sends exactly `satoshiAmount` sBTC tokens.
 
 export async function callDeposit(
   agreementId: string,
   amountUsd: number,
   payerAddress: string,
 ): Promise<string> {
-  const microStxAmount = usdToMicroStx(amountUsd);
+  const satoshiAmount = usdToSats(amountUsd);
+
   return callContract({
     contractAddress: CONTRACT_ADDRESS,
     contractName: CONTRACT_NAME,
     functionName: "deposit",
     functionArgs: [stringAsciiCV(agreementId)],
-    postConditionMode: PostConditionMode.Allow,
+    postConditionMode: PostConditionMode.Deny,
     postConditions: [
-      Pc.principal(payerAddress).willSendLte(microStxAmount).ustx(),
+      // Payer will send ≤ satoshiAmount sBTC from their wallet
+      sbtcSendLte(payerAddress, satoshiAmount),
     ],
   });
 }
 
 // ── complete-milestone ────────────────────────────────────────
+// Contract sends sBTC from escrow → party-b.
+// Post condition: escrow contract sends ≤ milestone allocation.
 
 export async function callCompleteMilestone(
   agreementId: string,
   milestoneIndex: number,
+  milestoneAmountSats: bigint,
 ): Promise<string> {
   return callContract({
     contractAddress: CONTRACT_ADDRESS,
     contractName: CONTRACT_NAME,
     functionName: "complete-milestone",
     functionArgs: [stringAsciiCV(agreementId), uintCV(BigInt(milestoneIndex))],
-    postConditionMode: PostConditionMode.Allow,
-    postConditions: [],
+    postConditionMode: PostConditionMode.Deny,
+    postConditions: [
+      // The escrow contract principal sends sBTC to the receiver
+      sbtcSendLte(`${CONTRACT_ADDRESS}.${CONTRACT_NAME}`, milestoneAmountSats),
+    ],
   });
 }
 
 // ── dispute-milestone ─────────────────────────────────────────
+// No token movement — safe to use Deny mode with empty conditions.
 
 export async function callDisputeMilestone(
   agreementId: string,
@@ -337,7 +384,7 @@ export async function callDisputeMilestone(
     contractName: CONTRACT_NAME,
     functionName: "dispute-milestone",
     functionArgs: [stringAsciiCV(agreementId), uintCV(BigInt(milestoneIndex))],
-    postConditionMode: PostConditionMode.Allow,
+    postConditionMode: PostConditionMode.Deny,
     postConditions: [],
   });
 }
@@ -347,14 +394,17 @@ export async function callDisputeMilestone(
 export async function callResolveToReceiver(
   agreementId: string,
   milestoneIndex: number,
+  milestoneAmountSats: bigint,
 ): Promise<string> {
   return callContract({
     contractAddress: CONTRACT_ADDRESS,
     contractName: CONTRACT_NAME,
     functionName: "resolve-to-receiver",
     functionArgs: [stringAsciiCV(agreementId), uintCV(BigInt(milestoneIndex))],
-    postConditionMode: PostConditionMode.Allow,
-    postConditions: [],
+    postConditionMode: PostConditionMode.Deny,
+    postConditions: [
+      sbtcSendLte(`${CONTRACT_ADDRESS}.${CONTRACT_NAME}`, milestoneAmountSats),
+    ],
   });
 }
 
@@ -363,14 +413,17 @@ export async function callResolveToReceiver(
 export async function callResolveToPayer(
   agreementId: string,
   milestoneIndex: number,
+  milestoneAmountSats: bigint,
 ): Promise<string> {
   return callContract({
     contractAddress: CONTRACT_ADDRESS,
     contractName: CONTRACT_NAME,
     functionName: "resolve-to-payer",
     functionArgs: [stringAsciiCV(agreementId), uintCV(BigInt(milestoneIndex))],
-    postConditionMode: PostConditionMode.Allow,
-    postConditions: [],
+    postConditionMode: PostConditionMode.Deny,
+    postConditions: [
+      sbtcSendLte(`${CONTRACT_ADDRESS}.${CONTRACT_NAME}`, milestoneAmountSats),
+    ],
   });
 }
 
@@ -379,14 +432,17 @@ export async function callResolveToPayer(
 export async function callTriggerMilestoneTimeout(
   agreementId: string,
   milestoneIndex: number,
+  milestoneAmountSats: bigint,
 ): Promise<string> {
   return callContract({
     contractAddress: CONTRACT_ADDRESS,
     contractName: CONTRACT_NAME,
     functionName: "trigger-milestone-timeout",
     functionArgs: [stringAsciiCV(agreementId), uintCV(BigInt(milestoneIndex))],
-    postConditionMode: PostConditionMode.Allow,
-    postConditions: [],
+    postConditionMode: PostConditionMode.Deny,
+    postConditions: [
+      sbtcSendLte(`${CONTRACT_ADDRESS}.${CONTRACT_NAME}`, milestoneAmountSats),
+    ],
   });
 }
 
@@ -395,18 +451,22 @@ export async function callTriggerMilestoneTimeout(
 export async function callTriggerArbTimeout(
   agreementId: string,
   milestoneIndex: number,
+  milestoneAmountSats: bigint,
 ): Promise<string> {
   return callContract({
     contractAddress: CONTRACT_ADDRESS,
     contractName: CONTRACT_NAME,
     functionName: "trigger-arb-timeout",
     functionArgs: [stringAsciiCV(agreementId), uintCV(BigInt(milestoneIndex))],
-    postConditionMode: PostConditionMode.Allow,
-    postConditions: [],
+    postConditionMode: PostConditionMode.Deny,
+    postConditions: [
+      sbtcSendLte(`${CONTRACT_ADDRESS}.${CONTRACT_NAME}`, milestoneAmountSats),
+    ],
   });
 }
 
 // ── cancel-agreement ──────────────────────────────────────────
+// No token movement (only works in STATE-PENDING, before deposit).
 
 export async function callCancelAgreement(
   agreementId: string,
@@ -416,7 +476,7 @@ export async function callCancelAgreement(
     contractName: CONTRACT_NAME,
     functionName: "cancel-agreement",
     functionArgs: [stringAsciiCV(agreementId)],
-    postConditionMode: PostConditionMode.Allow,
+    postConditionMode: PostConditionMode.Deny,
     postConditions: [],
   });
 }

@@ -51,27 +51,26 @@ function rowsToInputs(
     deadlineBlock: daysToBlocks(r.deadlineDays ?? 0, blockHeight ?? 0),
   }));
 }
-
 const DEFAULT_ROWS: MilestoneRow[] = [
   {
     id: "ms-0",
     label: "Wireframes",
     percentage: 30,
-    deadlineDays: 7,
+    deadlineDays: 0,
     condition: "",
   },
   {
     id: "ms-1",
     label: "Development",
     percentage: 50,
-    deadlineDays: 21,
+    deadlineDays: 0,
     condition: "",
   },
   {
     id: "ms-2",
     label: "Launch",
     percentage: 20,
-    deadlineDays: 30,
+    deadlineDays: 0,
     condition: "",
   },
 ];
@@ -96,7 +95,7 @@ export default function ScreenLockFunds() {
           id: `ms-${i}`,
           label: m.title || `Milestone ${i + 1}`,
           percentage: m.percentage ?? 0,
-          deadlineDays: m.deadline ? isoToDays(m.deadline) : (i + 1) * 7,
+          deadlineDays: m.deadline ? isoToDays(m.deadline) : 0,
           condition: m.condition || "",
         }));
       }

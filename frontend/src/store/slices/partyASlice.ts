@@ -326,7 +326,6 @@ export const depositThunk = createAsyncThunk(
   },
 );
 
-// ── NEW: complete-milestone ───────────────────────────────────
 export const completeMilestoneThunk = createAsyncThunk(
   "partyA/completeMilestone",
   async (
@@ -338,10 +337,26 @@ export const completeMilestoneThunk = createAsyncThunk(
     { rejectWithValue },
   ) => {
     try {
+      // Always fetch the real on-chain amount before releasing
+      const { getMilestone } = await import("@/lib/contractReads");
+      const ms = await getMilestone(
+        payload.agreementId,
+        payload.milestoneIndex,
+      );
+      const onChainAmount = BigInt(ms?.amount ?? 0);
+      
+      if (onChainAmount === BigInt(0)) {
+        return rejectWithValue({
+          milestoneIndex: payload.milestoneIndex,
+          error:
+            "Milestone amount is 0 on-chain. Already completed or not deposited.",
+        });
+      }
+
       const txId = await callCompleteMilestone(
         payload.agreementId,
         payload.milestoneIndex,
-        payload.milestoneAmountSats,
+        onChainAmount, // ← real value from chain, not from Redux state
       );
       return {
         milestoneIndex: payload.milestoneIndex,
@@ -383,7 +398,6 @@ export const disputeMilestoneThunk = createAsyncThunk(
   },
 );
 
-// ── NEW: trigger-milestone-timeout ───────────────────────────
 export const triggerTimeoutThunk = createAsyncThunk(
   "partyA/triggerTimeout",
   async (
@@ -395,10 +409,17 @@ export const triggerTimeoutThunk = createAsyncThunk(
     { rejectWithValue },
   ) => {
     try {
+      const { getMilestone } = await import("@/lib/contractReads");
+      const ms = await getMilestone(
+        payload.agreementId,
+        payload.milestoneIndex,
+      );
+      const onChainAmount = BigInt(ms?.amount ?? 0);
+
       const txId = await callTriggerMilestoneTimeout(
         payload.agreementId,
         payload.milestoneIndex,
-        payload.milestoneAmountSats,
+        onChainAmount, // ← real value from chain
       );
       return {
         milestoneIndex: payload.milestoneIndex,

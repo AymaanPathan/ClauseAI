@@ -6,13 +6,13 @@ telemetry = true
 cache_dir = '.\.cache'
 requirements = []
 
-[contracts.sbtc-token]
-path = 'contracts/sbtc-token.clar'
+[contracts.sip010-trait]
+path = 'contracts/sip010-trait.clar'
 clarity_version = 3
 epoch = '3.2'
 
-[contracts.clauseai-escrow-v4]
-path = 'contracts/clauseai-escrow-v4.clar'
+[contracts.clauseai-escrow-v9]
+path = 'contracts/clauseai-escrow-v9.clar'
 clarity_version = 3
 epoch = '3.2'
 

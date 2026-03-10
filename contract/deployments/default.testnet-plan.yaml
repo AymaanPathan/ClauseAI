@@ -9,10 +9,17 @@ plan:
     - id: 0
       transactions:
         - contract-publish:
-            contract-name: clauseai-escrow-v4
+            contract-name: sip010-trait
             expected-sender: ST2BRZZ2514G61W0VVHAXC4ZHCWPS897Z030TXWEY
-            cost: 229590
-            path: "contracts\\clauseai-escrow-v4.clar"
+            cost: 4350
+            path: "contracts\\sip010-trait.clar"
+            anchor-block-only: true
+            clarity-version: 3
+        - contract-publish:
+            contract-name: clauseai-escrow-v9
+            expected-sender: ST2BRZZ2514G61W0VVHAXC4ZHCWPS897Z030TXWEY
+            cost: 236100
+            path: "contracts\\clauseai-escrow-v9.clar"
             anchor-block-only: true
             clarity-version: 3
       epoch: "3.2"

@@ -7,7 +7,13 @@
     (memo      (optional (buff 34)))
   )
   (begin
-    (asserts! (is-eq tx-sender sender) (err u100))
+    (asserts!
+      (or
+        (is-eq tx-sender sender)
+        (is-eq tx-sender contract-caller)
+      )
+      (err u100)
+    )
     (ft-transfer? sbtc amount sender recipient)
   )
 )

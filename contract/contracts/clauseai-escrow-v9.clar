@@ -1,3 +1,5 @@
+(use-trait sip010-trait .sip010-trait.sip010-trait)
+
 (define-constant ERR-NOT-AUTHORIZED      (err u100))
 (define-constant ERR-WRONG-STATE         (err u101))
 (define-constant ERR-ALREADY-DEPOSITED   (err u102))
@@ -12,8 +14,6 @@
 (define-constant ERR-INVALID-PERCENTAGES (err u111))
 (define-constant ERR-MILESTONE-NOT-FOUND (err u112))
 (define-constant ERR-TRANSFER-FAILED     (err u113))
-(define-constant SBTC-TOKEN 'ST17RSQ4ZNZP43FE1HW30KQZHJKBM6XCRMB8NR7C9.sbtc-token)
-
 
 (define-constant STATE-PENDING  u0)
 (define-constant STATE-ACTIVE   u1)
@@ -200,6 +200,8 @@
   (begin
     (asserts! (>= amt MIN-AMOUNT)                           ERR-INVALID-AMOUNT)
     (asserts! (not (is-eq a b))                             ERR-NOT-AUTHORIZED)
+    (asserts! (not (is-eq a arb))                           ERR-NOT-AUTHORIZED)
+    (asserts! (not (is-eq b arb))                           ERR-NOT-AUTHORIZED)
     (asserts! (is-none (map-get? agreements id))            ERR-WRONG-STATE)
     (asserts! (and (>= count u1) (<= count MAX-MILESTONES)) ERR-INVALID-MILESTONES)
 
@@ -253,7 +255,7 @@
   )
 )
 
-(define-public (deposit (id (string-ascii 64)))
+(define-public (deposit (id (string-ascii 64)) (token <sip010-trait>))
   (let (
     (agreement (unwrap! (map-get? agreements id) ERR-NOT-FOUND))
     (caller    tx-sender)
@@ -264,7 +266,7 @@
     (asserts! (is-eq caller (get party-a agreement))      ERR-NOT-AUTHORIZED)
     (asserts! (not (get deposited agreement))             ERR-ALREADY-DEPOSITED)
 
-    (try! (contract-call? SBTC-TOKEN transfer amt caller contract-caller none))
+    (try! (contract-call? token transfer amt caller (as-contract tx-sender) none))
 
     (let (
       (ms0    (unwrap! (map-get? milestones { agreement-id: id, index: u0 }) ERR-MILESTONE-NOT-FOUND))
@@ -392,7 +394,7 @@
   )
 )
 
-(define-public (complete-milestone (id (string-ascii 64)) (index uint))
+(define-public (complete-milestone (id (string-ascii 64)) (index uint) (token <sip010-trait>))
   (let (
     (agreement (unwrap! (map-get? agreements id) ERR-NOT-FOUND))
     (ms        (unwrap! (map-get? milestones { agreement-id: id, index: index }) ERR-MILESTONE-NOT-FOUND))
@@ -404,17 +406,15 @@
     (asserts! (is-eq tx-sender (get party-a agreement))  ERR-NOT-AUTHORIZED)
     (asserts! (is-eq (get status ms) MS-ACTIVE)          ERR-WRONG-STATE)
     (asserts! (> bal u0)                                 ERR-ZERO-BALANCE)
-    ;; (asserts!
-    ;;   (or
-    ;;     (is-eq (get deadline-block ms) u0)
-    ;;     (< stacks-block-height (get deadline-block ms))
-    ;;   )
-    ;;   ERR-TIMEOUT-ACTIVE
-    ;; )
-
-      (try!
-      (contract-call? SBTC-TOKEN transfer bal contract-caller receiver none)
+    (asserts!
+      (or
+        (is-eq (get deadline-block ms) u0)
+        (< stacks-block-height (get deadline-block ms))
+      )
+      ERR-TIMEOUT-ACTIVE
     )
+
+    (try! (as-contract (contract-call? token transfer bal tx-sender receiver none)))
 
     (map-set milestones { agreement-id: id, index: index }
       (merge ms { status: MS-COMPLETE, amount: u0 })
@@ -469,7 +469,7 @@
   )
 )
 
-(define-public (resolve-to-receiver (id (string-ascii 64)) (index uint))
+(define-public (resolve-to-receiver (id (string-ascii 64)) (index uint) (token <sip010-trait>))
   (let (
     (agreement (unwrap! (map-get? agreements id) ERR-NOT-FOUND))
     (ms        (unwrap! (map-get? milestones { agreement-id: id, index: index }) ERR-MILESTONE-NOT-FOUND))
@@ -482,9 +482,7 @@
     (asserts! (is-eq (get status ms) MS-DISPUTED)         ERR-WRONG-STATE)
     (asserts! (> bal u0)                                  ERR-ZERO-BALANCE)
 
-    (try!
-    (contract-call? SBTC-TOKEN transfer bal contract-caller receiver none)
-  )
+    (try! (as-contract (contract-call? token transfer bal tx-sender receiver none)))
 
     (map-set milestones { agreement-id: id, index: index }
       (merge ms { status: MS-COMPLETE, amount: u0 })
@@ -510,7 +508,7 @@
   )
 )
 
-(define-public (resolve-to-payer (id (string-ascii 64)) (index uint))
+(define-public (resolve-to-payer (id (string-ascii 64)) (index uint) (token <sip010-trait>))
   (let (
     (agreement (unwrap! (map-get? agreements id) ERR-NOT-FOUND))
     (ms        (unwrap! (map-get? milestones { agreement-id: id, index: index }) ERR-MILESTONE-NOT-FOUND))
@@ -523,7 +521,7 @@
     (asserts! (is-eq (get status ms) MS-DISPUTED)         ERR-WRONG-STATE)
     (asserts! (> bal u0)                                  ERR-ZERO-BALANCE)
 
-    (try! (contract-call? SBTC-TOKEN transfer bal contract-caller payer none))
+    (try! (as-contract (contract-call? token transfer bal tx-sender payer none)))
 
     (map-set milestones { agreement-id: id, index: index }
       (merge ms { status: MS-REFUNDED, amount: u0 })
@@ -549,7 +547,7 @@
   )
 )
 
-(define-public (trigger-milestone-timeout (id (string-ascii 64)) (index uint))
+(define-public (trigger-milestone-timeout (id (string-ascii 64)) (index uint) (token <sip010-trait>))
   (let (
     (agreement (unwrap! (map-get? agreements id) ERR-NOT-FOUND))
     (ms        (unwrap! (map-get? milestones { agreement-id: id, index: index }) ERR-MILESTONE-NOT-FOUND))
@@ -563,7 +561,7 @@
     (asserts! (>= stacks-block-height (get deadline-block ms)) ERR-TIMEOUT-NOT-MET)
     (asserts! (> bal u0)                                       ERR-ZERO-BALANCE)
 
-    (try! (contract-call? SBTC-TOKEN transfer bal contract-caller payer none))
+    (try! (as-contract (contract-call? token transfer bal tx-sender payer none)))
 
     (map-set milestones { agreement-id: id, index: index }
       (merge ms { status: MS-REFUNDED, amount: u0 })
@@ -589,7 +587,7 @@
   )
 )
 
-(define-public (trigger-arb-timeout (id (string-ascii 64)) (index uint))
+(define-public (trigger-arb-timeout (id (string-ascii 64)) (index uint) (token <sip010-trait>))
   (let (
     (agreement (unwrap! (map-get? agreements id) ERR-NOT-FOUND))
     (ms        (unwrap! (map-get? milestones { agreement-id: id, index: index }) ERR-MILESTONE-NOT-FOUND))
@@ -605,7 +603,7 @@
     )
     (asserts! (> bal u0) ERR-ZERO-BALANCE)
 
-    (try! (contract-call? SBTC-TOKEN transfer bal contract-caller payer none))
+    (try! (as-contract (contract-call? token transfer bal tx-sender payer none)))
 
     (map-set milestones { agreement-id: id, index: index }
       (merge ms { status: MS-REFUNDED, amount: u0 })

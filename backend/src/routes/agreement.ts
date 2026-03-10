@@ -23,6 +23,11 @@ export interface PresenceEntry {
   createdAt: number | null;
   partyAApproved: boolean;
   partyBApproved: boolean;
+  // ── NEW: fund lock state ──────────────────────────────────
+  fundsLocked: boolean;
+  fundState: "idle" | "locked" | "released" | "refunded" | "disputed";
+  amountLocked: string | null;
+  depositTxId: string | null;
 }
 
 export interface PresenceResponse extends PresenceEntry {
@@ -37,15 +42,23 @@ async function readPresence(id: string): Promise<PresenceEntry | null> {
     const raw = await redis.get(`presence:${id}`);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as PresenceEntry;
-    // Backfill approval flags for entries written before this version
+    // Backfill fields for entries written before this version
     parsed.partyAApproved = parsed.partyAApproved ?? false;
     parsed.partyBApproved = parsed.partyBApproved ?? false;
+    parsed.fundsLocked = parsed.fundsLocked ?? false;
+    parsed.fundState = parsed.fundState ?? "idle";
+    parsed.amountLocked = parsed.amountLocked ?? null;
+    parsed.depositTxId = parsed.depositTxId ?? null;
     return parsed;
   }
   const entry = memStore.get(id) ?? null;
   if (entry) {
     entry.partyAApproved = entry.partyAApproved ?? false;
     entry.partyBApproved = entry.partyBApproved ?? false;
+    entry.fundsLocked = entry.fundsLocked ?? false;
+    entry.fundState = entry.fundState ?? "idle";
+    entry.amountLocked = entry.amountLocked ?? null;
+    entry.depositTxId = entry.depositTxId ?? null;
   }
   return entry;
 }
@@ -77,6 +90,10 @@ function makeResponse(entry: PresenceEntry): PresenceResponse {
     ...entry,
     partyAApproved: entry.partyAApproved ?? false,
     partyBApproved: entry.partyBApproved ?? false,
+    fundsLocked: entry.fundsLocked ?? false,
+    fundState: entry.fundState ?? "idle",
+    amountLocked: entry.amountLocked ?? null,
+    depositTxId: entry.depositTxId ?? null,
     bothConnected: !!entry.partyA && !!entry.partyB,
   };
 }
@@ -91,6 +108,10 @@ const EMPTY_ENTRY = (): PresenceEntry => ({
   createdAt: Date.now(),
   partyAApproved: false,
   partyBApproved: false,
+  fundsLocked: false,
+  fundState: "idle",
+  amountLocked: null,
+  depositTxId: null,
 });
 
 // ── SSE client registry ───────────────────────────────────────
@@ -153,6 +174,70 @@ router.get("/:id", async (req: Request, res: Response) => {
     res.json(makeResponse(entry ?? EMPTY_ENTRY()));
   } catch (err) {
     console.error("[agreement GET]", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /api/agreement/:id/status ────────────────────────────
+// Party B polls this to detect when funds are locked.
+router.get("/:id/status", async (req: Request, res: Response) => {
+  try {
+    const entry = await readPresence(req.params.id);
+    if (!entry) {
+      return res.status(404).json({ error: "Agreement not found" });
+    }
+    res.json({
+      fundState: entry.fundState ?? "idle",
+      fundsLocked: entry.fundsLocked ?? false,
+      amountLocked: entry.amountLocked ?? null,
+      depositTxId: entry.depositTxId ?? null,
+    });
+  } catch (err) {
+    console.error("[agreement GET /status]", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── POST /api/agreement/:id/status — Party A marks funds locked
+// Called by Party A's frontend after depositThunk confirms.
+// Persists fund state and fires SSE so Party B redirects instantly.
+router.post("/:id/status", async (req: Request, res: Response) => {
+  const { fundState, fundsLocked, amountLocked, txId } = req.body as {
+    fundState?: string;
+    fundsLocked?: boolean;
+    amountLocked?: string;
+    txId?: string;
+  };
+
+  if (fundsLocked !== true && fundState !== "locked") {
+    return res
+      .status(400)
+      .json({ error: "fundsLocked must be true or fundState must be locked" });
+  }
+
+  try {
+    const entry = await readPresence(req.params.id);
+    if (!entry) {
+      return res.status(404).json({ error: "Agreement not found" });
+    }
+
+    entry.fundsLocked = true;
+    entry.fundState = "locked";
+    if (amountLocked) entry.amountLocked = amountLocked;
+    if (txId) entry.depositTxId = txId;
+
+    await writePresence(req.params.id, entry);
+    const response = makeResponse(entry);
+
+    // Push to all SSE subscribers — Party B's polling + SSE will both pick this up
+    notifySSE(req.params.id, response);
+
+    console.log(
+      `[agreement /status] Funds locked for ${req.params.id}, txId: ${txId}`,
+    );
+    res.json(response);
+  } catch (err) {
+    console.error("[agreement POST /status]", err);
     res.status(500).json({ error: "Internal server error" });
   }
 });

@@ -2,12 +2,13 @@
 // ============================================================
 // components/partyB/ScreenPartyBWaitingFunds.tsx
 //
-// Party B Step 4: Approved — now waiting for Party A to lock funds.
-// SSE subscription watches for:
-//   1. partyAApproved → Party A has approved (they'll connect wallet next)
-//   2. fundState → funds locked → auto-navigate to dashboard
+// Party B Step 4: Approved — waiting for Party A to lock funds.
 //
-// Party A is notified simultaneously via their ScreenShareLink SSE.
+// Two signals trigger the redirect to dashboard:
+//   1. SSE push  — instant when Party A calls POST /status
+//   2. Polling   — fallback every 4s on GET /status
+//
+// Whichever fires first wins. Both call notifyFundsLocked().
 // ============================================================
 
 import { useEffect, useRef } from "react";
@@ -28,14 +29,24 @@ export default function PartyBWaitingFundsScreen() {
 
   const t = terms as any;
   const amount = t?.total_usd ?? t?.amount_usd ?? "—";
-  const unsubRef = useRef<(() => void) | null>(null);
 
-  // SSE subscription for approval + funds status
+  // Guard against double-dispatch if both SSE and poll fire together
+  const notifiedRef = useRef(false);
+
+  function handleFundsLocked(amountLocked: string) {
+    if (notifiedRef.current) return;
+    notifiedRef.current = true;
+    dispatch(notifyFundsLocked({ amountLocked }));
+  }
+
   useEffect(() => {
     if (!agreementId) return;
 
-    // Subscribe to approval SSE
-    unsubRef.current = subscribeApproval(agreementId, (state) => {
+    // ── 1. SSE subscription ───────────────────────────────────
+    // The same SSE stream already used for approval also carries
+    // fundsLocked / fundState after we added them to the server response.
+    const unsub = subscribeApproval(agreementId, (state: any) => {
+      // Handle approval updates as before
       dispatch(
         applyApprovalUpdate({
           partyAApproved: state.partyAApproved,
@@ -43,10 +54,17 @@ export default function PartyBWaitingFundsScreen() {
           partyA: state.partyA,
         }),
       );
+
+      // NEW: react to funds being locked via SSE push
+      if (state.fundsLocked === true || state.fundState === "locked") {
+        handleFundsLocked(state.amountLocked ?? String(amount));
+      }
     });
 
-    // Also poll the agreement endpoint to detect fund lock
-    // (Party A calls /deposit which updates on-chain state)
+    // ── 2. Polling fallback ───────────────────────────────────
+    // Hits GET /api/agreement/:id/status (now a real endpoint).
+    // Catches cases where Party B opened the page after SSE fired,
+    // or where the SSE connection dropped briefly.
     const pollFunds = setInterval(async () => {
       try {
         const res = await fetch(
@@ -55,25 +73,23 @@ export default function PartyBWaitingFundsScreen() {
         if (!res.ok) return;
         const data = await res.json();
         if (data.fundState === "locked" || data.fundsLocked === true) {
-          dispatch(
-            notifyFundsLocked({ amountLocked: data.amountLocked ?? amount }),
-          );
+          handleFundsLocked(data.amountLocked ?? String(amount));
           clearInterval(pollFunds);
         }
       } catch {
-        // ignore poll errors
+        // ignore transient network errors
       }
     }, 4000);
 
     return () => {
-      unsubRef.current?.();
+      unsub();
       clearInterval(pollFunds);
     };
   }, [agreementId, dispatch, amount]);
 
   const steps = [
     { label: "You approved", done: true },
-    { label: "Party A notified", done: partyAApproved || true }, // they'll be notified via SSE
+    { label: "Party A notified", done: true }, // they're notified via SSE the moment B approves
     { label: "Party A locks funds", done: false },
     { label: "Agreement active", done: false },
   ];
@@ -221,7 +237,7 @@ export default function PartyBWaitingFundsScreen() {
             color: "var(--text-4)",
           }}
         >
-          Live updates via SSE ●
+          Live updates via SSE ● polling every 4s ○
         </p>
       </div>
     </div>

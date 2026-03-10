@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 
 import {
   setScreen,
@@ -14,6 +14,7 @@ import { isV2, ParsedAgreementV2 } from "@/api/parseApi";
 import { useDispatch, useSelector } from "react-redux";
 import { AppDispatch, RootState } from "@/store";
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const BLOCK_PER_DAY = 144;
 const FALLBACK_ARBITRATOR = "ST000000000000000000002AMW42H";
 
@@ -75,6 +76,29 @@ const DEFAULT_ROWS: MilestoneRow[] = [
   },
 ];
 
+// ── Notify server that funds are locked ──────────────────────
+async function notifyServerFundsLocked(
+  agreementId: string,
+  amountLocked: string,
+  txId: string | null,
+): Promise<boolean> {
+  try {
+    const res = await fetch(`${API_BASE}/api/agreement/${agreementId}/status`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fundState: "locked",
+        fundsLocked: true,
+        amountLocked,
+        txId,
+      }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 export default function ScreenLockFunds() {
   const dispatch = useDispatch<AppDispatch>();
   const {
@@ -108,6 +132,12 @@ export default function ScreenLockFunds() {
     "setup",
   );
 
+  // ── Notification state ────────────────────────────────────
+  const [notifyStatus, setNotifyStatus] = useState<
+    "idle" | "notifying" | "success" | "failed"
+  >("idle");
+  const [serverNotified, setServerNotified] = useState(false);
+
   const terms = editedTerms as unknown as Record<string, unknown>;
   const amountUsd = parseFloat(
     String(terms?.amount_usd ?? terms?.total_usd ?? "0"),
@@ -137,6 +167,37 @@ export default function ScreenLockFunds() {
       setStep("depositing");
     }
   }, [txCreate.status, step]);
+
+  // ── Auto-notify server when deposit is confirmed ──────────
+  const autoNotify = useCallback(async () => {
+    if (!agreementId || serverNotified) return;
+    const ok = await notifyServerFundsLocked(
+      agreementId,
+      String(amountUsd),
+      txDeposit.txId,
+    );
+    setServerNotified(ok);
+    setNotifyStatus(ok ? "success" : "failed");
+  }, [agreementId, amountUsd, txDeposit.txId, serverNotified]);
+
+  useEffect(() => {
+    if (txDeposit.status === "confirmed" && !serverNotified) {
+      autoNotify();
+    }
+  }, [txDeposit.status, serverNotified, autoNotify]);
+
+  // ── Manual notify handler ─────────────────────────────────
+  async function handleManualNotify() {
+    if (!agreementId) return;
+    setNotifyStatus("notifying");
+    const ok = await notifyServerFundsLocked(
+      agreementId,
+      String(amountUsd),
+      txDeposit.txId,
+    );
+    setServerNotified(ok);
+    setNotifyStatus(ok ? "success" : "failed");
+  }
 
   async function handleDeploy() {
     if (!agreementId || !walletAddress) return;
@@ -192,7 +253,6 @@ export default function ScreenLockFunds() {
               margin: "0 auto 28px",
             }}
           >
-            {/* Bitcoin lock icon */}
             <svg
               width="28"
               height="28"
@@ -228,8 +288,109 @@ export default function ScreenLockFunds() {
             <strong style={{ color: "var(--text-1)" }}>{sbtcDisplay}</strong> (≈
             ${amountUsd} USD) is now secured on-chain via sBTC.{" "}
             <strong style={{ color: "var(--text-1)" }}>{receiverName}</strong>{" "}
-            has been notified and can track milestones on the dashboard.
+            will be notified automatically.
           </p>
+
+          {/* ── Notify Party B panel ─────────────────────── */}
+          <div
+            className="fade-in notify-panel"
+            style={{
+              marginBottom: 20,
+              borderColor:
+                notifyStatus === "success"
+                  ? "rgba(34,197,94,0.3)"
+                  : notifyStatus === "failed"
+                    ? "rgba(239,68,68,0.25)"
+                    : "var(--border)",
+              background:
+                notifyStatus === "success"
+                  ? "rgba(34,197,94,0.06)"
+                  : "var(--bg-1)",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: notifyStatus === "failed" ? 10 : 0,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div
+                  className="notif-indicator"
+                  style={{
+                    background:
+                      notifyStatus === "success"
+                        ? "var(--green)"
+                        : notifyStatus === "notifying"
+                          ? "var(--amber)"
+                          : notifyStatus === "failed"
+                            ? "var(--red, #ef4444)"
+                            : "var(--border-hi)",
+                  }}
+                />
+                <span
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 500,
+                    color:
+                      notifyStatus === "success"
+                        ? "var(--green)"
+                        : "var(--text-1)",
+                  }}
+                >
+                  {notifyStatus === "idle" && "Notifying receiver…"}
+                  {notifyStatus === "notifying" && "Sending notification…"}
+                  {notifyStatus === "success" &&
+                    `${receiverName} has been notified ✓`}
+                  {notifyStatus === "failed" &&
+                    "Auto-notify failed — use manual button"}
+                </span>
+              </div>
+              {notifyStatus === "success" && (
+                <span style={{ fontSize: 16 }}>✅</span>
+              )}
+            </div>
+
+            {/* Manual notify button — always visible if not yet succeeded */}
+            {notifyStatus !== "success" && (
+              <button
+                className="btn btn-ghost"
+                onClick={handleManualNotify}
+                disabled={notifyStatus === "notifying"}
+                style={{ width: "100%", marginTop: 10, fontSize: 12 }}
+              >
+                {notifyStatus === "notifying" ? (
+                  <>
+                    <span
+                      className="spinner"
+                      style={{ width: 12, height: 12 }}
+                    />{" "}
+                    Notifying…
+                  </>
+                ) : (
+                  <>
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 12a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 1.18h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 8.6a16 16 0 0 0 6 6l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 21.73 16z" />
+                    </svg>{" "}
+                    Manually Notify {receiverName}
+                  </>
+                )}
+              </button>
+            )}
+          </div>
+
+          {/* Notifications info */}
           <div
             style={{
               background: "var(--bg-1)",
@@ -241,7 +402,7 @@ export default function ScreenLockFunds() {
             }}
           >
             <div className="label" style={{ marginBottom: 12 }}>
-              Both parties are notified
+              What happens next
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <div
@@ -261,8 +422,7 @@ export default function ScreenLockFunds() {
                   <strong style={{ color: "var(--text-1)" }}>
                     You (Payer):
                   </strong>{" "}
-                  Redirected to the dashboard to track milestones and release
-                  payments.
+                  Go to the dashboard to track milestones and release payments.
                 </span>
               </div>
               <div
@@ -282,11 +442,13 @@ export default function ScreenLockFunds() {
                   <strong style={{ color: "var(--text-1)" }}>
                     {receiverName}:
                   </strong>{" "}
-                  Their waiting screen automatically redirects to the dashboard.
+                  Their waiting screen will redirect to the dashboard once
+                  notified. If they're still stuck, ask them to refresh.
                 </span>
               </div>
             </div>
           </div>
+
           {txDeposit.txId && (
             <div
               style={{
@@ -846,4 +1008,9 @@ export default function ScreenLockFunds() {
 const css = `
 .back-btn { background: none; border: none; color: var(--text-3); font-size: 11px; cursor: pointer; margin-bottom: 20px; font-family: var(--mono); letter-spacing: 0.04em; padding: 0; }
 .notif-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 3px; }
+.notif-indicator { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; transition: background 0.3s; }
+.notify-panel {
+  border: 1px solid; border-radius: var(--r); padding: 14px 16px;
+  text-align: left; transition: all 0.3s;
+}
 `;

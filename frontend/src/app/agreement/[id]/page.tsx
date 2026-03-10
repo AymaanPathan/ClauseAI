@@ -1,3 +1,4 @@
+// agreement/[id]/page.tsx
 "use client";
 import { useEffect, useMemo } from "react";
 import { Provider, useDispatch, useSelector } from "react-redux";

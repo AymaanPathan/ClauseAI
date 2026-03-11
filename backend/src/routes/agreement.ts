@@ -228,7 +228,7 @@ router.get("/:id/status", async (req: Request, res: Response) => {
   }
 });
 
-// ── GET /api/agreement/:id/milestones — full milestone statuses from DB
+// ── GET /api/agreement/:id/milestones — full milestone statuses from DB ──
 router.get("/:id/milestones", async (req: Request, res: Response) => {
   try {
     const agreement = await Agreement.findOne({ agreementId: req.params.id });
@@ -243,6 +243,7 @@ router.get("/:id/milestones", async (req: Request, res: Response) => {
       partyA: agreement.partyA,
       partyB: agreement.partyB,
       arbitrator: agreement.arbitrator,
+      amountLocked: agreement.amountLocked,
     });
   } catch (err) {
     console.error("[agreement GET /milestones]", err);
@@ -250,8 +251,9 @@ router.get("/:id/milestones", async (req: Request, res: Response) => {
   }
 });
 
-// ── POST /api/agreement/:id/create — create agreement in DB ──
-// Called by Party A's frontend after on-chain create tx is submitted.
+// ── POST /api/agreement/:id/create ───────────────────────────
+// FIXED: Always upserts milestones + terms, never skips them.
+// BUG WAS: existing doc check skipped milestones entirely — now uses findOneAndUpdate
 router.post("/:id/create", async (req: Request, res: Response) => {
   const {
     partyA,
@@ -282,36 +284,42 @@ router.post("/:id/create", async (req: Request, res: Response) => {
   };
 
   try {
-    const existing = await Agreement.findOne({ agreementId: req.params.id });
-    if (existing) {
-      // Idempotent — update tx id if provided
-      if (onChainCreateTxId) existing.onChainCreateTxId = onChainCreateTxId;
-      await existing.save();
-      return res.json({ ok: true, agreementId: req.params.id, created: false });
-    }
-
     const normalizedMilestones = (milestones ?? []).map((ms) => ({
       ...ms,
       status: "locked" as const,
     }));
 
-    const agreement = new Agreement({
+    // Always upsert — update milestones/terms even if doc already exists
+    const agreement = await Agreement.findOneAndUpdate(
+      { agreementId: req.params.id },
+      {
+        $set: {
+          ...(partyA && { partyA }),
+          ...(partyB && { partyB }),
+          ...(arbitrator && { arbitrator }),
+          ...(totalAmountUsd !== undefined && { totalAmountUsd }),
+          ...(totalAmountSats !== undefined && { totalAmountSats }),
+          ...(terms && Object.keys(terms).length > 0 && { terms }),
+          ...(normalizedMilestones.length > 0 && {
+            milestones: normalizedMilestones,
+          }),
+          ...(onChainCreateTxId && { onChainCreateTxId }),
+        },
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
+
+    console.log(
+      `[agreement /create] Upserted agreement ${req.params.id} — ${normalizedMilestones.length} milestones`,
+    );
+
+    // Emit socket event so Party B dashboard refreshes immediately
+    emit(req.params.id, "funds:locked", {
       agreementId: req.params.id,
-      partyA: partyA ?? null,
-      partyB: partyB ?? null,
-      arbitrator: arbitrator ?? null,
-      totalAmountUsd: totalAmountUsd ?? 0,
-      totalAmountSats: totalAmountSats ?? 0,
-      terms: terms ?? {},
-      milestones: normalizedMilestones,
-      onChainCreateTxId: onChainCreateTxId ?? null,
+      milestones: agreement.milestones,
     });
 
-    await agreement.save();
-    console.log(
-      `[agreement /create] Saved agreement ${req.params.id} to MongoDB`,
-    );
-    res.json({ ok: true, agreementId: req.params.id, created: true });
+    res.json({ ok: true, agreementId: req.params.id });
   } catch (err) {
     console.error("[agreement POST /create]", err);
     res.status(500).json({ error: "Internal server error" });
@@ -319,16 +327,8 @@ router.post("/:id/create", async (req: Request, res: Response) => {
 });
 
 // ── POST /api/agreement/:id/milestone — update milestone status ──
-// Called after tx is confirmed on Stacks. Verifies tx on-chain,
-// updates DB, then emits socket event to Party B's room.
 router.post("/:id/milestone", async (req: Request, res: Response) => {
-  const {
-    milestoneIndex,
-    action, // "complete" | "dispute" | "timeout"
-    txId,
-    txUrl,
-    callerAddress,
-  } = req.body as {
+  const { milestoneIndex, action, txId, txUrl, callerAddress } = req.body as {
     milestoneIndex: number;
     action: "complete" | "dispute" | "timeout";
     txId: string;
@@ -343,7 +343,6 @@ router.post("/:id/milestone", async (req: Request, res: Response) => {
   }
 
   try {
-    // Verify the tx on Stacks before updating
     const txInfo = await verifyStacksTx(txId);
 
     const targetStatus = (() => {
@@ -357,7 +356,6 @@ router.post("/:id/milestone", async (req: Request, res: Response) => {
       return "pending";
     })() as "complete" | "disputed" | "refunded" | "failed" | "pending";
 
-    // Update MongoDB
     const agreement = await Agreement.findOne({ agreementId: req.params.id });
     if (!agreement) {
       return res
@@ -377,11 +375,10 @@ router.post("/:id/milestone", async (req: Request, res: Response) => {
     ms.status = targetStatus === "pending" ? "pending" : targetStatus;
     ms.txId = txId;
     ms.txUrl = txUrl ?? null;
-    ms.onChainStatus = txInfo.status === "success" ? 2 : undefined; // MILESTONE_STATUS.COMPLETE = 2
+    ms.onChainStatus = txInfo.status === "success" ? 2 : undefined;
     if (targetStatus === "complete") ms.completedAt = new Date();
     if (targetStatus === "disputed") ms.disputedAt = new Date();
 
-    // Check if all milestones done → update fundState
     const allComplete = agreement.milestones.every((m: { status: string }) =>
       ["complete", "refunded"].includes(m.status),
     );
@@ -389,7 +386,6 @@ router.post("/:id/milestone", async (req: Request, res: Response) => {
 
     await agreement.save();
 
-    // Build milestone update payload for Party B
     const milestonePayload = {
       agreementId: req.params.id,
       milestoneIndex,
@@ -404,7 +400,6 @@ router.post("/:id/milestone", async (req: Request, res: Response) => {
       milestones: agreement.milestones,
     };
 
-    // Emit to Party B via Socket.io
     emit(req.params.id, "milestone:updated", milestonePayload);
     console.log(
       `[agreement /milestone] #${req.params.id} ms[${milestoneIndex}] → ${targetStatus} tx:${txId}`,
@@ -443,7 +438,6 @@ router.post("/:id/status", async (req: Request, res: Response) => {
 
     await writePresence(req.params.id, entry);
 
-    // Also update MongoDB
     await Agreement.findOneAndUpdate(
       { agreementId: req.params.id },
       {
@@ -457,7 +451,6 @@ router.post("/:id/status", async (req: Request, res: Response) => {
     const response = makeResponse(entry);
     notifySSE(req.params.id, response);
 
-    // Socket.io: notify Party B that funds are now locked
     emit(req.params.id, "funds:locked", {
       agreementId: req.params.id,
       amountLocked,
@@ -506,7 +499,6 @@ router.post("/:id", async (req: Request, res: Response) => {
 
     await writePresence(req.params.id, entry);
 
-    // Also upsert in MongoDB
     await Agreement.findOneAndUpdate(
       { agreementId: req.params.id },
       {

@@ -6,9 +6,9 @@ import {
   setMilestoneInputs,
   createAgreementThunk,
   depositThunk,
+  saveAgreementToDbThunk,
 } from "@/store/slices/partyASlice";
-import { MilestoneInput } from "@/lib/contractCalls";
-import { usdToSatsPreview } from "@/lib/contractCalls";
+import { MilestoneInput, usdToSatsPreview } from "@/lib/contractCalls";
 import { formatSats } from "@/lib/stacksConfig";
 import { isV2, ParsedAgreementV2 } from "@/api/parseApi";
 import { useDispatch, useSelector } from "react-redux";
@@ -52,6 +52,7 @@ function rowsToInputs(
     deadlineBlock: daysToBlocks(r.deadlineDays ?? 0, blockHeight ?? 0),
   }));
 }
+
 const DEFAULT_ROWS: MilestoneRow[] = [
   {
     id: "ms-0",
@@ -76,7 +77,6 @@ const DEFAULT_ROWS: MilestoneRow[] = [
   },
 ];
 
-// ── Notify server that funds are locked ──────────────────────
 async function notifyServerFundsLocked(
   agreementId: string,
   amountLocked: string,
@@ -131,8 +131,6 @@ export default function ScreenLockFunds() {
   const [step, setStep] = useState<"setup" | "deploying" | "depositing">(
     "setup",
   );
-
-  // ── Notification state ────────────────────────────────────
   const [notifyStatus, setNotifyStatus] = useState<
     "idle" | "notifying" | "success" | "failed"
   >("idle");
@@ -144,7 +142,6 @@ export default function ScreenLockFunds() {
   );
   const satoshiTotal = usdToSatsPreview(amountUsd);
   const sbtcDisplay = formatSats(satoshiTotal);
-
   const pct = totalPct(rows);
   const pctOk = pct === 100;
   const receiverName = String(terms?.partyB ?? terms?.receiver ?? "Receiver");
@@ -168,17 +165,53 @@ export default function ScreenLockFunds() {
     }
   }, [txCreate.status, step]);
 
-  // ── Auto-notify server when deposit is confirmed ──────────
+  // ── After deposit confirms: save to DB + notify server ────
   const autoNotify = useCallback(async () => {
     if (!agreementId || serverNotified) return;
+    setServerNotified(true); // prevent double-run
+
+    // 1. Save full agreement + milestones to MongoDB so Party B can see them
+    const totalSats = usdToSatsPreview(amountUsd);
+    await dispatch(
+      saveAgreementToDbThunk({
+        agreementId,
+        partyA: walletAddress ?? "",
+        partyB: String(terms?.receiver ?? terms?.partyB ?? ""),
+        arbitrator: String(terms?.arbitrator ?? ""),
+        totalAmountUsd: amountUsd,
+        totalAmountSats: totalSats,
+        terms: terms as Record<string, unknown>,
+        milestones: rows.map((r, i) => ({
+          index: i,
+          title: r.label,
+          percentage: r.percentage,
+          condition: r.condition,
+          deadline: r.deadlineDays > 0 ? `${r.deadlineDays} days` : undefined,
+          amountUsd: ((amountUsd * r.percentage) / 100).toFixed(2),
+          amountSats: Math.round((totalSats * r.percentage) / 100),
+        })),
+        onChainCreateTxId: txCreate.txId ?? undefined,
+      }),
+    );
+
+    // 2. Notify presence server (triggers SSE + socket for Party B waiting screen)
     const ok = await notifyServerFundsLocked(
       agreementId,
       String(amountUsd),
       txDeposit.txId,
     );
-    setServerNotified(ok);
     setNotifyStatus(ok ? "success" : "failed");
-  }, [agreementId, amountUsd, txDeposit.txId, serverNotified]);
+  }, [
+    agreementId,
+    amountUsd,
+    txDeposit.txId,
+    txCreate.txId,
+    walletAddress,
+    terms,
+    rows,
+    serverNotified,
+    dispatch,
+  ]);
 
   useEffect(() => {
     if (txDeposit.status === "confirmed" && !serverNotified) {
@@ -186,7 +219,6 @@ export default function ScreenLockFunds() {
     }
   }, [txDeposit.status, serverNotified, autoNotify]);
 
-  // ── Manual notify handler ─────────────────────────────────
   async function handleManualNotify() {
     if (!agreementId) return;
     setNotifyStatus("notifying");
@@ -195,7 +227,6 @@ export default function ScreenLockFunds() {
       String(amountUsd),
       txDeposit.txId,
     );
-    setServerNotified(ok);
     setNotifyStatus(ok ? "success" : "failed");
   }
 
@@ -234,7 +265,7 @@ export default function ScreenLockFunds() {
     txDeposit.status === "pending" || txDeposit.status === "confirming";
   const depositDone = txDeposit.status === "confirmed";
 
-  // ── Funds Locked Success ───────────────────────────────────
+  // ── Funds Locked Success ──────────────────────────────────
   if (depositDone) {
     return (
       <div className="page">
@@ -291,7 +322,7 @@ export default function ScreenLockFunds() {
             will be notified automatically.
           </p>
 
-          {/* ── Notify Party B panel ─────────────────────── */}
+          {/* Notify Party B panel */}
           <div
             className="fade-in notify-panel"
             style={{
@@ -326,7 +357,7 @@ export default function ScreenLockFunds() {
                         : notifyStatus === "notifying"
                           ? "var(--amber)"
                           : notifyStatus === "failed"
-                            ? "var(--red, #ef4444)"
+                            ? "#ef4444"
                             : "var(--border-hi)",
                   }}
                 />
@@ -340,7 +371,7 @@ export default function ScreenLockFunds() {
                         : "var(--text-1)",
                   }}
                 >
-                  {notifyStatus === "idle" && "Notifying receiver…"}
+                  {notifyStatus === "idle" && "Saving & notifying receiver…"}
                   {notifyStatus === "notifying" && "Sending notification…"}
                   {notifyStatus === "success" &&
                     `${receiverName} has been notified ✓`}
@@ -353,7 +384,6 @@ export default function ScreenLockFunds() {
               )}
             </div>
 
-            {/* Manual notify button — always visible if not yet succeeded */}
             {notifyStatus !== "success" && (
               <button
                 className="btn btn-ghost"
@@ -390,7 +420,7 @@ export default function ScreenLockFunds() {
             )}
           </div>
 
-          {/* Notifications info */}
+          {/* What happens next */}
           <div
             style={{
               background: "var(--bg-1)",
@@ -480,6 +510,7 @@ export default function ScreenLockFunds() {
               </span>
             </div>
           )}
+
           <button
             className="btn btn-primary btn-lg"
             onClick={() => dispatch(setScreen("dashboard" as never))}
@@ -504,7 +535,7 @@ export default function ScreenLockFunds() {
     );
   }
 
-  // ── Main Lock Funds Screen ─────────────────────────────────
+  // ── Main Lock Funds Screen ────────────────────────────────
   return (
     <div className="page" style={{ alignItems: "flex-start", paddingTop: 64 }}>
       <style>{css}</style>
@@ -1009,8 +1040,5 @@ const css = `
 .back-btn { background: none; border: none; color: var(--text-3); font-size: 11px; cursor: pointer; margin-bottom: 20px; font-family: var(--mono); letter-spacing: 0.04em; padding: 0; }
 .notif-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 3px; }
 .notif-indicator { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; transition: background 0.3s; }
-.notify-panel {
-  border: 1px solid; border-radius: var(--r); padding: 14px 16px;
-  text-align: left; transition: all 0.3s;
-}
+.notify-panel { border: 1px solid; border-radius: var(--r); padding: 14px 16px; text-align: left; transition: all 0.3s; }
 `;

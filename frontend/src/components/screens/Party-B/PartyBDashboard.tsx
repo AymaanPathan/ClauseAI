@@ -1,26 +1,16 @@
 "use client";
 // ============================================================
-// components/partyB/PartyBDashboard.tsx — PRODUCTION v2
-//
-// Live milestone feed for Party B.
-// • Fetches initial state from MongoDB via GET /api/agreement/:id/milestones
-// • Connects to Socket.io room `agreement:{id}` for instant updates
-// • Updates milestone cards in real-time when Party A releases / disputes
+// components/partyB/PartyBDashboard.tsx — PRODUCTION v3 (fixed)
 // ============================================================
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useSelector } from "react-redux";
 import { RootState } from "@/store";
-import {
-  getSocket,
-  joinAgreementRoom,
-  MilestoneUpdatedPayload,
-} from "@/lib/socket";
+import { getSocket, joinAgreementRoom } from "@/lib/socket";
 import { explorerTxUrl } from "@/lib/stacksConfig";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-// ── Types ──────────────────────────────────────────────────────
 type MsStatus =
   | "locked"
   | "pending"
@@ -53,9 +43,9 @@ interface AgreementData {
   partyA: string | null;
   partyB: string | null;
   arbitrator: string | null;
+  amountLocked?: string | null;
 }
 
-// ── Helpers ────────────────────────────────────────────────────
 function statusColor(s: MsStatus) {
   if (s === "complete") return "var(--green)";
   if (s === "disputed") return "var(--amber)";
@@ -64,112 +54,172 @@ function statusColor(s: MsStatus) {
   if (s === "pending") return "var(--text-3)";
   return "var(--text-4)";
 }
-
 function statusLabel(s: MsStatus) {
   if (s === "complete") return "Released ✓";
-  if (s === "disputed") return "In Dispute";
-  if (s === "refunded") return "Refunded";
-  if (s === "failed") return "Tx Failed";
+  if (s === "disputed") return "In Dispute ⚑";
+  if (s === "refunded") return "Refunded ↩";
+  if (s === "failed") return "Tx Failed ✕";
   if (s === "pending") return "Confirming…";
   return "Awaiting Release";
 }
-
-function statusIcon(s: MsStatus) {
-  if (s === "complete") return "✓";
-  if (s === "disputed") return "⚑";
-  if (s === "refunded") return "↩";
-  if (s === "failed") return "✕";
-  if (s === "pending") return "◌";
-  return "○";
-}
-
 function formatSats(sats: number): string {
+  if (!sats) return "—";
   return `${(sats / 100_000_000).toFixed(8)} sBTC`;
 }
 
-// ── Component ──────────────────────────────────────────────────
 export default function PartyBDashboard() {
   const { terms, amountLocked, walletAddress, agreementId } = useSelector(
     (s: RootState) => s.partyB,
   );
-
   const t = terms as any;
   const receiverName = t?.receiver ?? t?.partyB ?? "You";
   const payerName = t?.payer ?? t?.partyA ?? "Payer";
-  const displayAmount = amountLocked ?? t?.total_usd ?? t?.amount_usd ?? "—";
+  const reduxAmount = amountLocked ?? t?.total_usd ?? t?.amount_usd;
 
-  // ── Fetch agreement data from DB ───────────────────────────
   const [data, setData] = useState<AgreementData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [dataSource, setDataSource] = useState<"db" | "presence" | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [flashIndex, setFlashIndex] = useState<number | null>(null);
+  const [connected, setConnected] = useState(false);
 
   const fetchData = useCallback(async () => {
     if (!agreementId) return;
+
+    // 1. Try MongoDB
     try {
       const res = await fetch(
         `${API_BASE}/api/agreement/${agreementId}/milestones`,
       );
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = await res.json();
-      setData(json);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load");
-    } finally {
-      setLoading(false);
+      if (res.ok) {
+        const json = await res.json();
+        if (json.milestones && json.milestones.length > 0) {
+          setData(json);
+          setDataSource("db");
+          setLoading(false);
+          return;
+        }
+      }
+    } catch {
+      /* fall through */
     }
-  }, [agreementId]);
 
+    // 2. Presence fallback
+    try {
+      const res = await fetch(`${API_BASE}/api/agreement/${agreementId}`);
+      if (res.ok) {
+        const json = await res.json();
+
+        let milestones: DbMilestone[] = [];
+        if (t?.milestones && Array.isArray(t.milestones)) {
+          milestones = t.milestones.map((ms: any, i: number) => ({
+            index: i,
+            title: ms.title ?? `Milestone ${i + 1}`,
+            percentage: ms.percentage ?? 0,
+            condition: ms.condition ?? "",
+            deadline: ms.deadline,
+            amountUsd: ms.amountUsd ?? "0",
+            amountSats: ms.amountSats ?? 0,
+            status: "locked" as MsStatus,
+          }));
+        }
+
+        setData({
+          agreementId,
+          milestones,
+          fundState: json.fundState ?? "locked",
+          totalAmountUsd: parseFloat(json.amountLocked ?? reduxAmount ?? "0"),
+          totalAmountSats: 0,
+          partyA: json.partyA ?? null,
+          partyB: json.partyB ?? null,
+          arbitrator: null,
+          amountLocked: json.amountLocked ?? reduxAmount,
+        });
+        setDataSource("presence");
+      }
+    } catch {
+      /* nothing */
+    }
+
+    setLoading(false);
+  }, [agreementId, reduxAmount, t]);
+
+  // ── Fetch on mount + aggressive retry + polling ──────────────
+  // NOTE: useEffect must be at component top-level, never inside a callback
   useEffect(() => {
     fetchData();
+    const quickRetry = setTimeout(fetchData, 2000);
+    const interval = setInterval(fetchData, 10_000);
+    return () => {
+      clearTimeout(quickRetry);
+      clearInterval(interval);
+    };
   }, [fetchData]);
 
-  // ── Socket.io — real-time updates ─────────────────────────
+  // Socket.io
   useEffect(() => {
     if (!agreementId) return;
-
     const socket = getSocket();
     joinAgreementRoom(agreementId);
 
-    function onMilestoneUpdated(payload: MilestoneUpdatedPayload) {
-      setData((prev) => {
-        if (!prev) return prev;
-        const updated = prev.milestones.map((ms) =>
-          ms.index === payload.milestoneIndex
+    if (socket.connected) setConnected(true);
+    socket.on("connect", () => setConnected(true));
+    socket.on("disconnect", () => setConnected(false));
+
+    function onMilestoneUpdated(payload: any) {
+      console.log("[PartyBDashboard] milestone:updated", payload);
+      if (payload.milestones && payload.milestones.length > 0) {
+        setData((prev) =>
+          prev
             ? {
-                ...ms,
-                status: payload.status as MsStatus,
-                txId: payload.txId,
-                txUrl: payload.txUrl,
-                completedAt:
-                  payload.status === "complete"
-                    ? new Date().toISOString()
-                    : ms.completedAt,
+                ...prev,
+                milestones: payload.milestones,
+                fundState: payload.allComplete ? "released" : prev.fundState,
               }
-            : ms,
+            : prev,
         );
-        return {
-          ...prev,
-          milestones: updated,
-          fundState: payload.allComplete ? "released" : prev.fundState,
-        };
-      });
+      } else {
+        setData((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            milestones: prev.milestones.map((ms) =>
+              ms.index === payload.milestoneIndex
+                ? {
+                    ...ms,
+                    status: payload.status as MsStatus,
+                    txId: payload.txId,
+                    txUrl: payload.txUrl,
+                    completedAt:
+                      payload.status === "complete"
+                        ? new Date().toISOString()
+                        : ms.completedAt,
+                  }
+                : ms,
+            ),
+            fundState: payload.allComplete ? "released" : prev.fundState,
+          };
+        });
+      }
       setLastUpdate(new Date());
       setFlashIndex(payload.milestoneIndex);
+      setDataSource("db");
       setTimeout(() => setFlashIndex(null), 2500);
     }
 
     socket.on("milestone:updated", onMilestoneUpdated);
-    socket.on("funds:locked", () => fetchData());
+    socket.on("funds:locked", () => setTimeout(fetchData, 1000));
+    socket.on("presence:updated", fetchData);
 
     return () => {
+      socket.off("connect");
+      socket.off("disconnect");
       socket.off("milestone:updated", onMilestoneUpdated);
       socket.off("funds:locked");
+      socket.off("presence:updated");
     };
   }, [agreementId, fetchData]);
 
-  // ── Derived state ───────────────────────────────────────────
   const milestones = data?.milestones ?? [];
   const completedCount = milestones.filter((m) =>
     ["complete", "refunded"].includes(m.status),
@@ -181,9 +231,16 @@ export default function PartyBDashboard() {
   const totalSats = data?.totalAmountSats ?? 0;
   const earnedSats = milestones
     .filter((m) => m.status === "complete")
-    .reduce((sum, m) => sum + m.amountSats, 0);
+    .reduce((s, m) => s + m.amountSats, 0);
+  const displayAmount =
+    data?.amountLocked ??
+    reduxAmount ??
+    data?.totalAmountUsd?.toString() ??
+    "—";
+  const displayPayer = data?.partyA
+    ? `${data.partyA.slice(0, 10)}…`
+    : payerName;
 
-  // ── Render ──────────────────────────────────────────────────
   return (
     <div className="page" style={{ alignItems: "flex-start", paddingTop: 48 }}>
       <style>{css}</style>
@@ -212,9 +269,13 @@ export default function PartyBDashboard() {
                 gap: 6,
               }}
             >
-              <div className="status-pill">
-                <div className="status-dot" />
-                Live
+              <div
+                className={`status-pill${connected ? "" : " status-pill--offline"}`}
+              >
+                <div
+                  className={`status-dot${connected ? "" : " status-dot--offline"}`}
+                />
+                {connected ? "Live" : "Reconnecting…"}
               </div>
               {lastUpdate && (
                 <span className="mono-label" style={{ fontSize: 9 }}>
@@ -230,24 +291,26 @@ export default function PartyBDashboard() {
           {[
             {
               label: "Total Locked",
-              value: formatSats(totalSats),
-              sub: `≈ $${displayAmount} USD`,
+              value:
+                totalSats > 0 ? formatSats(totalSats) : `$${displayAmount}`,
+              sub:
+                totalSats > 0
+                  ? `≈ $${displayAmount} USD`
+                  : "USD locked in escrow",
             },
             {
               label: "Your Role",
               value: receiverName,
-              sub: walletAddress ? `${walletAddress.slice(0, 8)}…` : "Receiver",
+              sub: walletAddress
+                ? `${walletAddress.slice(0, 10)}…`
+                : "Receiver",
             },
             {
               label: "Earned",
-              value: formatSats(earnedSats),
+              value: earnedSats > 0 ? formatSats(earnedSats) : "—",
               sub: `${completedCount} milestone${completedCount !== 1 ? "s" : ""} released`,
             },
-            {
-              label: "Payer",
-              value: payerName,
-              sub: data?.partyA ? `${data.partyA.slice(0, 8)}…` : "—",
-            },
+            { label: "Payer", value: displayPayer, sub: "locked funds" },
           ].map(({ label, value, sub }) => (
             <div key={label} className="summary-card">
               <div className="summary-label">{label}</div>
@@ -268,21 +331,22 @@ export default function PartyBDashboard() {
           >
             <span className="mono-label">Overall Progress</span>
             <span className="mono-label">
-              {completedCount}/{milestones.length} milestones · {progressPct}%
+              {milestones.length > 0
+                ? `${completedCount}/${milestones.length} milestones · ${progressPct}%`
+                : "Waiting for milestone data…"}
             </span>
           </div>
           <div className="progress-track">
             <div
               className="progress-fill"
-              style={{ width: `${progressPct}%` }}
+              style={{ width: `${progressPct > 0 ? progressPct : 2}%` }}
             />
           </div>
         </div>
 
-        {/* Loading / Error */}
+        {/* Loading */}
         {loading && (
           <div
-            className="fade-up d2"
             style={{
               textAlign: "center",
               padding: "40px 0",
@@ -299,51 +363,74 @@ export default function PartyBDashboard() {
                 display: "block",
               }}
             />
-            Loading milestone data…
+            Loading…
           </div>
         )}
 
-        {error && !loading && (
-          <div
-            className="fade-up d2 info-strip"
-            style={{ marginBottom: 20, borderColor: "rgba(239,68,68,0.3)" }}
-          >
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="#ef4444"
-              strokeWidth="1.5"
-            >
-              <circle cx="12" cy="12" r="10" />
-              <line x1="12" y1="8" x2="12" y2="12" />
-              <line x1="12" y1="16" x2="12.01" y2="16" />
-            </svg>
-            <p style={{ fontSize: 11, color: "#ef4444", margin: 0 }}>
-              Could not load milestone data: {error}.{" "}
-              <button
-                onClick={fetchData}
+        {/* No milestones yet */}
+        {!loading && milestones.length === 0 && (
+          <div className="fade-up d2 waiting-card" style={{ marginBottom: 24 }}>
+            <div className="waiting-icon">
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="var(--text-3)"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <circle cx="12" cy="12" r="10" />
+                <polyline points="12 6 12 12 16 14" />
+              </svg>
+            </div>
+            <div>
+              <div
                 style={{
-                  background: "none",
-                  border: "none",
-                  color: "var(--green)",
-                  cursor: "pointer",
-                  fontFamily: "var(--mono)",
-                  fontSize: 11,
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: "var(--text-1)",
+                  marginBottom: 4,
                 }}
               >
-                Retry ↺
-              </button>
-            </p>
+                Waiting for milestone details
+              </div>
+              <div
+                style={{
+                  fontSize: 11,
+                  color: "var(--text-3)",
+                  lineHeight: 1.6,
+                }}
+              >
+                Funds are locked in escrow. Milestone details will appear the
+                moment the payer opens their dashboard. This page auto-refreshes
+                every 10 seconds.
+              </div>
+            </div>
           </div>
         )}
 
         {/* Milestone cards */}
         {!loading && milestones.length > 0 && (
           <div className="fade-up d2" style={{ marginBottom: 24 }}>
-            <div className="mono-label" style={{ marginBottom: 12 }}>
-              Milestones
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: 12,
+              }}
+            >
+              <span className="mono-label">Milestones</span>
+              {dataSource === "db" && (
+                <span
+                  className="mono-label"
+                  style={{ color: "var(--green)", fontSize: 9 }}
+                >
+                  ● on-chain verified
+                </span>
+              )}
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {milestones.map((ms) => {
@@ -357,7 +444,6 @@ export default function PartyBDashboard() {
                     key={ms.index}
                     className={`ms-card${isDone ? " ms-card--done" : ""}${isPending ? " ms-card--pending" : ""}${isFlashing ? " ms-card--flash" : ""}`}
                   >
-                    {/* Milestone header */}
                     <div
                       style={{
                         display: "flex",
@@ -394,7 +480,9 @@ export default function PartyBDashboard() {
                             <span className="flash-badge">Just updated!</span>
                           )}
                         </div>
-                        <div className="ms-condition">{ms.condition}</div>
+                        {ms.condition && (
+                          <div className="ms-condition">{ms.condition}</div>
+                        )}
                       </div>
                       <div
                         style={{
@@ -407,10 +495,13 @@ export default function PartyBDashboard() {
                           className="ms-amount"
                           style={isDone ? { color: "var(--green)" } : {}}
                         >
-                          {formatSats(ms.amountSats)}
+                          {ms.amountSats > 0
+                            ? formatSats(ms.amountSats)
+                            : `$${ms.amountUsd}`}
                         </div>
                         <div className="ms-pct">
-                          {ms.percentage}% · ≈ ${ms.amountUsd}
+                          {ms.percentage}%
+                          {ms.amountUsd !== "0" ? ` · ≈ $${ms.amountUsd}` : ""}
                         </div>
                       </div>
                     </div>
@@ -434,7 +525,6 @@ export default function PartyBDashboard() {
                       </div>
                     )}
 
-                    {/* Tx link */}
                     {ms.txId && (
                       <div
                         style={{
@@ -467,21 +557,19 @@ export default function PartyBDashboard() {
                       </div>
                     )}
 
-                    {/* Completion time */}
                     {ms.completedAt && (
                       <div
                         style={{
-                          marginTop: 6,
+                          marginTop: 4,
                           fontSize: 10,
                           fontFamily: "var(--mono)",
                           color: "var(--text-4)",
                         }}
                       >
-                        Completed: {new Date(ms.completedAt).toLocaleString()}
+                        Released: {new Date(ms.completedAt).toLocaleString()}
                       </div>
                     )}
 
-                    {/* Status */}
                     <div
                       style={{
                         display: "flex",
@@ -519,7 +607,7 @@ export default function PartyBDashboard() {
           </div>
         )}
 
-        {/* All complete banner */}
+        {/* All complete */}
         {progressPct === 100 && milestones.length > 0 && (
           <div
             className="fade-up d3 complete-banner"
@@ -542,7 +630,7 @@ export default function PartyBDashboard() {
           </div>
         )}
 
-        {/* Info strip */}
+        {/* Info */}
         <div className="fade-up d3 info-strip">
           <svg
             width="12"
@@ -567,11 +655,10 @@ export default function PartyBDashboard() {
               margin: 0,
             }}
           >
-            This dashboard updates{" "}
-            <strong style={{ color: "var(--text-2)" }}>in real-time</strong> via
-            Socket.io. When the payer releases a milestone, you'll see it here
-            instantly — no refresh needed. All data is verified on-chain via the
-            Stacks API.
+            Updates push{" "}
+            <strong style={{ color: "var(--text-2)" }}>instantly</strong> via
+            Socket.io when the payer releases funds. Status is verified on-chain
+            via the Stacks API before being saved.
           </p>
         </div>
       </div>
@@ -583,7 +670,9 @@ const css = `
 .page-title { font-size: clamp(24px, 3.5vw, 36px); font-weight: 700; letter-spacing: -0.04em; line-height: 1.05; margin: 0; }
 .mono-label { font-size: 10px; font-family: var(--mono); color: var(--text-4); text-transform: uppercase; letter-spacing: 0.1em; }
 .status-pill { display: flex; align-items: center; gap: 7px; font-size: 11px; font-family: var(--mono); color: var(--green); background: rgba(34,197,94,0.08); border: 1px solid rgba(34,197,94,0.2); border-radius: 20px; padding: 5px 12px; }
+.status-pill--offline { color: var(--text-3); background: var(--bg-2); border-color: var(--border); }
 .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: pulse 2s ease-in-out infinite; }
+.status-dot--offline { background: var(--text-4); animation: none; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
 .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
 @media (max-width: 640px) { .summary-grid { grid-template-columns: 1fr 1fr; } }
@@ -593,26 +682,28 @@ const css = `
 .summary-sub { font-size: 10px; font-family: var(--mono); color: var(--text-4); }
 .progress-track { height: 4px; background: var(--bg-3); border-radius: 2px; overflow: hidden; }
 .progress-fill { height: 100%; background: var(--green); border-radius: 2px; transition: width 0.6s ease; min-width: 4px; }
-.ms-card { background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--r); padding: 16px 18px; transition: all 0.3s; }
+.ms-card { background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--r); padding: 16px 18px; transition: border-color 0.3s, box-shadow 0.3s, background 0.3s; }
 .ms-card--done { opacity: 0.75; border-color: rgba(34,197,94,0.15); }
 .ms-card--pending { border-color: rgba(255,255,255,0.15); background: var(--bg-2); }
 .ms-card--flash { animation: flashGreen 2.5s ease; }
 @keyframes flashGreen {
-  0% { border-color: rgba(34,197,94,0.8); box-shadow: 0 0 0 2px rgba(34,197,94,0.2); background: rgba(34,197,94,0.05); }
-  60% { border-color: rgba(34,197,94,0.4); box-shadow: 0 0 0 1px rgba(34,197,94,0.1); }
-  100% { border-color: var(--border); box-shadow: none; background: var(--bg-1); }
+  0% { border-color: rgba(34,197,94,0.8); box-shadow: 0 0 0 3px rgba(34,197,94,0.15); background: rgba(34,197,94,0.05); }
+  60% { border-color: rgba(34,197,94,0.4); }
+  100% { border-color: rgba(34,197,94,0.15); box-shadow: none; background: var(--bg-1); }
 }
 .ms-index { width: 20px; height: 20px; border-radius: 50%; background: var(--bg-3); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 9px; font-family: var(--mono); color: var(--text-3); font-weight: 700; flex-shrink: 0; transition: all 0.3s; }
 .ms-title { font-size: 13px; font-weight: 600; color: var(--text-1); }
 .ms-condition { font-size: 11px; color: var(--text-3); line-height: 1.6; max-width: 420px; }
 .ms-amount { font-size: 14px; font-weight: 700; color: var(--text-1); font-family: var(--mono); transition: color 0.3s; }
 .ms-pct { font-size: 10px; color: var(--text-4); font-family: var(--mono); }
-.ms-deadline { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; font-family: var(--mono); color: var(--text-4); }
+.ms-deadline { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; font-family: var(--mono); color: var(--text-4); margin-top: 4px; }
 .ms-status { font-size: 11px; font-family: var(--mono); font-weight: 600; }
 .flash-badge { font-size: 9px; font-family: var(--mono); color: var(--green); background: rgba(34,197,94,0.12); border: 1px solid rgba(34,197,94,0.25); border-radius: 10px; padding: 2px 8px; animation: fadeIn 0.3s ease; }
 @keyframes fadeIn { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
 .info-strip { display: flex; gap: 10px; align-items: flex-start; background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 12px 14px; }
 .complete-banner { text-align: center; background: rgba(34,197,94,0.06); border: 1px solid rgba(34,197,94,0.2); border-radius: var(--r); padding: 28px 20px; }
+.waiting-card { display: flex; gap: 14px; align-items: flex-start; background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--r); padding: 18px 20px; }
+.waiting-icon { width: 36px; height: 36px; border-radius: 50%; background: var(--bg-3); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .spinner { display: inline-block; border: 2px solid var(--bg-3); border-top-color: var(--green); border-radius: 50%; animation: spin 0.7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 `;

@@ -1,6 +1,5 @@
-// agreement/[id]/page.tsx
 "use client";
-import { useEffect, useMemo } from "react";
+import { use, useEffect, useMemo } from "react";
 import { Provider, useDispatch, useSelector } from "react-redux";
 import { configureStore } from "@reduxjs/toolkit";
 import partyBReducer from "@/store/slices/partyBSlice";
@@ -18,10 +17,9 @@ import PartyBDashboard from "@/components/screens/Party-B/PartyBDashboard";
 import { AppDispatch, RootState } from "@/store";
 
 interface PageProps {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }
 
-// Inner component — uses partyBStore context
 function PartyBApp({ agreementId }: { agreementId: string }) {
   const dispatch = useDispatch<AppDispatch>();
   const { screen, loadError } = useSelector((s: RootState) => s.partyB);
@@ -55,10 +53,9 @@ function PartyBApp({ agreementId }: { agreementId: string }) {
   }
 }
 
-// Create a FRESH store per page mount — true isolation
-// (If you want persistence across re-renders, hoist this outside component)
 export default function AgreementPage({ params }: PageProps) {
-  // Create a fresh partyBStore instance per page — never shared with Party A
+  const { id } = use(params); // ✅ unwrap the Promise
+
   const freshStore = useMemo(
     () =>
       configureStore({
@@ -69,7 +66,7 @@ export default function AgreementPage({ params }: PageProps) {
 
   return (
     <Provider store={freshStore}>
-      <PartyBApp agreementId={params.id} />
+      <PartyBApp agreementId={id} />
     </Provider>
   );
 }

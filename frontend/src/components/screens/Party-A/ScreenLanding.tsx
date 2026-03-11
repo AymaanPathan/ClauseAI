@@ -583,51 +583,101 @@ export default function ScreenLanding() {
   // Fetch agreements when wallet is known
   const fetchAgreements = useCallback(async (address: string) => {
     setLoadingAgreements(true);
+    const seen = new Set<string>();
+    const results: Agreement[] = [];
+
+    // ── 1. Fetch as Party A (payer) by wallet ─────────────────
     try {
-      // Try the dedicated list endpoint first
       const res = await fetch(
-        `${API_BASE}/api/agreements?partyA=${encodeURIComponent(address)}`,
-        { headers: { "Content-Type": "application/json" } },
+        `${API_BASE}/api/agreement?partyA=${encodeURIComponent(address)}`,
       );
       if (res.ok) {
         const data = await res.json();
-        const list = Array.isArray(data) ? data : (data.agreements ?? []);
-        setAgreements(list);
-        setLoadingAgreements(false);
-        return;
-      }
-      // Fallback: if endpoint doesn't exist yet (404/405), try the milestones
-      // endpoint for known agreement IDs stored in localStorage
-      const storedId = localStorage.getItem("pA_agreementId");
-      if (storedId) {
-        const r2 = await fetch(
-          `${API_BASE}/api/agreement/${storedId}/milestones`,
-        );
-        if (r2.ok) {
-          const d2 = await r2.json();
-          if (d2 && d2.agreementId) setAgreements([d2]);
+        const list: Agreement[] = Array.isArray(data)
+          ? data
+          : (data.agreements ?? []);
+        for (const a of list) {
+          if (!seen.has(a.agreementId)) {
+            seen.add(a.agreementId);
+            results.push(a);
+          }
         }
       }
     } catch (err) {
-      console.error("[fetchAgreements]", err);
-      // Last resort: load from localStorage pA_agreementId
-      const storedId = localStorage.getItem("pA_agreementId");
-      if (storedId) {
+      console.error("[fetchAgreements] partyA fetch failed:", err);
+    }
+
+    // ── 2. Fetch as Party B (receiver) by wallet ──────────────
+    // Requires partyBWallet field in DB — written by POST /:id/partyb-wallet
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/agreement?partyB=${encodeURIComponent(address)}`,
+      );
+      if (res.ok) {
+        const data = await res.json();
+        const list: Agreement[] = Array.isArray(data)
+          ? data
+          : (data.agreements ?? []);
+        for (const a of list) {
+          if (!seen.has(a.agreementId)) {
+            seen.add(a.agreementId);
+            results.push(a);
+          }
+        }
+      }
+    } catch (err) {
+      console.error("[fetchAgreements] partyB fetch failed:", err);
+    }
+
+    // ── 3. Fallback: pB_agreements list from localStorage ─────
+    // Written by partyBSlice on every approve — works even before partyBWallet is in DB
+    try {
+      const pBIds: string[] = JSON.parse(
+        localStorage.getItem("pB_agreements") ?? "[]",
+      );
+      for (const id of pBIds) {
+        if (seen.has(id)) continue;
         try {
-          const r = await fetch(
-            `${API_BASE}/api/agreement/${storedId}/milestones`,
-          );
+          const r = await fetch(`${API_BASE}/api/agreement/${id}/milestones`);
           if (r.ok) {
             const d = await r.json();
-            if (d && d.agreementId) setAgreements([d]);
+            if (d?.agreementId) {
+              seen.add(d.agreementId);
+              results.push(d);
+            }
           }
         } catch {
           /* ignore */
         }
       }
-    } finally {
-      setLoadingAgreements(false);
+    } catch {
+      /* ignore */
     }
+
+    // ── 4. Last resort: pA_agreementId from localStorage ──────
+    const storedId = localStorage.getItem("pA_agreementId");
+    if (storedId && !seen.has(storedId)) {
+      try {
+        const r = await fetch(
+          `${API_BASE}/api/agreement/${storedId}/milestones`,
+        );
+        if (r.ok) {
+          const d = await r.json();
+          if (d?.agreementId) {
+            const storedTerms = localStorage.getItem("pA_terms");
+            results.push({
+              ...d,
+              terms: storedTerms ? JSON.parse(storedTerms) : {},
+            });
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
+    setAgreements(results);
+    setLoadingAgreements(false);
   }, []);
 
   useEffect(() => {

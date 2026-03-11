@@ -1,12 +1,10 @@
 // ============================================================
-// store/partyB/partyBSlice.ts
+// store/partyB/partyBSlice.ts — FIXED
 //
-// ISOLATED state for Party B only. Party B's journey:
-//   Opens /agreement/[id] → Reviews terms → Connects wallet
-//   → Approves agreement → Waits for Party A to lock funds
-//   → Both get notified → Dashboard
-//
-// This slice NEVER shares state with partyASlice.
+// Key fix: approveAsPartyBThunk now saves agreementId to a
+// pB_agreements JSON array in localStorage so Party B can see
+// their history on any page that reads this list.
+// Also saves partyB wallet address to the Agreement DB record.
 // ============================================================
 
 import { createSlice, createAsyncThunk, PayloadAction } from "@reduxjs/toolkit";
@@ -22,38 +20,28 @@ import { registerParty } from "@/api/PresenceaApi";
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export type PartyBScreen =
-  | "loading" // fetching agreement from server
-  | "error" // agreement not found / server error
-  | "review" // reading terms
-  | "connect-wallet" // connecting Leather wallet
-  | "approve" // confirming approval
-  | "waiting-funds" // waiting for Party A to lock funds
-  | "dashboard"; // both done, funds locked
+  | "loading"
+  | "error"
+  | "review"
+  | "connect-wallet"
+  | "approve"
+  | "waiting-funds"
+  | "dashboard";
 
 export interface PartyBState {
   screen: PartyBScreen;
   agreementId: string | null;
   loadError: string | null;
-
-  // Agreement terms (fetched from server)
   terms: ParsedAgreement | ParsedAgreementV2 | null;
-  partyAWallet: string | null; // Party A's wallet (counterparty)
-
-  // Party B wallet
+  partyAWallet: string | null;
   walletConnected: boolean;
   walletAddress: string | null;
-
-  // Approval state (always fetched fresh — never from localStorage)
   partyAApproved: boolean;
   partyBApproved: boolean;
-
-  // UX state
   approving: boolean;
   approveError: string | null;
   connecting: boolean;
   connectError: string | null;
-
-  // Fund notification
   fundsLocked: boolean;
   amountLocked: string | null;
 }
@@ -76,12 +64,33 @@ const initialState: PartyBState = {
   amountLocked: null,
 };
 
+// ── localStorage helpers ──────────────────────────────────────
+
+/** Read the list of agreement IDs Party B has joined on this device */
+export function getPartyBAgreementIds(): string[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem("pB_agreements");
+    return raw ? (JSON.parse(raw) as string[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Add an agreement ID to Party B's local history (deduped) */
+function savePartyBAgreementId(agreementId: string): void {
+  if (typeof window === "undefined") return;
+  const existing = getPartyBAgreementIds();
+  if (!existing.includes(agreementId)) {
+    localStorage.setItem(
+      "pB_agreements",
+      JSON.stringify([agreementId, ...existing]),
+    );
+  }
+}
+
 // ── Thunks ─────────────────────────────────────────────────────
 
-/**
- * Init Party B: always fetches from server. Never trusts localStorage
- * for approval flags. Only uses localStorage to restore wallet address.
- */
 export const initPartyBThunk = createAsyncThunk(
   "partyB/init",
   async (agreementId: string, { rejectWithValue }) => {
@@ -94,7 +103,6 @@ export const initPartyBThunk = createAsyncThunk(
       }
       const data = await res.json();
 
-      // Only restore wallet if this device previously joined as Party B
       const storedAddress =
         typeof window !== "undefined"
           ? localStorage.getItem(`pB_wallet_${agreementId}`)
@@ -106,7 +114,6 @@ export const initPartyBThunk = createAsyncThunk(
         partyAWallet: data.partyA ?? null,
         partyAApproved: data.partyAApproved ?? false,
         partyBApproved: data.partyBApproved ?? false,
-        // "already approved" = server confirms AND same device/wallet
         alreadyApproved:
           data.partyBApproved === true &&
           !!storedAddress &&
@@ -147,22 +154,42 @@ export const approveAsPartyBThunk = createAsyncThunk(
     { rejectWithValue },
   ) => {
     try {
-      // Register presence first (so Party A can see our wallet)
+      // 1. Register presence (so Party A can see wallet)
       await registerParty(payload.agreementId, "partyB", payload.address);
-      // Then approve
+
+      // 2. Approve
       const result = await approveAgreement(
         payload.agreementId,
         "partyB",
         payload.address,
       );
-      // Persist wallet for this agreement on this device
+
+      // 3. Persist wallet for this agreement on this device
       if (typeof window !== "undefined") {
         localStorage.setItem(
           `pB_wallet_${payload.agreementId}`,
           payload.address,
         );
         localStorage.setItem(`pB_agreementId`, payload.agreementId);
+        // KEY FIX: save to Party B's agreement history list
+        savePartyBAgreementId(payload.agreementId);
       }
+
+      // 4. Also update DB to store Party B's actual wallet address
+      //    in a dedicated field so we can query by it later
+      try {
+        await fetch(
+          `${API_BASE}/api/agreement/${payload.agreementId}/partyb-wallet`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ walletAddress: payload.address }),
+          },
+        );
+      } catch {
+        // Non-fatal — history still works via localStorage
+      }
+
       return result;
     } catch (err: unknown) {
       return rejectWithValue(
@@ -194,8 +221,6 @@ const partyBSlice = createSlice({
     setScreen(state, action: PayloadAction<PartyBScreen>) {
       state.screen = action.payload;
     },
-
-    /** Called from SSE stream when approval state changes */
     applyApprovalUpdate(
       state,
       action: PayloadAction<{
@@ -210,20 +235,16 @@ const partyBSlice = createSlice({
         state.partyAWallet = action.payload.partyA;
       }
     },
-
-    /** Called when SSE or polling detects funds are locked */
     notifyFundsLocked(state, action: PayloadAction<{ amountLocked: string }>) {
       state.fundsLocked = true;
       state.amountLocked = action.payload.amountLocked;
       state.screen = "dashboard";
     },
-
     reset() {
       return initialState;
     },
   },
   extraReducers: (builder) => {
-    // initPartyB
     builder
       .addCase(initPartyBThunk.pending, (state) => {
         state.screen = "loading";
@@ -242,12 +263,12 @@ const partyBSlice = createSlice({
           state.walletAddress = p.storedAddress;
         }
 
-        // Route determination:
-        if (p.alreadyApproved) {
-          // Returning Party B who already approved → straight to waiting
+        // KEY FIX: if Party B has previously approved this agreement
+        // on this device, also add it to their history list
+        if (p.partyBApproved && p.storedAddress) {
+          savePartyBAgreementId(p.agreementId);
           state.screen = "waiting-funds";
         } else {
-          // Fresh Party B → start at review
           state.screen = "review";
         }
       })
@@ -256,7 +277,6 @@ const partyBSlice = createSlice({
         state.loadError = action.payload as string;
       });
 
-    // connectWallet
     builder
       .addCase(connectPartyBWalletThunk.pending, (state) => {
         state.connecting = true;
@@ -272,7 +292,6 @@ const partyBSlice = createSlice({
         state.connectError = action.payload as string;
       });
 
-    // approve
     builder
       .addCase(approveAsPartyBThunk.pending, (state) => {
         state.approving = true;
@@ -289,7 +308,6 @@ const partyBSlice = createSlice({
         state.approveError = action.payload as string;
       });
 
-    // poll approval
     builder.addCase(pollPartyBApprovalThunk.fulfilled, (state, action) => {
       state.partyAApproved = action.payload.partyAApproved;
       state.partyBApproved = action.payload.partyBApproved;

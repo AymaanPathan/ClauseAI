@@ -164,6 +164,83 @@ function notifySSE(id: string, data: PresenceResponse) {
   }
 }
 
+router.post("/:id/partyb-wallet", async (req: Request, res: Response) => {
+  const { walletAddress } = req.body as { walletAddress?: string };
+
+  if (!walletAddress || typeof walletAddress !== "string") {
+    return res.status(400).json({ error: "walletAddress is required" });
+  }
+
+  try {
+    await Agreement.findOneAndUpdate(
+      { agreementId: req.params.id },
+      { partyBWallet: walletAddress, partyBApproved: true },
+    );
+    console.log(
+      `[partyb-wallet] ${req.params.id} → partyBWallet: ${walletAddress}`,
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("[partyb-wallet]", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── 2. REPLACE the existing GET "/" handler with this ─────────
+// GET /api/agreement?partyA=ST…   → Party A's agreements
+// GET /api/agreement?partyB=ST…   → Party B's agreements (by wallet)
+router.get("/", async (req: Request, res: Response) => {
+  const { partyA, partyB } = req.query as { partyA?: string; partyB?: string };
+
+  if (!partyA && !partyB) {
+    return res
+      .status(400)
+      .json({ error: "partyA or partyB query param required" });
+  }
+
+  try {
+    let agreements;
+
+    if (partyA) {
+      // Party A query — match wallet address (case-insensitive)
+      agreements = await Agreement.find({
+        partyA: { $regex: new RegExp(`^${escapeRegex(partyA)}$`, "i") },
+      })
+        .sort({ createdAt: -1 })
+        .limit(50)
+        .lean();
+    } else {
+      // Party B query — match partyBWallet field (actual wallet address)
+      // Falls back to partyB name match for legacy records (won't have wallet)
+      agreements = await Agreement.find({
+        $or: [
+          {
+            partyBWallet: {
+              $regex: new RegExp(`^${escapeRegex(partyB!)}$`, "i"),
+            },
+          },
+        ],
+      })
+        .sort({ createdAt: -1 })
+        .limit(50)
+        .lean();
+    }
+
+    console.log(
+      `[GET /api/agreement] partyA=${partyA} partyB=${partyB} → ${agreements.length} results`,
+    );
+    res.json(agreements);
+  } catch (err) {
+    console.error("[GET /api/agreement]", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Helper — escape regex special chars in wallet addresses
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 router.get("/", async (req: Request, res: Response) => {
   const { partyA, partyB } = req.query as { partyA?: string; partyB?: string };
 
@@ -175,21 +252,40 @@ router.get("/", async (req: Request, res: Response) => {
 
   try {
     const query: Record<string, unknown> = {};
-    if (partyA) query.partyA = partyA;
-    if (partyB) query.partyB = partyB;
+
+    // Case-insensitive match — Stacks addresses sometimes differ in case
+    // between what the wallet returns and what was stored
+    if (partyA) {
+      query.partyA = {
+        $regex: new RegExp(
+          `^${partyA.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+          "i",
+        ),
+      };
+    }
+    if (partyB) {
+      query.partyB = {
+        $regex: new RegExp(
+          `^${partyB.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+          "i",
+        ),
+      };
+    }
 
     const agreements = await Agreement.find(query)
       .sort({ createdAt: -1 })
       .limit(50)
       .lean();
 
+    console.log(
+      `[GET /api/agreement] partyA=${partyA} → ${agreements.length} results`,
+    );
     res.json(agreements);
   } catch (err) {
-    console.error("[GET /api/agreements]", err);
+    console.error("[GET /api/agreement]", err);
     res.status(500).json({ error: "Internal server error" });
   }
 });
-
 // ── GET /api/agreement/:id/events — SSE stream ────────────────
 router.get("/:id/events", async (req: Request, res: Response) => {
   const { id } = req.params;

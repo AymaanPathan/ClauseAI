@@ -1,14 +1,9 @@
 // ============================================================
-// store/partyA/partyASlice.ts — PRODUCTION
+// store/partyA/partyASlice.ts — PRODUCTION v2
 //
-// New additions over previous version:
-//   • completeMilestoneThunk  — calls callCompleteMilestone + Leather popup
-//   • disputeMilestoneThunk   — calls callDisputeMilestone  + Leather popup
-//   • triggerTimeoutThunk     — calls callTriggerMilestoneTimeout
-//   • pollMilestoneTxThunk    — polls Stacks explorer until tx confirmed/failed
-//   • setMilestoneTxState     — overwrite a single milestone tx state (retry)
-//   • setMilestoneOnChainStatus — store on-chain status from contractReads
-//   • milestoneOnChainStatuses added to state
+// New additions over v1:
+//   • saveAgreementToDbThunk  — saves agreement + milestones to MongoDB
+//   • notifyMilestoneToDb     — after tx confirmed, PATCH DB + emit socket event
 // ============================================================
 
 import { createSlice, createAsyncThunk, PayloadAction } from "@reduxjs/toolkit";
@@ -37,8 +32,7 @@ import { approveAgreement, getApprovalState } from "@/api/approvalApi";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-// ── Tx polling helper (Stacks explorer) ──────────────────────
-
+// ── Tx polling helper ─────────────────────────────────────────
 const STACKS_API_BASE =
   NETWORK_NAME === "mainnet"
     ? "https://api.mainnet.hiro.so"
@@ -50,14 +44,12 @@ async function fetchTxStatus(
   "pending" | "success" | "abort_by_response" | "abort_by_post_condition"
 > {
   const res = await fetch(`${STACKS_API_BASE}/extended/v1/tx/${txId}`);
-  if (!res.ok) return "pending"; // treat 404 as still indexing
+  if (!res.ok) return "pending";
   const data = await res.json();
-  // tx_status can be: pending | success | abort_by_response | abort_by_post_condition
   return data.tx_status ?? "pending";
 }
 
-// ── Screen types ──────────────────────────────────────────────
-
+// ── Types ─────────────────────────────────────────────────────
 export type PartyAScreen =
   | "landing"
   | "select-type"
@@ -104,43 +96,34 @@ export interface PartyAState {
   screen: PartyAScreen;
   agreementType: AgreementType | null;
   rawText: string;
-
   partyAName: string;
   partyBName: string;
   arbitratorName: string;
-
   parsedTerms: ParsedAgreement | ParsedAgreementV2 | null;
   editedTerms: ParsedAgreement | null;
   parseLoading: boolean;
   parseError: string | null;
   parseMeta: { provider: string; model: string; latency_ms: number } | null;
-
   walletConnected: boolean;
   walletAddress: string | null;
-
   agreementId: string | null;
   shareLink: string | null;
-
   partyBConnected: boolean;
   partyBWallet: string | null;
   partyBApproved: boolean;
   partyAApproved: boolean;
-
   presenceRegistered: boolean;
-
   fundState: FundState;
   amountLocked: string | null;
   milestoneInputs: MilestoneInput[];
-
   counterpartyWallet: string | null;
   blockHeight: number | null;
-
   txCreate: TxState;
   txDeposit: TxState;
-  // Per-milestone tx state (index → TxState)
   txMilestone: Record<number, TxState>;
-  // On-chain milestone statuses from contractReads (index → MILESTONE_STATUS number)
   milestoneOnChainStatuses: Record<number, number>;
+  // Track which milestones have been notified to DB (avoid duplicate calls)
+  milestonesNotifiedToDb: Record<number, boolean>;
 }
 
 const initialState: PartyAState = {
@@ -173,6 +156,7 @@ const initialState: PartyAState = {
   txDeposit: emptyTx(),
   txMilestone: {},
   milestoneOnChainStatuses: {},
+  milestonesNotifiedToDb: {},
 };
 
 // ── Thunks ─────────────────────────────────────────────────────
@@ -274,6 +258,86 @@ export const pollApprovalStateThunk = createAsyncThunk(
   },
 );
 
+// ── NEW: save agreement + milestones to MongoDB ────────────────
+export const saveAgreementToDbThunk = createAsyncThunk(
+  "partyA/saveToDb",
+  async (
+    payload: {
+      agreementId: string;
+      partyA: string;
+      partyB?: string;
+      arbitrator?: string;
+      totalAmountUsd: number;
+      totalAmountSats: number;
+      terms: Record<string, unknown>;
+      milestones: Array<{
+        index: number;
+        title: string;
+        percentage: number;
+        condition: string;
+        deadline?: string;
+        amountUsd: string;
+        amountSats: number;
+      }>;
+      onChainCreateTxId?: string;
+    },
+    { rejectWithValue },
+  ) => {
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/agreement/${payload.agreementId}/create`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        },
+      );
+      if (!res.ok) throw new Error(`DB save failed: ${res.status}`);
+      return await res.json();
+    } catch (err) {
+      return rejectWithValue(
+        err instanceof Error ? err.message : "DB save failed",
+      );
+    }
+  },
+);
+
+// ── NEW: notify DB + socket that a milestone tx was confirmed ──
+export const notifyMilestoneToDbThunk = createAsyncThunk(
+  "partyA/notifyMilestoneToDb",
+  async (
+    payload: {
+      agreementId: string;
+      milestoneIndex: number;
+      action: "complete" | "dispute" | "timeout";
+      txId: string;
+      txUrl?: string;
+      callerAddress?: string;
+    },
+    { rejectWithValue },
+  ) => {
+    try {
+      const res = await fetch(
+        `${API_BASE}/api/agreement/${payload.agreementId}/milestone`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        },
+      );
+      if (!res.ok) throw new Error(`Milestone notify failed: ${res.status}`);
+      const data = await res.json();
+      return { milestoneIndex: payload.milestoneIndex, ...data };
+    } catch (err) {
+      // Non-fatal — tx is already on-chain. Just log.
+      console.warn("[notifyMilestoneToDb] failed:", err);
+      return rejectWithValue(
+        err instanceof Error ? err.message : "Notify failed",
+      );
+    }
+  },
+);
+
 export const createAgreementThunk = createAsyncThunk(
   "partyA/createOnChain",
   async (
@@ -337,14 +401,12 @@ export const completeMilestoneThunk = createAsyncThunk(
     { rejectWithValue },
   ) => {
     try {
-      // Always fetch the real on-chain amount before releasing
       const { getMilestone } = await import("@/lib/contractReads");
       const ms = await getMilestone(
         payload.agreementId,
         payload.milestoneIndex,
       );
       const onChainAmount = BigInt(ms?.amount ?? 0);
-      
       if (onChainAmount === BigInt(0)) {
         return rejectWithValue({
           milestoneIndex: payload.milestoneIndex,
@@ -352,11 +414,10 @@ export const completeMilestoneThunk = createAsyncThunk(
             "Milestone amount is 0 on-chain. Already completed or not deposited.",
         });
       }
-
       const txId = await callCompleteMilestone(
         payload.agreementId,
         payload.milestoneIndex,
-        onChainAmount, // ← real value from chain, not from Redux state
+        onChainAmount,
       );
       return {
         milestoneIndex: payload.milestoneIndex,
@@ -372,7 +433,6 @@ export const completeMilestoneThunk = createAsyncThunk(
   },
 );
 
-// ── NEW: dispute-milestone ────────────────────────────────────
 export const disputeMilestoneThunk = createAsyncThunk(
   "partyA/disputeMilestone",
   async (
@@ -415,11 +475,10 @@ export const triggerTimeoutThunk = createAsyncThunk(
         payload.milestoneIndex,
       );
       const onChainAmount = BigInt(ms?.amount ?? 0);
-
       const txId = await callTriggerMilestoneTimeout(
         payload.agreementId,
         payload.milestoneIndex,
-        onChainAmount, // ← real value from chain
+        onChainAmount,
       );
       return {
         milestoneIndex: payload.milestoneIndex,
@@ -435,22 +494,20 @@ export const triggerTimeoutThunk = createAsyncThunk(
   },
 );
 
-// ── NEW: poll tx until confirmed or failed ────────────────────
-// Polls the Stacks explorer API every 5 seconds for up to 15 minutes.
-// Dispatches setMilestoneTxState when the status changes.
-// Calls onConfirmed() when the tx succeeds so the dashboard can
-// re-read on-chain state.
 export const pollMilestoneTxThunk = createAsyncThunk(
   "partyA/pollMilestoneTx",
   async (
     payload: {
       milestoneIndex: number;
       txId: string;
+      agreementId?: string;
+      action?: "complete" | "dispute" | "timeout";
+      callerAddress?: string;
       onConfirmed?: () => void;
     },
     { dispatch, rejectWithValue },
   ) => {
-    const MAX_POLLS = 180; // 180 × 5s = 15 minutes
+    const MAX_POLLS = 180;
     let attempts = 0;
 
     while (attempts < MAX_POLLS) {
@@ -472,6 +529,21 @@ export const pollMilestoneTxThunk = createAsyncThunk(
               },
             }),
           );
+
+          // ── Notify DB + socket on success ──
+          if (payload.agreementId && payload.action) {
+            dispatch(
+              notifyMilestoneToDbThunk({
+                agreementId: payload.agreementId,
+                milestoneIndex: payload.milestoneIndex,
+                action: payload.action,
+                txId: payload.txId,
+                txUrl: explorerTxUrl(payload.txId),
+                callerAddress: payload.callerAddress,
+              }),
+            );
+          }
+
           payload.onConfirmed?.();
           return {
             milestoneIndex: payload.milestoneIndex,
@@ -502,7 +574,6 @@ export const pollMilestoneTxThunk = createAsyncThunk(
           };
         }
 
-        // Still pending — keep polling
         dispatch(
           setMilestoneTxState({
             index: payload.milestoneIndex,
@@ -519,7 +590,6 @@ export const pollMilestoneTxThunk = createAsyncThunk(
       }
     }
 
-    // Timed out
     dispatch(
       setMilestoneTxState({
         index: payload.milestoneIndex,
@@ -569,7 +639,6 @@ export const rehydratePartyAThunk = createAsyncThunk(
 );
 
 // ── Slice ──────────────────────────────────────────────────────
-
 const partyASlice = createSlice({
   name: "partyA",
   initialState,
@@ -668,7 +737,6 @@ const partyASlice = createSlice({
     setBlockHeight(state, action: PayloadAction<number>) {
       state.blockHeight = action.payload;
     },
-    // ── NEW: write a single milestone tx state (used by retry button) ──
     setMilestoneTxState(
       state,
       action: PayloadAction<{ index: number; tx: TxState }>,
@@ -678,7 +746,6 @@ const partyASlice = createSlice({
         [action.payload.index]: action.payload.tx,
       };
     },
-    // ── NEW: store on-chain milestone status from contractReads ──
     setMilestoneOnChainStatus(
       state,
       action: PayloadAction<{ index: number; status: number }>,
@@ -686,6 +753,12 @@ const partyASlice = createSlice({
       state.milestoneOnChainStatuses = {
         ...state.milestoneOnChainStatuses,
         [action.payload.index]: action.payload.status,
+      };
+    },
+    markMilestoneNotifiedToDb(state, action: PayloadAction<number>) {
+      state.milestonesNotifiedToDb = {
+        ...state.milestonesNotifiedToDb,
+        [action.payload]: true,
       };
     },
     resetAll() {
@@ -699,7 +772,7 @@ const partyASlice = createSlice({
   },
 
   extraReducers: (builder) => {
-    // ── parse ──────────────────────────────────────────────────
+    // parse
     builder
       .addCase(parseAgreementThunk.pending, (state) => {
         state.parseLoading = true;
@@ -732,7 +805,7 @@ const partyASlice = createSlice({
         state.parseError = action.payload as string;
       });
 
-    // ── connectWallet ──────────────────────────────────────────
+    // connectWallet
     builder.addCase(connectWalletThunk.fulfilled, (state, action) => {
       state.walletConnected = true;
       state.walletAddress = action.payload;
@@ -740,18 +813,18 @@ const partyASlice = createSlice({
         localStorage.setItem("pA_walletAddress", action.payload);
     });
 
-    // ── registerPresence ───────────────────────────────────────
+    // registerPresence
     builder.addCase(registerPartyAPresenceThunk.fulfilled, (state) => {
       state.presenceRegistered = true;
     });
 
-    // ── approve as Party A ─────────────────────────────────────
+    // approve as Party A
     builder.addCase(approveAsPartyAThunk.fulfilled, (state, action) => {
       state.partyAApproved = action.payload.partyAApproved;
       state.partyBApproved = action.payload.partyBApproved;
     });
 
-    // ── poll approval ──────────────────────────────────────────
+    // poll approval
     builder.addCase(pollApprovalStateThunk.fulfilled, (state, action) => {
       state.partyAApproved = action.payload.partyAApproved;
       state.partyBApproved = action.payload.partyBApproved;
@@ -761,7 +834,7 @@ const partyASlice = createSlice({
       }
     });
 
-    // ── createAgreement ────────────────────────────────────────
+    // createAgreement
     builder
       .addCase(createAgreementThunk.pending, (state) => {
         state.txCreate = {
@@ -788,7 +861,7 @@ const partyASlice = createSlice({
         };
       });
 
-    // ── deposit ────────────────────────────────────────────────
+    // deposit
     builder
       .addCase(depositThunk.pending, (state) => {
         state.txDeposit = {
@@ -820,7 +893,7 @@ const partyASlice = createSlice({
         };
       });
 
-    // ── completeMilestone ──────────────────────────────────────
+    // completeMilestone
     builder
       .addCase(completeMilestoneThunk.pending, (state, action) => {
         const idx = action.meta.arg.milestoneIndex;
@@ -837,22 +910,19 @@ const partyASlice = createSlice({
         };
       })
       .addCase(completeMilestoneThunk.rejected, (state, action) => {
-        const payload = action.payload as {
-          milestoneIndex: number;
-          error: string;
-        };
+        const p = action.payload as { milestoneIndex: number; error: string };
         state.txMilestone = {
           ...state.txMilestone,
-          [payload.milestoneIndex]: {
+          [p.milestoneIndex]: {
             status: "failed",
             txId: null,
             txUrl: null,
-            error: payload.error,
+            error: p.error,
           },
         };
       });
 
-    // ── disputeMilestone ───────────────────────────────────────
+    // disputeMilestone
     builder
       .addCase(disputeMilestoneThunk.pending, (state, action) => {
         const idx = action.meta.arg.milestoneIndex;
@@ -869,22 +939,19 @@ const partyASlice = createSlice({
         };
       })
       .addCase(disputeMilestoneThunk.rejected, (state, action) => {
-        const payload = action.payload as {
-          milestoneIndex: number;
-          error: string;
-        };
+        const p = action.payload as { milestoneIndex: number; error: string };
         state.txMilestone = {
           ...state.txMilestone,
-          [payload.milestoneIndex]: {
+          [p.milestoneIndex]: {
             status: "failed",
             txId: null,
             txUrl: null,
-            error: payload.error,
+            error: p.error,
           },
         };
       });
 
-    // ── triggerTimeout ─────────────────────────────────────────
+    // triggerTimeout
     builder
       .addCase(triggerTimeoutThunk.pending, (state, action) => {
         const idx = action.meta.arg.milestoneIndex;
@@ -901,22 +968,29 @@ const partyASlice = createSlice({
         };
       })
       .addCase(triggerTimeoutThunk.rejected, (state, action) => {
-        const payload = action.payload as {
-          milestoneIndex: number;
-          error: string;
-        };
+        const p = action.payload as { milestoneIndex: number; error: string };
         state.txMilestone = {
           ...state.txMilestone,
-          [payload.milestoneIndex]: {
+          [p.milestoneIndex]: {
             status: "failed",
             txId: null,
             txUrl: null,
-            error: payload.error,
+            error: p.error,
           },
         };
       });
 
-    // ── rehydrate ──────────────────────────────────────────────
+    // notifyMilestoneToDb — update local state with confirmed db status
+    builder.addCase(notifyMilestoneToDbThunk.fulfilled, (state, action) => {
+      if (action.payload?.milestoneIndex !== undefined) {
+        state.milestonesNotifiedToDb = {
+          ...state.milestonesNotifiedToDb,
+          [action.payload.milestoneIndex]: true,
+        };
+      }
+    });
+
+    // rehydrate
     builder.addCase(rehydratePartyAThunk.fulfilled, (state, action) => {
       if (!action.payload) return;
       const { agreementId, address, terms, milestones, agreementType, screen } =
@@ -967,6 +1041,7 @@ export const {
   markComplete,
   setMilestoneTxState,
   setMilestoneOnChainStatus,
+  markMilestoneNotifiedToDb,
   resetAll,
 } = partyASlice.actions;
 

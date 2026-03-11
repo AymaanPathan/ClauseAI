@@ -1,16 +1,53 @@
-// ============================================================
-// src/routes/agreement.ts — PRODUCTION
-// Redis-backed presence store + SSE real-time push.
-// Falls back to in-memory if Redis unavailable (dev mode).
-// ============================================================
-
 import { Router, Request, Response } from "express";
+import { Server as SocketIOServer } from "socket.io";
 import { getRedisClient, isRedisAvailable } from "../lib/redis";
+import Agreement from "../models/Agreement";
 
 const router = Router();
-const PRESENCE_TTL_SECONDS = 60 * 60 * 24; // 24h TTL per agreement
+const PRESENCE_TTL_SECONDS = 60 * 60 * 24; // 24h
 
-// ── In-memory fallback (dev / Redis-down) ─────────────────────
+// ── Socket.io injection ───────────────────────────────────────
+let _io: SocketIOServer | null = null;
+export function setSocketIO(io: SocketIOServer) {
+  _io = io;
+}
+function emit(agreementId: string, event: string, data: unknown) {
+  _io?.to(`agreement:${agreementId}`).emit(event, data);
+}
+
+// ── Stacks tx verifier ────────────────────────────────────────
+const STACKS_API =
+  process.env.STACKS_NETWORK === "mainnet"
+    ? "https://api.mainnet.hiro.so"
+    : "https://api.testnet.hiro.so";
+
+async function verifyStacksTx(txId: string): Promise<{
+  status: "success" | "pending" | "failed";
+  blockHeight?: number;
+  blockTime?: number;
+}> {
+  try {
+    const res = await fetch(`${STACKS_API}/extended/v1/tx/${txId}`);
+    if (!res.ok) return { status: "pending" };
+    const data: any = await res.json();
+    const s = data.tx_status;
+    if (s === "success") {
+      return {
+        status: "success",
+        blockHeight: data.block_height,
+        blockTime: data.block_time,
+      };
+    }
+    if (s === "abort_by_response" || s === "abort_by_post_condition") {
+      return { status: "failed" };
+    }
+    return { status: "pending" };
+  } catch {
+    return { status: "pending" };
+  }
+}
+
+// ── In-memory fallback ────────────────────────────────────────
 const memStore = new Map<string, PresenceEntry>();
 
 export interface PresenceEntry {
@@ -23,7 +60,6 @@ export interface PresenceEntry {
   createdAt: number | null;
   partyAApproved: boolean;
   partyBApproved: boolean;
-  // ── NEW: fund lock state ──────────────────────────────────
   fundsLocked: boolean;
   fundState: "idle" | "locked" | "released" | "refunded" | "disputed";
   amountLocked: string | null;
@@ -34,31 +70,29 @@ export interface PresenceResponse extends PresenceEntry {
   bothConnected: boolean;
 }
 
-// ── Persistence helpers ───────────────────────────────────────
-
+// ── Persistence helpers (Redis / mem) ─────────────────────────
 async function readPresence(id: string): Promise<PresenceEntry | null> {
   if (isRedisAvailable()) {
     const redis = getRedisClient();
     const raw = await redis.get(`presence:${id}`);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as PresenceEntry;
-    // Backfill fields for entries written before this version
-    parsed.partyAApproved = parsed.partyAApproved ?? false;
-    parsed.partyBApproved = parsed.partyBApproved ?? false;
-    parsed.fundsLocked = parsed.fundsLocked ?? false;
-    parsed.fundState = parsed.fundState ?? "idle";
-    parsed.amountLocked = parsed.amountLocked ?? null;
-    parsed.depositTxId = parsed.depositTxId ?? null;
-    return parsed;
+    const p = JSON.parse(raw) as PresenceEntry;
+    p.partyAApproved ??= false;
+    p.partyBApproved ??= false;
+    p.fundsLocked ??= false;
+    p.fundState ??= "idle";
+    p.amountLocked ??= null;
+    p.depositTxId ??= null;
+    return p;
   }
   const entry = memStore.get(id) ?? null;
   if (entry) {
-    entry.partyAApproved = entry.partyAApproved ?? false;
-    entry.partyBApproved = entry.partyBApproved ?? false;
-    entry.fundsLocked = entry.fundsLocked ?? false;
-    entry.fundState = entry.fundState ?? "idle";
-    entry.amountLocked = entry.amountLocked ?? null;
-    entry.depositTxId = entry.depositTxId ?? null;
+    entry.partyAApproved ??= false;
+    entry.partyBApproved ??= false;
+    entry.fundsLocked ??= false;
+    entry.fundState ??= "idle";
+    entry.amountLocked ??= null;
+    entry.depositTxId ??= null;
   }
   return entry;
 }
@@ -133,7 +167,6 @@ function notifySSE(id: string, data: PresenceResponse) {
 // ── GET /api/agreement/:id/events — SSE stream ────────────────
 router.get("/:id/events", async (req: Request, res: Response) => {
   const { id } = req.params;
-
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
@@ -179,13 +212,10 @@ router.get("/:id", async (req: Request, res: Response) => {
 });
 
 // ── GET /api/agreement/:id/status ────────────────────────────
-// Party B polls this to detect when funds are locked.
 router.get("/:id/status", async (req: Request, res: Response) => {
   try {
     const entry = await readPresence(req.params.id);
-    if (!entry) {
-      return res.status(404).json({ error: "Agreement not found" });
-    }
+    if (!entry) return res.status(404).json({ error: "Agreement not found" });
     res.json({
       fundState: entry.fundState ?? "idle",
       fundsLocked: entry.fundsLocked ?? false,
@@ -198,9 +228,196 @@ router.get("/:id/status", async (req: Request, res: Response) => {
   }
 });
 
-// ── POST /api/agreement/:id/status — Party A marks funds locked
-// Called by Party A's frontend after depositThunk confirms.
-// Persists fund state and fires SSE so Party B redirects instantly.
+// ── GET /api/agreement/:id/milestones — full milestone statuses from DB
+router.get("/:id/milestones", async (req: Request, res: Response) => {
+  try {
+    const agreement = await Agreement.findOne({ agreementId: req.params.id });
+    if (!agreement)
+      return res.status(404).json({ error: "Agreement not found" });
+    res.json({
+      agreementId: agreement.agreementId,
+      milestones: agreement.milestones,
+      fundState: agreement.fundState,
+      totalAmountUsd: agreement.totalAmountUsd,
+      totalAmountSats: agreement.totalAmountSats,
+      partyA: agreement.partyA,
+      partyB: agreement.partyB,
+      arbitrator: agreement.arbitrator,
+    });
+  } catch (err) {
+    console.error("[agreement GET /milestones]", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── POST /api/agreement/:id/create — create agreement in DB ──
+// Called by Party A's frontend after on-chain create tx is submitted.
+router.post("/:id/create", async (req: Request, res: Response) => {
+  const {
+    partyA,
+    partyB,
+    arbitrator,
+    totalAmountUsd,
+    totalAmountSats,
+    terms,
+    milestones,
+    onChainCreateTxId,
+  } = req.body as {
+    partyA?: string;
+    partyB?: string;
+    arbitrator?: string;
+    totalAmountUsd?: number;
+    totalAmountSats?: number;
+    terms?: Record<string, unknown>;
+    milestones?: Array<{
+      index: number;
+      title: string;
+      percentage: number;
+      condition: string;
+      deadline?: string;
+      amountUsd: string;
+      amountSats: number;
+    }>;
+    onChainCreateTxId?: string;
+  };
+
+  try {
+    const existing = await Agreement.findOne({ agreementId: req.params.id });
+    if (existing) {
+      // Idempotent — update tx id if provided
+      if (onChainCreateTxId) existing.onChainCreateTxId = onChainCreateTxId;
+      await existing.save();
+      return res.json({ ok: true, agreementId: req.params.id, created: false });
+    }
+
+    const normalizedMilestones = (milestones ?? []).map((ms) => ({
+      ...ms,
+      status: "locked" as const,
+    }));
+
+    const agreement = new Agreement({
+      agreementId: req.params.id,
+      partyA: partyA ?? null,
+      partyB: partyB ?? null,
+      arbitrator: arbitrator ?? null,
+      totalAmountUsd: totalAmountUsd ?? 0,
+      totalAmountSats: totalAmountSats ?? 0,
+      terms: terms ?? {},
+      milestones: normalizedMilestones,
+      onChainCreateTxId: onChainCreateTxId ?? null,
+    });
+
+    await agreement.save();
+    console.log(
+      `[agreement /create] Saved agreement ${req.params.id} to MongoDB`,
+    );
+    res.json({ ok: true, agreementId: req.params.id, created: true });
+  } catch (err) {
+    console.error("[agreement POST /create]", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── POST /api/agreement/:id/milestone — update milestone status ──
+// Called after tx is confirmed on Stacks. Verifies tx on-chain,
+// updates DB, then emits socket event to Party B's room.
+router.post("/:id/milestone", async (req: Request, res: Response) => {
+  const {
+    milestoneIndex,
+    action, // "complete" | "dispute" | "timeout"
+    txId,
+    txUrl,
+    callerAddress,
+  } = req.body as {
+    milestoneIndex: number;
+    action: "complete" | "dispute" | "timeout";
+    txId: string;
+    txUrl?: string;
+    callerAddress?: string;
+  };
+
+  if (milestoneIndex === undefined || !action || !txId) {
+    return res
+      .status(400)
+      .json({ error: "milestoneIndex, action, and txId are required" });
+  }
+
+  try {
+    // Verify the tx on Stacks before updating
+    const txInfo = await verifyStacksTx(txId);
+
+    const targetStatus = (() => {
+      if (txInfo.status === "failed") return "failed";
+      if (action === "complete")
+        return txInfo.status === "success" ? "complete" : "pending";
+      if (action === "dispute")
+        return txInfo.status === "success" ? "disputed" : "pending";
+      if (action === "timeout")
+        return txInfo.status === "success" ? "refunded" : "pending";
+      return "pending";
+    })() as "complete" | "disputed" | "refunded" | "failed" | "pending";
+
+    // Update MongoDB
+    const agreement = await Agreement.findOne({ agreementId: req.params.id });
+    if (!agreement) {
+      return res
+        .status(404)
+        .json({ error: "Agreement not found in DB. Call /create first." });
+    }
+
+    const ms = agreement.milestones.find(
+      (m: { index: number }) => m.index === milestoneIndex,
+    );
+    if (!ms) {
+      return res
+        .status(404)
+        .json({ error: `Milestone ${milestoneIndex} not found` });
+    }
+
+    ms.status = targetStatus === "pending" ? "pending" : targetStatus;
+    ms.txId = txId;
+    ms.txUrl = txUrl ?? null;
+    ms.onChainStatus = txInfo.status === "success" ? 2 : undefined; // MILESTONE_STATUS.COMPLETE = 2
+    if (targetStatus === "complete") ms.completedAt = new Date();
+    if (targetStatus === "disputed") ms.disputedAt = new Date();
+
+    // Check if all milestones done → update fundState
+    const allComplete = agreement.milestones.every((m: { status: string }) =>
+      ["complete", "refunded"].includes(m.status),
+    );
+    if (allComplete) agreement.fundState = "released";
+
+    await agreement.save();
+
+    // Build milestone update payload for Party B
+    const milestonePayload = {
+      agreementId: req.params.id,
+      milestoneIndex,
+      action,
+      txId,
+      txUrl,
+      status: targetStatus,
+      txVerified: txInfo.status,
+      blockHeight: txInfo.blockHeight,
+      blockTime: txInfo.blockTime,
+      allComplete,
+      milestones: agreement.milestones,
+    };
+
+    // Emit to Party B via Socket.io
+    emit(req.params.id, "milestone:updated", milestonePayload);
+    console.log(
+      `[agreement /milestone] #${req.params.id} ms[${milestoneIndex}] → ${targetStatus} tx:${txId}`,
+    );
+
+    res.json({ ok: true, ...milestonePayload });
+  } catch (err) {
+    console.error("[agreement POST /milestone]", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── POST /api/agreement/:id/status — Party A marks funds locked ──
 router.post("/:id/status", async (req: Request, res: Response) => {
   const { fundState, fundsLocked, amountLocked, txId } = req.body as {
     fundState?: string;
@@ -217,9 +434,7 @@ router.post("/:id/status", async (req: Request, res: Response) => {
 
   try {
     const entry = await readPresence(req.params.id);
-    if (!entry) {
-      return res.status(404).json({ error: "Agreement not found" });
-    }
+    if (!entry) return res.status(404).json({ error: "Agreement not found" });
 
     entry.fundsLocked = true;
     entry.fundState = "locked";
@@ -227,10 +442,27 @@ router.post("/:id/status", async (req: Request, res: Response) => {
     if (txId) entry.depositTxId = txId;
 
     await writePresence(req.params.id, entry);
-    const response = makeResponse(entry);
 
-    // Push to all SSE subscribers — Party B's polling + SSE will both pick this up
+    // Also update MongoDB
+    await Agreement.findOneAndUpdate(
+      { agreementId: req.params.id },
+      {
+        fundsLocked: true,
+        fundState: "locked",
+        ...(amountLocked && { amountLocked }),
+        ...(txId && { depositTxId: txId }),
+      },
+    );
+
+    const response = makeResponse(entry);
     notifySSE(req.params.id, response);
+
+    // Socket.io: notify Party B that funds are now locked
+    emit(req.params.id, "funds:locked", {
+      agreementId: req.params.id,
+      amountLocked,
+      txId,
+    });
 
     console.log(
       `[agreement /status] Funds locked for ${req.params.id}, txId: ${txId}`,
@@ -273,8 +505,21 @@ router.post("/:id", async (req: Request, res: Response) => {
     }
 
     await writePresence(req.params.id, entry);
+
+    // Also upsert in MongoDB
+    await Agreement.findOneAndUpdate(
+      { agreementId: req.params.id },
+      {
+        ...(role === "partyA" && { partyA: address }),
+        ...(role === "partyB" && { partyB: address }),
+        ...(termsSnapshot && { terms: termsSnapshot }),
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true },
+    );
+
     const response = makeResponse(entry);
     notifySSE(req.params.id, response);
+    emit(req.params.id, "presence:updated", response);
     res.json(response);
   } catch (err) {
     console.error("[agreement POST]", err);
@@ -298,9 +543,7 @@ router.post("/:id/approve", async (req: Request, res: Response) => {
 
   try {
     const entry = await readPresence(req.params.id);
-    if (!entry) {
-      return res.status(404).json({ error: "Agreement not found" });
-    }
+    if (!entry) return res.status(404).json({ error: "Agreement not found" });
 
     if (role === "partyA" && entry.partyA && entry.partyA !== address) {
       return res.status(403).json({ error: "Address does not match Party A" });
@@ -313,8 +556,18 @@ router.post("/:id/approve", async (req: Request, res: Response) => {
     else entry.partyBApproved = true;
 
     await writePresence(req.params.id, entry);
+
+    await Agreement.findOneAndUpdate(
+      { agreementId: req.params.id },
+      {
+        ...(role === "partyA" && { partyAApproved: true }),
+        ...(role === "partyB" && { partyBApproved: true }),
+      },
+    );
+
     const response = makeResponse(entry);
     notifySSE(req.params.id, response);
+    emit(req.params.id, "approval:updated", response);
     res.json(response);
   } catch (err) {
     console.error("[agreement /approve]", err);
@@ -327,6 +580,7 @@ router.delete("/:id", async (req: Request, res: Response) => {
   try {
     await deletePresenceStore(req.params.id);
     notifySSE(req.params.id, makeResponse(EMPTY_ENTRY()));
+    emit(req.params.id, "agreement:deleted", { agreementId: req.params.id });
     res.json({ deleted: true });
   } catch (err) {
     console.error("[agreement DELETE]", err);

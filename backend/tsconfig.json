@@ -11,6 +11,6 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "../frontend/src/lib/socket.ts"],
   "exclude": ["node_modules", "dist"]
 }

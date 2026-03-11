@@ -1,17 +1,15 @@
 "use client";
 // ============================================================
-// components/partyA/ScreenDashboard.tsx — PRODUCTION
+// components/partyA/ScreenDashboard.tsx — PRODUCTION v2
 //
-// Real on-chain milestone actions:
-//   ✓ Release  → callCompleteMilestone  → wallet signs → tx confirmed → UI updates
-//   ⚑ Dispute  → callDisputeMilestone   → wallet signs → tx confirmed → UI updates
-//   ⏱ Timeout  → callTriggerMilestoneTimeout → ...
-//
-// After each tx, polls Stacks explorer until confirmed/failed,
-// then updates milestone status in Redux and re-reads on-chain state.
+// Changes:
+//   • Saves agreement to DB on mount (once) via saveAgreementToDbThunk
+//   • pollMilestoneTxThunk now passes agreementId + action so DB is
+//     notified and socket event fires as soon as tx confirms
+//   • Party B receives live updates via socket.io
 // ============================================================
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useCallback, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { AppDispatch, RootState } from "@/store";
 import {
@@ -24,25 +22,21 @@ import {
   setMilestoneTxState,
   setMilestoneOnChainStatus,
   pollMilestoneTxThunk,
+  saveAgreementToDbThunk,
 } from "@/store/slices/partyASlice";
 import { isV2, ParsedAgreementV2 } from "@/api/parseApi";
 import { usdToSatsPreview } from "@/lib/contractCalls";
 import { formatSats, explorerTxUrl } from "@/lib/stacksConfig";
-import {
-  getAllMilestones,
-  MILESTONE_STATUS,
-  type OnChainMilestone,
-} from "@/lib/contractReads";
+import { getAllMilestones, MILESTONE_STATUS } from "@/lib/contractReads";
 
 // ── Types ──────────────────────────────────────────────────────
-
 type MilestoneUIStatus =
-  | "locked" // funds in escrow, waiting
-  | "pending" // tx submitted, waiting confirmation
-  | "complete" // released to receiver ✓
-  | "disputed" // in arbitration
-  | "refunded" // returned to payer
-  | "failed"; // tx failed
+  | "locked"
+  | "pending"
+  | "complete"
+  | "disputed"
+  | "refunded"
+  | "failed";
 
 interface MilestoneUI {
   index: number;
@@ -53,8 +47,6 @@ interface MilestoneUI {
   amountUsd: string;
   amountSats: number;
 }
-
-// ── Helpers ────────────────────────────────────────────────────
 
 function onChainStatusToUI(s: number): MilestoneUIStatus {
   switch (s) {
@@ -70,7 +62,6 @@ function onChainStatusToUI(s: number): MilestoneUIStatus {
       return "locked";
   }
 }
-
 function statusColor(s: MilestoneUIStatus) {
   if (s === "complete") return "var(--green)";
   if (s === "disputed") return "var(--amber)";
@@ -79,7 +70,6 @@ function statusColor(s: MilestoneUIStatus) {
   if (s === "pending") return "var(--text-3)";
   return "var(--text-4)";
 }
-
 function statusLabel(s: MilestoneUIStatus) {
   if (s === "complete") return "Released ✓";
   if (s === "disputed") return "In Dispute";
@@ -90,7 +80,6 @@ function statusLabel(s: MilestoneUIStatus) {
 }
 
 // ── Component ──────────────────────────────────────────────────
-
 export default function ScreenDashboard() {
   const dispatch = useDispatch<AppDispatch>();
   const {
@@ -114,7 +103,6 @@ export default function ScreenDashboard() {
   const totalSats = usdToSatsPreview(totalAmountUsd);
   const arbitrator = t?.arbitrator ?? "TBD";
 
-  // Build milestone list from parsed terms
   const milestones: MilestoneUI[] = v2?.milestones?.map((ms, i) => ({
     index: i,
     title: ms.title || `Milestone ${i + 1}`,
@@ -135,16 +123,40 @@ export default function ScreenDashboard() {
     },
   ];
 
+  // ── Save agreement to DB on mount (idempotent) ──────────────
+  const [savedToDb, setSavedToDb] = useState(false);
+  useEffect(() => {
+    if (!agreementId || savedToDb || milestones.length === 0) return;
+    setSavedToDb(true);
+    dispatch(
+      saveAgreementToDbThunk({
+        agreementId,
+        partyA: walletAddress ?? "",
+        partyB: t?.receiver ?? t?.partyB ?? "",
+        arbitrator: t?.arbitrator ?? "",
+        totalAmountUsd,
+        totalAmountSats: totalSats,
+        terms: t ?? {},
+        milestones: milestones.map((ms) => ({
+          index: ms.index,
+          title: ms.title,
+          percentage: ms.percentage,
+          condition: ms.condition,
+          deadline: ms.deadline || undefined,
+          amountUsd: ms.amountUsd,
+          amountSats: ms.amountSats,
+        })),
+      }),
+    );
+  }, [agreementId]);
+
   // ── On-chain status sync ────────────────────────────────────
-  // Merge Redux on-chain statuses with local UI optimism
   const getStatus = useCallback(
     (index: number): MilestoneUIStatus => {
-      // If we have an in-flight tx for this milestone, show pending
       const tx = txMilestone?.[index];
       if (tx?.status === "pending" || tx?.status === "confirming")
         return "pending";
       if (tx?.status === "failed") return "failed";
-      // Use on-chain status if available
       const onChain = milestoneOnChainStatuses?.[index];
       if (onChain !== undefined) return onChainStatusToUI(onChain);
       return "locked";
@@ -152,7 +164,6 @@ export default function ScreenDashboard() {
     [txMilestone, milestoneOnChainStatuses],
   );
 
-  // Poll on-chain state on mount and after any tx completes
   const [lastRefresh, setLastRefresh] = useState(0);
 
   useEffect(() => {
@@ -172,15 +183,21 @@ export default function ScreenDashboard() {
     };
   }, [agreementId, lastRefresh, milestones.length]);
 
-  // Poll pending txs
+  // Poll pending txs — now passes agreementId + action for DB notify
   useEffect(() => {
     if (!txMilestone) return;
     Object.entries(txMilestone).forEach(([idxStr, tx]) => {
       if ((tx.status === "pending" || tx.status === "confirming") && tx.txId) {
+        const idx = parseInt(idxStr);
+        // Infer action from on-chain status or default to "complete"
+        // (The action was set when the tx was initiated)
         dispatch(
           pollMilestoneTxThunk({
-            milestoneIndex: parseInt(idxStr),
+            milestoneIndex: idx,
             txId: tx.txId,
+            agreementId: agreementId ?? undefined,
+            action: "complete", // will be overridden by the initiating handler
+            callerAddress: walletAddress ?? undefined,
             onConfirmed: () => setLastRefresh(Date.now()),
           }),
         );
@@ -189,44 +206,76 @@ export default function ScreenDashboard() {
   }, [txMilestone]);
 
   // ── Actions ─────────────────────────────────────────────────
-
   async function handleRelease(ms: MilestoneUI) {
     if (!agreementId || !walletAddress) return;
-    await dispatch(
+    const result = await dispatch(
       completeMilestoneThunk({
         agreementId,
         milestoneIndex: ms.index,
         milestoneAmountSats: BigInt(ms.amountSats),
       }),
     );
-    // Auto-check if all done
-    setTimeout(() => setLastRefresh(Date.now()), 3000);
+    // If tx submitted successfully, start polling with DB notify
+    if (completeMilestoneThunk.fulfilled.match(result)) {
+      const { txId } = result.payload;
+      dispatch(
+        pollMilestoneTxThunk({
+          milestoneIndex: ms.index,
+          txId,
+          agreementId,
+          action: "complete",
+          callerAddress: walletAddress,
+          onConfirmed: () => setLastRefresh(Date.now()),
+        }),
+      );
+    }
   }
 
   async function handleDispute(ms: MilestoneUI) {
     if (!agreementId) return;
-    await dispatch(
-      disputeMilestoneThunk({
-        agreementId,
-        milestoneIndex: ms.index,
-      }),
+    const result = await dispatch(
+      disputeMilestoneThunk({ agreementId, milestoneIndex: ms.index }),
     );
+    if (disputeMilestoneThunk.fulfilled.match(result)) {
+      const { txId } = result.payload;
+      dispatch(
+        pollMilestoneTxThunk({
+          milestoneIndex: ms.index,
+          txId,
+          agreementId,
+          action: "dispute",
+          callerAddress: walletAddress ?? undefined,
+          onConfirmed: () => setLastRefresh(Date.now()),
+        }),
+      );
+    }
   }
 
   async function handleTimeout(ms: MilestoneUI) {
     if (!agreementId) return;
-    await dispatch(
+    const result = await dispatch(
       triggerTimeoutThunk({
         agreementId,
         milestoneIndex: ms.index,
         milestoneAmountSats: BigInt(ms.amountSats),
       }),
     );
-    setTimeout(() => setLastRefresh(Date.now()), 3000);
+    if (triggerTimeoutThunk.fulfilled.match(result)) {
+      const { txId } = result.payload;
+      dispatch(
+        pollMilestoneTxThunk({
+          milestoneIndex: ms.index,
+          txId,
+          agreementId,
+          action: "timeout",
+          callerAddress: walletAddress ?? undefined,
+          onConfirmed: () => setLastRefresh(Date.now()),
+        }),
+      );
+    }
   }
 
   // ── Derived state ───────────────────────────────────────────
-
   const completedCount = milestones.filter((m) =>
     ["complete", "refunded"].includes(getStatus(m.index)),
   ).length;
@@ -239,12 +288,11 @@ export default function ScreenDashboard() {
   );
 
   // ── Render ──────────────────────────────────────────────────
-
   return (
     <div className="page" style={{ alignItems: "flex-start", paddingTop: 48 }}>
       <style>{css}</style>
       <div style={{ maxWidth: 680, width: "100%" }}>
-        {/* ── Header ── */}
+        {/* Header */}
         <div className="fade-up" style={{ marginBottom: 32 }}>
           <div
             style={{
@@ -265,7 +313,7 @@ export default function ScreenDashboard() {
           </div>
         </div>
 
-        {/* ── Summary cards ── */}
+        {/* Summary cards */}
         <div className="fade-up d1 summary-grid" style={{ marginBottom: 24 }}>
           {[
             {
@@ -300,7 +348,7 @@ export default function ScreenDashboard() {
           ))}
         </div>
 
-        {/* ── Progress bar ── */}
+        {/* Progress bar */}
         <div className="fade-up d1" style={{ marginBottom: 24 }}>
           <div
             style={{
@@ -322,7 +370,7 @@ export default function ScreenDashboard() {
           </div>
         </div>
 
-        {/* ── Milestone cards ── */}
+        {/* Milestone cards */}
         <div className="fade-up d2" style={{ marginBottom: 24 }}>
           <div className="mono-label" style={{ marginBottom: 12 }}>
             Milestones
@@ -340,7 +388,6 @@ export default function ScreenDashboard() {
                   key={ms.index}
                   className={`ms-card${isDone ? " ms-card--done" : ""}${isPending ? " ms-card--pending" : ""}`}
                 >
-                  {/* MS header */}
                   <div
                     style={{
                       display: "flex",
@@ -398,7 +445,6 @@ export default function ScreenDashboard() {
                     </div>
                   )}
 
-                  {/* Tx link when pending/confirmed */}
                   {tx?.txId && (
                     <div
                       style={{
@@ -432,7 +478,6 @@ export default function ScreenDashboard() {
                     </div>
                   )}
 
-                  {/* Status + Actions row */}
                   <div
                     style={{
                       display: "flex",
@@ -448,7 +493,6 @@ export default function ScreenDashboard() {
                       {statusLabel(status)}
                     </span>
 
-                    {/* Show retry if failed */}
                     {isFailed && (
                       <button
                         className="action-btn action-btn--retry"
@@ -470,7 +514,6 @@ export default function ScreenDashboard() {
                       </button>
                     )}
 
-                    {/* Active milestone actions */}
                     {!isDone && !isPending && !isFailed && (
                       <div style={{ display: "flex", gap: 6 }}>
                         <button
@@ -498,7 +541,6 @@ export default function ScreenDashboard() {
                     )}
                   </div>
 
-                  {/* Tx error */}
                   {tx?.error && (
                     <div
                       style={{
@@ -517,7 +559,7 @@ export default function ScreenDashboard() {
           </div>
         </div>
 
-        {/* ── Info strip ── */}
+        {/* Info strip */}
         <div className="fade-up d3 info-strip" style={{ marginBottom: 20 }}>
           <svg
             width="12"
@@ -543,15 +585,14 @@ export default function ScreenDashboard() {
             }}
           >
             Click <strong style={{ color: "var(--text-2)" }}>Release</strong> to
-            send sBTC to the receiver on-chain via the Leather wallet popup.
-            Click <strong style={{ color: "var(--text-2)" }}>Dispute</strong> to
-            open arbitration — the arbitrator will review both sides and decide
-            where the sBTC goes. Each action requires a wallet signature and is
+            send sBTC to the receiver on-chain. Party B's dashboard updates{" "}
+            <strong style={{ color: "var(--text-2)" }}>instantly</strong> when
+            the tx confirms. Each action requires a wallet signature and is
             recorded permanently on Stacks.
           </p>
         </div>
 
-        {/* ── Footer actions ── */}
+        {/* Footer actions */}
         <div className="fade-up d3" style={{ display: "flex", gap: 10 }}>
           {allComplete && (
             <button
@@ -578,24 +619,10 @@ export default function ScreenDashboard() {
 }
 
 const css = `
-.page-title {
-  font-size: clamp(24px, 3.5vw, 36px); font-weight: 700;
-  letter-spacing: -0.04em; line-height: 1.05; margin: 0;
-}
-.mono-label {
-  font-size: 10px; font-family: var(--mono); color: var(--text-4);
-  text-transform: uppercase; letter-spacing: 0.1em;
-}
-.status-pill {
-  display: flex; align-items: center; gap: 7px;
-  font-size: 11px; font-family: var(--mono); color: var(--green);
-  background: rgba(34,197,94,0.08); border: 1px solid rgba(34,197,94,0.2);
-  border-radius: 20px; padding: 5px 12px;
-}
-.status-dot {
-  width: 6px; height: 6px; border-radius: 50%; background: var(--green);
-  animation: pulse 2s ease-in-out infinite;
-}
+.page-title { font-size: clamp(24px, 3.5vw, 36px); font-weight: 700; letter-spacing: -0.04em; line-height: 1.05; margin: 0; }
+.mono-label { font-size: 10px; font-family: var(--mono); color: var(--text-4); text-transform: uppercase; letter-spacing: 0.1em; }
+.status-pill { display: flex; align-items: center; gap: 7px; font-size: 11px; font-family: var(--mono); color: var(--green); background: rgba(34,197,94,0.08); border: 1px solid rgba(34,197,94,0.2); border-radius: 20px; padding: 5px 12px; }
+.status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: pulse 2s ease-in-out infinite; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
 .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
 @media (max-width: 640px) { .summary-grid { grid-template-columns: 1fr 1fr; } }

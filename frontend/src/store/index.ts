@@ -1,11 +1,14 @@
 import { configureStore } from "@reduxjs/toolkit";
 import partyAReducer from "./slices/partyASlice";
 import partyBReducer from "./slices/partyBSlice";
+import arbitratorReducer from "./slices/arbitratorSlice";
+
 
 export const store = configureStore({
   reducer: {
     partyA: partyAReducer,
     partyB: partyBReducer,
+    arbitrator: arbitratorReducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware({

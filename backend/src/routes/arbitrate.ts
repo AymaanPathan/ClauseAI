@@ -1,21 +1,14 @@
 import { Router, Request, Response } from "express";
 import multer from "multer";
-import { v2 as cloudinary } from "cloudinary";
 import { Dispute, DisputeMemStore, IDispute } from "../models/Dispute";
 import { AIVerdict, VerdictOutcome } from "../types/dispute";
 import { isMongoAvailable } from "../lib/db";
 import { getGroqClient } from "../lib/groq-client";
 import { AI_CONFIG } from "../lib/ai-config";
+import cloudinary from "../lib/cloudinary";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
-
-// ── Cloudinary config ─────────────────────────────────────────
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
 
 // ── DB helpers (Mongo with in-memory fallback) ────────────────
 
@@ -88,7 +81,6 @@ router.get("/:id/:index/events", async (req: Request, res: Response) => {
   if (!disputeSSE.has(key)) disputeSSE.set(key, new Set());
   disputeSSE.get(key)!.add(res);
 
-  // Send current state immediately on connect
   try {
     const dispute = await findDispute(id, milestoneIndex);
     if (dispute) res.write(`data: ${JSON.stringify(dispute)}\n\n`);
@@ -111,9 +103,7 @@ router.get("/:id/:index/events", async (req: Request, res: Response) => {
   });
 });
 
-// ── GET /api/arbitrate/dashboard/:arbitratorAddress ───────────
-// Returns all disputes assigned to this arbitrator wallet
-// Used to populate the arbitrator dashboard
+// ── GET /api/arbitrate/dashboard/:address ───────────────────
 router.get("/dashboard/:address", async (req: Request, res: Response) => {
   const { address } = req.params;
 
@@ -132,7 +122,6 @@ router.get("/dashboard/:address", async (req: Request, res: Response) => {
       disputes = DisputeMemStore.findByArbitrator(address);
     }
 
-    // Summary counts for dashboard header
     const summary = {
       total: disputes.length,
       needs_decision: disputes.filter((d) => d.status === "ai_complete").length,
@@ -237,8 +226,6 @@ router.post("/open", async (req: Request, res: Response) => {
 });
 
 // ── POST /api/arbitrate/upload ────────────────────────────────
-// Uploads evidence files to Cloudinary, returns URLs.
-// Body: multipart/form-data, field name: "files" (up to 10)
 router.post(
   "/upload",
   upload.array("files", 10),
@@ -249,7 +236,6 @@ router.post(
       return res.status(400).json({ error: "No files uploaded" });
     }
 
-    // Dev fallback when Cloudinary is not configured
     if (!process.env.CLOUDINARY_CLOUD_NAME) {
       console.warn("[Cloudinary] Not configured — returning placeholder URLs");
       const placeholderUrls = files.map(
@@ -289,17 +275,28 @@ router.post(
 
       const urls = await Promise.all(uploadPromises);
       res.json({ success: true, urls });
-    } catch (err) {
+    } catch (err: any) {
       console.error("[Cloudinary upload]", err);
-      res.status(500).json({ error: "Evidence upload failed" });
+      res.status(500).json({
+        error: "Evidence upload failed",
+        details: err?.message || err,
+      });
     }
   },
 );
 
 // ── POST /api/arbitrate/submit ────────────────────────────────
-// A party submits their statement and evidence URLs.
-// Body: { agreement_id, milestone_index, party, statement, evidence_urls? }
-//   party: "A" | "B"
+// A party submits their statement and optional evidence URLs.
+//
+// KEY FIX: If the dispute doesn't exist yet and contract_terms are
+// provided, we auto-open it here. This prevents the "Dispute not found.
+// Call /open first." error when parties submit directly.
+//
+// Body: {
+//   agreement_id, milestone_index, party, statement,
+//   evidence_urls?,
+//   contract_terms?   ← optional; used to auto-open if dispute is missing
+// }
 router.post("/submit", async (req: Request, res: Response) => {
   const {
     agreement_id,
@@ -307,14 +304,17 @@ router.post("/submit", async (req: Request, res: Response) => {
     party,
     statement,
     evidence_urls = [],
+    contract_terms, // ← NEW optional field
   } = req.body as {
     agreement_id: string;
     milestone_index: number;
     party: "A" | "B";
     statement: string;
     evidence_urls?: string[];
+    contract_terms?: IDispute["contract_terms"];
   };
 
+  // ── Validate required fields ──────────────────────────────
   if (!agreement_id || milestone_index === undefined || !party || !statement) {
     return res.status(400).json({
       error:
@@ -330,15 +330,55 @@ router.post("/submit", async (req: Request, res: Response) => {
       .json({ error: "Statement must be at least 10 characters" });
   }
 
+  console.log("[/submit] Incoming:", { agreement_id, milestone_index, party });
+
   try {
     let dispute = await findDispute(agreement_id, milestone_index);
+
+    // ── AUTO-OPEN if dispute not found and terms provided ────
     if (!dispute) {
-      return res
-        .status(404)
-        .json({ error: "Dispute not found. Call /open first." });
+      if (!contract_terms) {
+        return res.status(404).json({
+          error:
+            "Dispute not found. Either call POST /open first, or include contract_terms in this request to auto-open.",
+        });
+      }
+
+      // Validate the minimum required contract_terms fields
+      if (
+        !contract_terms.payer ||
+        !contract_terms.receiver ||
+        !contract_terms.arbitrator ||
+        !contract_terms.milestone_description
+      ) {
+        return res.status(400).json({
+          error:
+            "contract_terms must include: payer, receiver, arbitrator, milestone_description",
+        });
+      }
+
+      console.log(
+        "[/submit] Dispute not found — auto-opening:",
+        agreement_id,
+        milestone_index,
+      );
+
+      dispute = await saveDispute(agreement_id, milestone_index, {
+        agreement_id,
+        milestone_index,
+        contract_terms,
+        status: "awaiting_statements",
+        party_a_statement: "",
+        party_a_evidence: [],
+        party_b_statement: "",
+        party_b_evidence: [],
+        opened_at: new Date(),
+      } as Partial<IDispute>);
+
+      notifyDisputeSSE(agreement_id, milestone_index, dispute);
     }
 
-    // Prevent re-submission
+    // ── Prevent re-submission ────────────────────────────────
     if (party === "A" && dispute.party_a_submitted_at) {
       return res
         .status(409)
@@ -350,6 +390,7 @@ router.post("/submit", async (req: Request, res: Response) => {
         .json({ error: "Party B has already submitted their statement" });
     }
 
+    // ── Build update payload ─────────────────────────────────
     const updateData: Partial<IDispute> =
       party === "A"
         ? {
@@ -400,8 +441,6 @@ router.post("/submit", async (req: Request, res: Response) => {
 });
 
 // ── POST /api/arbitrate/verdict ───────────────────────────────
-// Manually trigger AI verdict (also fires automatically after both submit).
-// Body: { agreement_id, milestone_index }
 router.post("/verdict", async (req: Request, res: Response) => {
   const { agreement_id, milestone_index } = req.body as {
     agreement_id: string;
@@ -438,12 +477,6 @@ router.post("/verdict", async (req: Request, res: Response) => {
 });
 
 // ── POST /api/arbitrate/resolve ───────────────────────────────
-// Arbitrator confirms or overrides AI verdict.
-// Body: { agreement_id, milestone_index, arbitrator_address, action, override_reason? }
-//   action: "confirm" | "override_release" | "override_refund"
-//
-// Response includes `on_chain_action` telling the frontend which
-// Clarity function to call: "resolve-to-receiver" | "resolve-to-payer"
 router.post("/resolve", async (req: Request, res: Response) => {
   const {
     agreement_id,
@@ -492,7 +525,6 @@ router.post("/resolve", async (req: Request, res: Response) => {
       });
     }
 
-    // Verify this wallet is actually the arbitrator for this dispute
     if (
       dispute.contract_terms.arbitrator &&
       dispute.contract_terms.arbitrator !== arbitrator_address &&
@@ -503,7 +535,6 @@ router.post("/resolve", async (req: Request, res: Response) => {
       });
     }
 
-    // Map action → outcome
     let outcome: VerdictOutcome;
     let followedAI: boolean;
 
@@ -535,7 +566,6 @@ router.post("/resolve", async (req: Request, res: Response) => {
     res.json({
       success: true,
       dispute: updated,
-      // Frontend uses this to know which on-chain function to call
       on_chain_action:
         outcome === "release_to_receiver"
           ? "resolve-to-receiver"
@@ -669,7 +699,6 @@ The human arbitrator will review your recommendation and can override it.`;
     };
   } catch (err) {
     console.error("[AI Arbitration] Parse error:", err);
-    // Safe fallback when AI fails — require manual review
     verdictData = {
       verdict: "refund_to_payer",
       confidence: 0,

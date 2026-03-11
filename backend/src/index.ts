@@ -30,7 +30,7 @@ const io = new SocketIOServer(httpServer, {
 
 // Inject io into the agreement router so it can emit events
 setSocketIO(io);
-
+console.log("CLOUDINARY KEY:", process.env.CLOUDINARY_API_KEY);
 io.on("connection", (socket) => {
   console.log(`[socket.io] client connected: ${socket.id}`);
 

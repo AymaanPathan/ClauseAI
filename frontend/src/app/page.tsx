@@ -13,7 +13,7 @@ import { Provider, useDispatch, useSelector } from "react-redux";
 import { rehydratePartyAThunk } from "../store/slices/partyASlice";
 
 // Party A screens
-import ScreenLanding from "@/components/screens/Party-A/ScreenLanding";
+import ScreenLanding from "@/components/screens/Shared/ScreenLanding";
 import ScreenSelectType from "@/components/screens/Party-A/ScreenSelectType-1";
 import ScreenDescribe from "@/components/screens/Party-A/ScreenDescribe-2";
 import ReviewTerms from "@/components/screens/Party-A/ReviewTerms-3";

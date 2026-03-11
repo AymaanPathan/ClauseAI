@@ -164,6 +164,32 @@ function notifySSE(id: string, data: PresenceResponse) {
   }
 }
 
+router.get("/", async (req: Request, res: Response) => {
+  const { partyA, partyB } = req.query as { partyA?: string; partyB?: string };
+
+  if (!partyA && !partyB) {
+    return res
+      .status(400)
+      .json({ error: "partyA or partyB query param required" });
+  }
+
+  try {
+    const query: Record<string, unknown> = {};
+    if (partyA) query.partyA = partyA;
+    if (partyB) query.partyB = partyB;
+
+    const agreements = await Agreement.find(query)
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .lean();
+
+    res.json(agreements);
+  } catch (err) {
+    console.error("[GET /api/agreements]", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // ── GET /api/agreement/:id/events — SSE stream ────────────────
 router.get("/:id/events", async (req: Request, res: Response) => {
   const { id } = req.params;

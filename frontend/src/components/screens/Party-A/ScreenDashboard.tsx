@@ -157,20 +157,21 @@ export default function ScreenDashboard() {
     },
   ];
 
-  const [disputeFormOpen, setDisputeFormOpen] = useState<
-    Record<number, boolean>
-  >({});
+  // Evidence modal state (for already-disputed milestones)
+  const [evidenceModalMs, setEvidenceModalMs] = useState<MilestoneUI | null>(
+    null,
+  );
   const [disputeSubmitted, setDisputeSubmitted] = useState<
     Record<number, boolean>
   >({});
   const [savedToDb, setSavedToDb] = useState(false);
   const [lastRefresh, setLastRefresh] = useState(0);
 
-  // Dispute modal state
+  // Dispute confirmation modal state
   const [disputeModal, setDisputeModal] = useState<{
     open: boolean;
     ms: MilestoneUI | null;
-    step: "confirm" | "submit"; // step 1: confirm on-chain tx, step 2: submit statement
+    step: "confirm" | "submit";
   }>({ open: false, ms: null, step: "confirm" });
 
   function openDisputeModal(ms: MilestoneUI) {
@@ -195,12 +196,10 @@ export default function ScreenDashboard() {
           callerAddress: walletAddress ?? undefined,
           onConfirmed: () => {
             setLastRefresh(Date.now());
-            // Advance to submit step inside modal
             setDisputeModal((prev) => ({ ...prev, step: "submit" }));
           },
         }),
       );
-      // Move to submit step immediately (tx is submitted, waiting to confirm)
       setDisputeModal((prev) => ({ ...prev, step: "submit" }));
     }
   }
@@ -734,7 +733,6 @@ export default function ScreenDashboard() {
                 const isPending = status === "pending";
                 const isFailed = status === "failed";
                 const isDisputed = status === "disputed";
-                const showSubmit = isDisputed && disputeFormOpen[ms.index];
                 const alreadySub = disputeSubmitted[ms.index];
                 const accent = MS_COLORS[ms.index % MS_COLORS.length];
 
@@ -935,15 +933,11 @@ export default function ScreenDashboard() {
                             </button>
                           )}
 
+                          {/* Evidence button — now opens modal */}
                           {isDisputed && !alreadySub && (
                             <button
                               className="v2-btn v2-btn--evidence"
-                              onClick={() =>
-                                setDisputeFormOpen((p) => ({
-                                  ...p,
-                                  [ms.index]: !p[ms.index],
-                                }))
-                              }
+                              onClick={() => setEvidenceModalMs(ms)}
                             >
                               <svg
                                 width="10"
@@ -957,7 +951,7 @@ export default function ScreenDashboard() {
                                 <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
                                 <polyline points="14 2 14 8 20 8" />
                               </svg>
-                              {showSubmit ? "Hide" : "Evidence"}
+                              Evidence
                             </button>
                           )}
 
@@ -1054,37 +1048,7 @@ export default function ScreenDashboard() {
                       </div>
                     )}
 
-                    {/* Evidence submit */}
-                    {showSubmit && agreementId && (
-                      <div className="v2-submit-panel">
-                        <DisputeSubmitScreen
-                          agreementId={agreementId}
-                          milestoneIndex={ms.index}
-                          party="A"
-                          milestoneDescription={ms.condition || ms.title}
-                          contractTerms={{
-                            payer: walletAddress ?? t?.payer ?? "",
-                            receiver: t?.receiver ?? t?.partyB ?? "",
-                            arbitrator: t?.arbitrator ?? "TBD",
-                            total_amount: totalAmountUsd,
-                            milestone_description: ms.condition || ms.title,
-                            milestone_percentage: ms.percentage,
-                            milestone_deadline: ms.deadline || undefined,
-                            agreement_type: t?.agreement_type ?? "freelance",
-                          }}
-                          onSubmitted={() => {
-                            setDisputeSubmitted((p) => ({
-                              ...p,
-                              [ms.index]: true,
-                            }));
-                            setDisputeFormOpen((p) => ({
-                              ...p,
-                              [ms.index]: false,
-                            }));
-                          }}
-                        />
-                      </div>
-                    )}
+                    {/* Evidence submit panel removed — now in modal */}
                   </div>
                 );
               })}
@@ -1158,7 +1122,7 @@ export default function ScreenDashboard() {
         </main>
       </div>
 
-      {/* ── Dispute Modal ── */}
+      {/* ── Dispute Confirmation Modal ── */}
       {disputeModal.open && disputeModal.ms && (
         <div
           className="v2-modal-backdrop"
@@ -1381,6 +1345,94 @@ export default function ScreenDashboard() {
                 />
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Evidence Modal (for already-disputed milestones) ── */}
+      {evidenceModalMs && agreementId && (
+        <div
+          className="v2-modal-backdrop"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setEvidenceModalMs(null);
+          }}
+        >
+          <div className="v2-modal v2-modal--evidence">
+            {/* Header */}
+            <div className="v2-modal-header">
+              <div className="v2-modal-header-left">
+                <div className="v2-modal-icon">
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="#fbbf24"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                  >
+                    <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                    <line x1="16" y1="13" x2="8" y2="13" />
+                    <line x1="16" y1="17" x2="8" y2="17" />
+                    <polyline points="10 9 9 9 8 9" />
+                  </svg>
+                </div>
+                <div>
+                  <div className="v2-modal-eyebrow">
+                    File Evidence · Dispute
+                  </div>
+                  <div className="v2-modal-title">{evidenceModalMs.title}</div>
+                </div>
+              </div>
+              <button
+                className="v2-modal-close"
+                onClick={() => setEvidenceModalMs(null)}
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                >
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Scrollable body with DisputeSubmitScreen */}
+            <div className="v2-modal-body v2-modal-body--scroll">
+              <DisputeSubmitScreen
+                agreementId={agreementId}
+                milestoneIndex={evidenceModalMs.index}
+                party="A"
+                milestoneDescription={
+                  evidenceModalMs.condition || evidenceModalMs.title
+                }
+                contractTerms={{
+                  payer: walletAddress ?? t?.payer ?? "",
+                  receiver: t?.receiver ?? t?.partyB ?? "",
+                  arbitrator: t?.arbitrator ?? "TBD",
+                  total_amount: totalAmountUsd,
+                  milestone_description:
+                    evidenceModalMs.condition || evidenceModalMs.title,
+                  milestone_percentage: evidenceModalMs.percentage,
+                  milestone_deadline: evidenceModalMs.deadline || undefined,
+                  agreement_type: t?.agreement_type ?? "freelance",
+                }}
+                onSubmitted={() => {
+                  setDisputeSubmitted((p) => ({
+                    ...p,
+                    [evidenceModalMs.index]: true,
+                  }));
+                  setEvidenceModalMs(null);
+                }}
+              />
+            </div>
           </div>
         </div>
       )}
@@ -1792,10 +1844,6 @@ const css = `
   border-top: 1px solid rgba(251,191,36,0.12);
   padding: 20px 22px; background: rgba(251,191,36,0.01);
 }
-.v2-submit-panel {
-  border-top: 1px solid rgba(240,242,245,0.07);
-  background: #0e0f10;
-}
 
 /* Spinners */
 .v2-spinner-xs {
@@ -1879,7 +1927,7 @@ const css = `
 }
 
 /* ══════════════════════════════════════════════
-   DISPUTE MODAL
+   DISPUTE MODAL (confirmation flow)
    ══════════════════════════════════════════════ */
 
 .v2-modal-backdrop {
@@ -1902,6 +1950,11 @@ const css = `
   display: flex; flex-direction: column;
   max-height: 90vh;
 }
+/* Evidence modal is slightly wider */
+.v2-modal--evidence {
+  max-width: 640px;
+  border-color: rgba(251,191,36,0.22);
+}
 @keyframes v2ModalIn {
   from { opacity: 0; transform: translateY(20px) scale(0.97); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
@@ -1919,6 +1972,11 @@ const css = `
   width: 36px; height: 36px; border-radius: 10px; flex-shrink: 0;
   background: rgba(251,191,36,0.10); border: 1px solid rgba(251,191,36,0.22);
   display: flex; align-items: center; justify-content: center;
+}
+.v2-modal-eyebrow {
+  font-size: 10px; font-family: 'DM Mono', monospace; font-weight: 600;
+  color: #fbbf24; text-transform: uppercase; letter-spacing: 0.10em;
+  margin-bottom: 3px;
 }
 .v2-modal-title {
   font-family: 'Syne', sans-serif; font-size: 16px; font-weight: 800;
@@ -1974,7 +2032,7 @@ const css = `
 }
 .v2-modal-body--scroll {
   overflow-y: auto; flex: 1;
-  padding: 0; /* DisputeSubmitScreen handles its own padding */
+  padding: 0;
 }
 
 /* Warn banner */

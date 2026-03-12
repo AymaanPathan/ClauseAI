@@ -2,9 +2,16 @@
 // ============================================================
 // components/partyB/PartyBDashboard.tsx — 2026 redesign
 // Uses ONLY class names from globals.css + dashboard-additions.css
+//
+// Change from original:
+//   • DisputeSubmitScreen now opens in a fixed modal overlay
+//     instead of an inline db-submit-panel.
+//   • Removed: disputeFormOpen state, db-submit-panel block.
+//   • Added: disputeModalMs state, DisputeModal component.
+//   • Everything else is byte-for-byte identical.
 // ============================================================
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useSelector } from "react-redux";
 import { RootState } from "@/store";
 import {
@@ -89,6 +96,189 @@ const OPEN_DISPUTE_STATUSES = new Set([
   "ai_pending",
   "ai_complete",
 ]);
+
+// ── Dispute Modal ─────────────────────────────────────────────
+
+interface DisputeModalProps {
+  ms: DbMilestone;
+  agreementId: string;
+  data: AgreementData;
+  walletAddress: string;
+  onClose: () => void;
+  onSubmitted: () => void;
+}
+
+function DisputeModal({
+  ms,
+  agreementId,
+  data,
+  walletAddress,
+  onClose,
+  onSubmitted,
+}: DisputeModalProps) {
+  const overlayRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [onClose]);
+
+  const contractTerms = {
+    payer: data.partyA ?? "",
+    receiver: data.partyB ?? walletAddress ?? "",
+    arbitrator: data.arbitrator ?? (data.terms?.arbitrator as string) ?? "TBD",
+    total_amount: data.totalAmountUsd ?? 0,
+    milestone_description: ms.condition || ms.title,
+    milestone_percentage: ms.percentage,
+    milestone_deadline: ms.deadline || undefined,
+    agreement_type: (data.terms?.agreement_type as string) ?? "freelance",
+  };
+
+  return (
+    <>
+      <style>{`
+        .pbd-overlay {
+          position: fixed; inset: 0; z-index: 1000;
+          background: rgba(5,5,7,0.82);
+          backdrop-filter: blur(20px) saturate(1.4);
+          display: flex; align-items: center; justify-content: center;
+          padding: 24px;
+          animation: pbdFadeIn 0.18s ease both;
+        }
+        @keyframes pbdFadeIn { from { opacity: 0 } to { opacity: 1 } }
+
+        .pbd-sheet {
+          width: 100%; max-width: 640px; max-height: 90vh;
+          background: var(--bg-1); border: 1px solid var(--border-hi);
+          border-radius: 20px; overflow: hidden;
+          display: flex; flex-direction: column;
+          box-shadow: 0 48px 96px rgba(0,0,0,0.72),
+                      inset 0 0 0 1px rgba(255,255,255,0.04);
+          animation: pbdSlideUp 0.28s cubic-bezier(0.16,1,0.3,1) both;
+        }
+        @keyframes pbdSlideUp {
+          from { opacity: 0; transform: translateY(28px) scale(0.97) }
+          to   { opacity: 1; transform: translateY(0)    scale(1)    }
+        }
+
+        .pbd-header {
+          display: flex; align-items: center; justify-content: space-between;
+          padding: 20px 24px; flex-shrink: 0;
+          background: var(--bg-2); border-bottom: 1px solid var(--border);
+        }
+        .pbd-header-left { display: flex; align-items: center; gap: 14px; }
+        .pbd-header-icon {
+          width: 40px; height: 40px; border-radius: 11px; flex-shrink: 0;
+          background: rgba(251,191,36,0.10); border: 1px solid rgba(251,191,36,0.26);
+          display: flex; align-items: center; justify-content: center;
+        }
+        .pbd-header-eyebrow {
+          font-size: 10px; font-family: var(--mono); font-weight: 600;
+          color: var(--amber); text-transform: uppercase; letter-spacing: 0.10em;
+          margin-bottom: 3px;
+        }
+        .pbd-header-title {
+          font-family: var(--font-display); font-size: 16px; font-weight: 700;
+          color: var(--text-1); letter-spacing: -0.03em;
+        }
+        .pbd-close-btn {
+          width: 32px; height: 32px; border-radius: 8px; flex-shrink: 0;
+          background: var(--bg-3); border: 1px solid var(--border);
+          display: flex; align-items: center; justify-content: center;
+          cursor: pointer; color: var(--text-4);
+          transition: background 0.14s, border-color 0.14s, color 0.14s;
+          font-family: var(--font);
+        }
+        .pbd-close-btn:hover {
+          background: var(--bg-4); border-color: var(--border-hi); color: var(--text-1);
+        }
+        .pbd-body {
+          flex: 1; overflow-y: auto; padding: 24px;
+        }
+        .pbd-body::-webkit-scrollbar { width: 4px; }
+        .pbd-body::-webkit-scrollbar-thumb { background: var(--bg-5); border-radius: 2px; }
+      `}</style>
+
+      <div
+        ref={overlayRef}
+        className="pbd-overlay"
+        onClick={(e) => {
+          if (e.target === overlayRef.current) onClose();
+        }}
+      >
+        <div className="pbd-sheet" role="dialog" aria-modal="true">
+          {/* Header */}
+          <div className="pbd-header">
+            <div className="pbd-header-left">
+              <div className="pbd-header-icon">
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="var(--amber)"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                >
+                  <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                  <line x1="12" y1="9" x2="12" y2="13" />
+                  <line x1="12" y1="17" x2="12.01" y2="17" />
+                </svg>
+              </div>
+              <div>
+                <div className="pbd-header-eyebrow">
+                  File Evidence · Dispute
+                </div>
+                <div className="pbd-header-title">{ms.title}</div>
+              </div>
+            </div>
+            <button
+              className="pbd-close-btn"
+              onClick={onClose}
+              aria-label="Close"
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+              >
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+
+          {/* Body */}
+          <div className="pbd-body">
+            <DisputeSubmitScreen
+              agreementId={agreementId}
+              milestoneIndex={ms.index}
+              party="B"
+              milestoneDescription={ms.condition || ms.title}
+              contractTerms={contractTerms}
+              onSubmitted={() => {
+                onSubmitted();
+                onClose();
+              }}
+            />
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
 
 // ── History Card ──────────────────────────────────────────────
 
@@ -283,9 +473,11 @@ export default function PartyBDashboard() {
   const [connected, setConnected] = useState(false);
   const [activeTab, setActiveTab] = useState<"current" | "history">("current");
   const [historyIds, setHistoryIds] = useState<string[]>([]);
-  const [disputeFormOpen, setDisputeFormOpen] = useState<
-    Record<number, boolean>
-  >({});
+
+  // Replaces disputeFormOpen — stores which ms is open in the modal (null = closed)
+  const [disputeModalMs, setDisputeModalMs] = useState<DbMilestone | null>(
+    null,
+  );
   const [disputeSubmitted, setDisputeSubmitted] = useState<
     Record<number, boolean>
   >({});
@@ -494,20 +686,6 @@ export default function PartyBDashboard() {
   const displayPayer = data?.partyA
     ? `${data.partyA.slice(0, 8)}…${data.partyA.slice(-4)}`
     : payerName;
-
-  function buildContractTerms(ms: DbMilestone) {
-    return {
-      payer: data?.partyA ?? "",
-      receiver: data?.partyB ?? walletAddress ?? "",
-      arbitrator:
-        data?.arbitrator ?? (data?.terms?.arbitrator as string) ?? "TBD",
-      total_amount: data?.totalAmountUsd ?? 0,
-      milestone_description: ms.condition || ms.title,
-      milestone_percentage: ms.percentage,
-      milestone_deadline: ms.deadline || undefined,
-      agreement_type: (data?.terms?.agreement_type as string) ?? "freelance",
-    };
-  }
 
   const statsCards = [
     {
@@ -799,8 +977,6 @@ export default function PartyBDashboard() {
                       const isPending = ms.status === "pending";
                       const isDisputed = ms.status === "disputed";
                       const isFlashing = flashIndex === ms.index;
-                      const showSubmit =
-                        isDisputed && disputeFormOpen[ms.index];
                       const alreadySub = disputeSubmitted[ms.index];
 
                       return (
@@ -904,17 +1080,14 @@ export default function PartyBDashboard() {
                                 >
                                   {statusLabel(ms.status)}
                                 </span>
+
+                                {/* Evidence — opens modal instead of inline form */}
                                 {isDisputed && !alreadySub && (
                                   <button
                                     className="db-btn db-btn--evidence"
-                                    onClick={() =>
-                                      setDisputeFormOpen((p) => ({
-                                        ...p,
-                                        [ms.index]: !p[ms.index],
-                                      }))
-                                    }
+                                    onClick={() => setDisputeModalMs(ms)}
                                   >
-                                    {showSubmit ? "✕ Hide" : "📄 Evidence"}
+                                    📄 Evidence
                                   </button>
                                 )}
                                 {isDisputed && alreadySub && (
@@ -926,7 +1099,7 @@ export default function PartyBDashboard() {
                             </div>
                           </div>
 
-                          {/* Dispute detail */}
+                          {/* Dispute detail panel — unchanged */}
                           {isDisputed && agreementId && (
                             <div className="db-dispute-panel">
                               <DisputeDetailView
@@ -937,28 +1110,7 @@ export default function PartyBDashboard() {
                             </div>
                           )}
 
-                          {/* Submit form */}
-                          {isDisputed && showSubmit && agreementId && (
-                            <div className="db-submit-panel">
-                              <DisputeSubmitScreen
-                                agreementId={agreementId}
-                                milestoneIndex={ms.index}
-                                party="B"
-                                milestoneDescription={ms.condition || ms.title}
-                                contractTerms={buildContractTerms(ms)}
-                                onSubmitted={() => {
-                                  setDisputeSubmitted((p) => ({
-                                    ...p,
-                                    [ms.index]: true,
-                                  }));
-                                  setDisputeFormOpen((p) => ({
-                                    ...p,
-                                    [ms.index]: false,
-                                  }));
-                                }}
-                              />
-                            </div>
-                          )}
+                          {/* db-submit-panel removed — DisputeSubmitScreen now in modal */}
                         </div>
                       );
                     })}
@@ -1022,6 +1174,24 @@ export default function PartyBDashboard() {
           )}
         </main>
       </div>
+
+      {/* ── Dispute Modal — portalled outside db-shell so it covers everything ── */}
+      {disputeModalMs && agreementId && data && (
+        <DisputeModal
+          ms={disputeModalMs}
+          agreementId={agreementId}
+          data={data}
+          walletAddress={walletAddress ?? ""}
+          onClose={() => setDisputeModalMs(null)}
+          onSubmitted={() => {
+            setDisputeSubmitted((p) => ({
+              ...p,
+              [disputeModalMs.index]: true,
+            }));
+            setDisputeModalMs(null);
+          }}
+        />
+      )}
     </div>
   );
 }

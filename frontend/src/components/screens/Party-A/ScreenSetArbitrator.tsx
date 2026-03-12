@@ -5,23 +5,6 @@ import { setScreen, updateEditedTerms } from "@/store/slices/partyASlice";
 import { useDispatch, useSelector } from "react-redux";
 import { AppDispatch, RootState } from "@/store";
 
-const KNOWN_ARBITRATORS = [
-  {
-    address: "SP2J6ZY48GV1EZ5V2V5RB9MP66SW86PYKKNRV9EJ",
-    name: "ClauseAI Default",
-    desc: "Managed multi-sig arbitration. 48h response SLA.",
-    fee: "1%",
-    rating: "4.9",
-  },
-  {
-    address: "SP3FBR2AGK5H9QBDH3EEN6DF8EK8JY7RX8QJ5SVTE",
-    name: "Community Pool",
-    desc: "Decentralised panel of vetted community arbitrators.",
-    fee: "0.5%",
-    rating: "4.7",
-  },
-];
-
 export default function ScreenSetArbitrator() {
   const dispatch = useDispatch<AppDispatch>();
   const { editedTerms } = useSelector((s: RootState) => s.partyA);
@@ -30,34 +13,26 @@ export default function ScreenSetArbitrator() {
   const [address, setAddress] = useState(
     existingArb === "TBD" ? "" : existingArb,
   );
-  const [customMode, setCustomMode] = useState(
-    !!existingArb &&
-      existingArb !== "TBD" &&
-      !KNOWN_ARBITRATORS.find((a) => a.address === existingArb),
-  );
   const [error, setError] = useState<string | null>(null);
   const [focused, setFocused] = useState(false);
+  const [touched, setTouched] = useState(false);
 
-  const isValid =
-    address.trim().length >= 10 || address.trim().toLowerCase() === "tbd";
-  const selectedPreset = KNOWN_ARBITRATORS.find((a) => a.address === address);
-
-  function selectPreset(addr: string) {
-    setAddress(addr);
-    setCustomMode(false);
-    setError(null);
-  }
+  const trimmed = address.trim();
+  const isValid = trimmed.length >= 10;
+  const showValidState = touched && isValid;
+  const showErrorState = touched && !isValid && trimmed.length > 0;
 
   function handleContinue() {
-    if (!isValid) {
-      setError(
-        "Enter a valid Stacks address (SP…) or choose a preset arbitrator.",
-      );
+    setTouched(true);
+    if (!isValid && trimmed.length > 0) {
+      setError("Enter a valid Stacks address (SP…) — minimum 10 characters.");
       return;
     }
-    dispatch(
-      updateEditedTerms({ arbitrator: address.trim() || "TBD" } as never),
-    );
+    if (trimmed.length === 0) {
+      setError("Please enter an arbitrator address or skip to decide later.");
+      return;
+    }
+    dispatch(updateEditedTerms({ arbitrator: trimmed } as never));
     dispatch(setScreen("share-link"));
   }
 
@@ -69,15 +44,29 @@ export default function ScreenSetArbitrator() {
   return (
     <div className="page" style={{ alignItems: "flex-start", paddingTop: 64 }}>
       <style>{css}</style>
-      <div style={{ maxWidth: 560, width: "100%" }}>
-        {/* Header */}
-        <div className="fade-up" style={{ marginBottom: 36 }}>
-          <button
-            onClick={() => dispatch(setScreen("parsed-terms"))}
-            className="back-btn"
+      <div style={{ maxWidth: 520, width: "100%" }}>
+        {/* Back */}
+        <button
+          onClick={() => dispatch(setScreen("parsed-terms"))}
+          className="back-btn fade-up"
+        >
+          <svg
+            width="11"
+            height="11"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
           >
-            ← Back
-          </button>
+            <line x1="19" y1="12" x2="5" y2="12" />
+            <polyline points="12 19 5 12 12 5" />
+          </svg>
+          Back
+        </button>
+
+        {/* Header */}
+        <div className="fade-up d1" style={{ marginBottom: 40 }}>
           <div
             className="step-counter"
             style={{ display: "block", marginBottom: 12 }}
@@ -86,55 +75,44 @@ export default function ScreenSetArbitrator() {
           </div>
           <h2
             style={{
-              fontSize: "clamp(24px, 3.5vw, 40px)",
-              fontWeight: 700,
-              letterSpacing: "-0.04em",
-              lineHeight: 1.05,
-              marginBottom: 10,
+              fontSize: "clamp(26px, 4vw, 42px)",
+              fontFamily: "var(--font-display)",
+              fontWeight: 800,
+              letterSpacing: "-0.05em",
+              lineHeight: 1.0,
+              marginBottom: 12,
+              color: "var(--text-1)",
             }}
           >
-            Choose an arbitrator
+            Set an{" "}
+            <em style={{ fontStyle: "normal", color: "var(--accent)" }}>
+              arbitrator
+            </em>
           </h2>
-          <p style={{ fontSize: 13, color: "var(--text-2)", lineHeight: 1.7 }}>
-            The arbitrator resolves disputes if they arise. Both parties will
-            see and approve this choice before any funds are locked.
+          <p
+            style={{
+              fontSize: 13,
+              color: "var(--text-3)",
+              lineHeight: 1.75,
+              maxWidth: 400,
+            }}
+          >
+            The arbitrator's wallet can call{" "}
+            <code className="inline-code">resolve-to-receiver</code> or{" "}
+            <code className="inline-code">resolve-to-payer</code> on the Clarity
+            contract if a dispute arises. Both parties must approve this choice.
           </p>
         </div>
 
-        {/* Why this matters */}
-        <div
-          className="fade-up d1"
-          style={{
-            background: "var(--bg-1)",
-            border: "1px solid var(--border)",
-            borderRadius: "var(--r-sm)",
-            padding: "14px 16px",
-            marginBottom: 24,
-            display: "flex",
-            gap: 12,
-            alignItems: "flex-start",
-          }}
-        >
-          <div
-            style={{
-              width: 28,
-              height: 28,
-              flexShrink: 0,
-              border: "1px solid var(--border)",
-              borderRadius: "var(--r-sm)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              background: "var(--bg-3)",
-              marginTop: 1,
-            }}
-          >
+        {/* What is an arbitrator — info card */}
+        <div className="fade-up d2 info-card" style={{ marginBottom: 28 }}>
+          <div className="info-card-icon">
             <svg
-              width="12"
-              height="12"
+              width="13"
+              height="13"
               viewBox="0 0 24 24"
               fill="none"
-              stroke="var(--text-3)"
+              stroke="var(--accent)"
               strokeWidth="1.5"
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -148,271 +126,155 @@ export default function ScreenSetArbitrator() {
                 fontSize: 12,
                 fontWeight: 600,
                 color: "var(--text-1)",
-                marginBottom: 4,
+                marginBottom: 5,
               }}
             >
-              Why this matters
+              What does an arbitrator do?
             </div>
             <p
               style={{
                 fontSize: 12,
                 color: "var(--text-3)",
-                lineHeight: 1.65,
+                lineHeight: 1.7,
                 margin: 0,
               }}
             >
-              Their wallet can call{" "}
-              <code className="inline-code">resolve-to-receiver</code> or{" "}
-              <code className="inline-code">resolve-to-payer</code> on the
-              Clarity contract if a dispute arises.
+              A neutral third party — a trusted person, DAO, or multisig — who
+              reviews evidence and resolves disputes. They never hold funds;
+              they only call the contract function. Choose someone both parties
+              trust before signing.
             </p>
           </div>
         </div>
 
-        {/* Preset arbitrators */}
-        <div className="fade-up d2" style={{ marginBottom: 20 }}>
-          <div className="label" style={{ marginBottom: 10 }}>
-            Recommended arbitrators
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {KNOWN_ARBITRATORS.map((arb) => {
-              const isSelected = address === arb.address && !customMode;
-              return (
-                <button
-                  key={arb.address}
-                  onClick={() => selectPreset(arb.address)}
-                  className={`arb-card${isSelected ? " arb-card--selected" : ""}`}
-                >
-                  <div style={{ flex: 1, textAlign: "left" }}>
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 8,
-                        marginBottom: 4,
-                      }}
-                    >
-                      <span
-                        style={{
-                          fontSize: 13,
-                          fontWeight: 600,
-                          color: "var(--text-1)",
-                        }}
-                      >
-                        {arb.name}
-                      </span>
-                      <span
-                        style={{
-                          fontSize: 10,
-                          fontFamily: "var(--mono)",
-                          color: "var(--green)",
-                          fontWeight: 700,
-                        }}
-                      >
-                        ★ {arb.rating}
-                      </span>
-                    </div>
-                    <div
-                      style={{
-                        fontSize: 11,
-                        color: "var(--text-3)",
-                        lineHeight: 1.5,
-                        marginBottom: 5,
-                      }}
-                    >
-                      {arb.desc}
-                    </div>
-                    <div
-                      style={{
-                        fontSize: 9,
-                        fontFamily: "var(--mono)",
-                        color: "var(--text-4)",
-                        letterSpacing: "0.04em",
-                      }}
-                    >
-                      {arb.address.slice(0, 14)}…{arb.address.slice(-6)}
-                    </div>
-                  </div>
-                  <div
-                    style={{
-                      textAlign: "right",
-                      flexShrink: 0,
-                      display: "flex",
-                      flexDirection: "column",
-                      alignItems: "flex-end",
-                      gap: 8,
-                    }}
-                  >
-                    <span
-                      style={{
-                        fontSize: 10,
-                        fontFamily: "var(--mono)",
-                        color: "var(--text-3)",
-                      }}
-                    >
-                      Fee: {arb.fee}
-                    </span>
-                    {isSelected && (
-                      <div
-                        style={{
-                          width: 18,
-                          height: 18,
-                          borderRadius: "50%",
-                          background: "var(--text-1)",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                        }}
-                      >
-                        <svg
-                          width="9"
-                          height="9"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="var(--bg)"
-                          strokeWidth="3"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
-                          <polyline points="20 6 9 17 4 12" />
-                        </svg>
-                      </div>
-                    )}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Custom address */}
-        <div className="fade-up d3" style={{ marginBottom: 24 }}>
+        {/* Input field */}
+        <div className="fade-up d3" style={{ marginBottom: 10 }}>
+          <label className="field-label">Arbitrator Stacks address</label>
           <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              marginBottom: customMode ? 12 : 0,
-            }}
+            className={`input-wrap${focused ? " input-wrap--focused" : ""}${showValidState ? " input-wrap--valid" : ""}${showErrorState ? " input-wrap--error" : ""}`}
           >
-            <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
-            <button
-              onClick={() => setCustomMode(!customMode)}
-              style={{
-                background: "none",
-                border: "none",
-                color: "var(--text-3)",
-                fontSize: 11,
-                fontFamily: "var(--mono)",
-                cursor: "pointer",
-                padding: "0 4px",
-                letterSpacing: "0.04em",
-              }}
-            >
-              {customMode ? "Hide custom" : "Use custom address"}
-            </button>
-            <div style={{ flex: 1, height: 1, background: "var(--border)" }} />
-          </div>
-          {customMode && (
-            <div style={{ animation: "slide-down 0.2s ease both" }}>
-              <label
-                style={{
-                  display: "block",
-                  fontSize: 11,
-                  fontFamily: "var(--mono)",
-                  color: "var(--text-3)",
-                  letterSpacing: "0.08em",
-                  textTransform: "uppercase" as const,
-                  marginBottom: 8,
-                }}
+            {/* Prefix icon */}
+            <div className="input-prefix">
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
               >
-                Custom Stacks address (SP…)
-              </label>
-              <input
-                className="input"
-                value={address}
-                onChange={(e) => {
-                  setAddress(e.target.value);
-                  setError(null);
-                }}
-                onFocus={() => setFocused(true)}
-                onBlur={() => setFocused(false)}
-                placeholder="SP2J6ZY48GV1EZ5V2V5RB9MP66SW86PYKKNRV9EJ"
-                style={{
-                  fontFamily: "var(--mono)",
-                  fontSize: 12,
-                  borderColor: focused ? "var(--border-hi)" : "var(--border)",
-                }}
-              />
-              <div
-                style={{
-                  fontSize: 10,
-                  fontFamily: "var(--mono)",
-                  color: "var(--text-4)",
-                  marginTop: 6,
-                }}
-              >
-                Must be a valid Stacks principal that can sign transactions
-              </div>
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                <path d="M7 11V7a5 5 0 0110 0v4" />
+              </svg>
             </div>
-          )}
+
+            <input
+              className="arb-input"
+              value={address}
+              onChange={(e) => {
+                setAddress(e.target.value);
+                setError(null);
+                if (touched) setTouched(false);
+              }}
+              onFocus={() => setFocused(true)}
+              onBlur={() => {
+                setFocused(false);
+                if (address.trim().length > 0) setTouched(true);
+              }}
+              placeholder="SP2J6ZY48GV1EZ5V2V5RB9MP66SW86PYKKNRV9EJ"
+              spellCheck={false}
+              autoCorrect="off"
+              autoCapitalize="none"
+            />
+
+            {/* Status icon */}
+            {showValidState && (
+              <div className="input-suffix input-suffix--valid">
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                >
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              </div>
+            )}
+            {showErrorState && (
+              <div className="input-suffix input-suffix--error">
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                >
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+              </div>
+            )}
+          </div>
+
+          {/* Helper text */}
+          <div className="input-helper">
+            {showErrorState ? (
+              <span style={{ color: "var(--red)" }}>
+                ⚠ Must be a valid Stacks principal (SP…) — at least 10
+                characters
+              </span>
+            ) : showValidState ? (
+              <span style={{ color: "var(--green)" }}>
+                ✓ Valid address format
+              </span>
+            ) : (
+              <span>Must be a Stacks principal that can sign transactions</span>
+            )}
+          </div>
         </div>
 
-        {/* Selected summary */}
-        {(selectedPreset || (customMode && address.trim().length > 10)) && (
-          <div
-            className="fade-in"
-            style={{
-              background: "rgba(34,197,94,0.06)",
-              border: "1px solid rgba(34,197,94,0.2)",
-              borderRadius: "var(--r-sm)",
-              padding: "12px 16px",
-              marginBottom: 20,
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-            }}
-          >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="var(--green)"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <polyline points="20 6 9 17 4 12" />
-            </svg>
-            <div>
+        {/* Address preview card — shown when valid */}
+        {showValidState && (
+          <div className="preview-card fade-in" style={{ marginBottom: 28 }}>
+            <div className="preview-card-dot" />
+            <div style={{ flex: 1, minWidth: 0 }}>
               <div
                 style={{
-                  fontSize: 12,
+                  fontSize: 11,
                   fontWeight: 600,
                   color: "var(--green)",
-                  marginBottom: 2,
+                  marginBottom: 3,
                 }}
               >
-                {selectedPreset
-                  ? selectedPreset.name
-                  : "Custom arbitrator selected"}
+                Arbitrator selected
               </div>
               <div
                 style={{
                   fontSize: 10,
                   fontFamily: "var(--mono)",
                   color: "var(--text-4)",
+                  letterSpacing: "0.04em",
+                  wordBreak: "break-all",
                 }}
               >
-                {address.slice(0, 18)}…{address.slice(-8)}
+                {trimmed.slice(0, 22)}…{trimmed.slice(-10)}
               </div>
             </div>
+            <div className="preview-card-badge">Party B must approve</div>
           </div>
         )}
 
+        {/* Error box */}
         {error && (
-          <div className="error-box fade-in" style={{ marginBottom: 16 }}>
+          <div className="error-box fade-in" style={{ marginBottom: 20 }}>
             ⚠ {error}
           </div>
         )}
@@ -420,14 +282,31 @@ export default function ScreenSetArbitrator() {
         {/* CTAs */}
         <div
           className="fade-up d4"
-          style={{ display: "flex", flexDirection: "column", gap: 8 }}
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+            marginTop: showValidState ? 0 : 28,
+          }}
         >
           <button
-            className="btn btn-primary btn-lg"
+            className={`btn btn-primary btn-lg cta-primary${isValid ? " cta-primary--active" : ""}`}
             onClick={handleContinue}
-            disabled={!isValid && address.trim().length > 0}
-            style={{ width: "100%" }}
+            style={{ width: "100%", position: "relative", overflow: "hidden" }}
           >
+            <span className="cta-shimmer" />
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
             Confirm & Share Agreement
             <svg
               width="12"
@@ -435,30 +314,35 @@ export default function ScreenSetArbitrator() {
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
-              strokeWidth="2"
+              strokeWidth="2.5"
               strokeLinecap="round"
-              strokeLinejoin="round"
             >
-              <path d="M5 12h14M12 5l7 7-7 7" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+              <polyline points="12 5 19 12 12 19" />
             </svg>
           </button>
+
           <button
-            className="btn btn-ghost"
+            className="btn btn-ghost skip-btn"
             onClick={handleSkip}
             style={{ width: "100%" }}
           >
             Skip — decide later (TBD)
           </button>
+
           <p
             style={{
               textAlign: "center",
               fontSize: 11,
               fontFamily: "var(--mono)",
               color: "var(--text-4)",
-              marginTop: 4,
+              marginTop: 6,
+              lineHeight: 1.6,
             }}
           >
             Party B will review and must approve this choice
+            <br />
+            before any funds are locked on-chain
           </p>
         </div>
       </div>
@@ -467,10 +351,168 @@ export default function ScreenSetArbitrator() {
 }
 
 const css = `
-.back-btn { background: none; border: none; color: var(--text-3); font-size: 11px; cursor: pointer; margin-bottom: 20px; font-family: var(--mono); letter-spacing: 0.04em; padding: 0; }
-.arb-card { display: flex; align-items: center; gap: 14px; border: 1px solid var(--border); border-radius: var(--r-md); padding: 14px 16px; cursor: pointer; transition: all var(--fast) var(--ease); background: var(--bg-1); width: 100%; text-align: left; }
-.arb-card:hover { background: var(--bg-2); border-color: var(--border-hi); }
-.arb-card--selected { background: var(--bg-3); border-color: var(--border-hi); }
-.inline-code { font-family: var(--mono); font-size: 11px; background: var(--bg-3); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; color: var(--amber); }
-@keyframes slide-down { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+/* Back button */
+.back-btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  background: none; border: none;
+  color: var(--text-4); font-size: 11px;
+  cursor: pointer; margin-bottom: 28px;
+  font-family: var(--mono); letter-spacing: 0.04em; padding: 0;
+  transition: color 0.15s;
+}
+.back-btn:hover { color: var(--text-2); }
+
+/* Info card */
+.info-card {
+  display: flex; gap: 14px; align-items: flex-start;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 16px 18px;
+}
+.info-card-icon {
+  width: 32px; height: 32px; flex-shrink: 0;
+  border: 1px solid rgba(196,255,70,0.20);
+  border-radius: var(--r-sm);
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(196,255,70,0.06);
+  margin-top: 1px;
+}
+
+/* Field label */
+.field-label {
+  display: block;
+  font-size: 11px; font-family: var(--mono);
+  color: var(--text-3); letter-spacing: 0.08em;
+  text-transform: uppercase; margin-bottom: 10px;
+}
+
+/* Input wrapper */
+.input-wrap {
+  display: flex; align-items: center; gap: 0;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+  overflow: hidden;
+}
+.input-wrap--focused {
+  border-color: var(--border-focus);
+  background: var(--bg-2);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+.input-wrap--valid {
+  border-color: rgba(74,222,128,0.40);
+  box-shadow: 0 0 0 3px rgba(74,222,128,0.08);
+}
+.input-wrap--error {
+  border-color: rgba(248,113,113,0.40);
+  box-shadow: 0 0 0 3px rgba(248,113,113,0.08);
+}
+
+.input-prefix {
+  width: 44px; height: 46px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-4);
+  border-right: 1px solid var(--border);
+  background: var(--bg-1);
+}
+.input-wrap--focused .input-prefix { color: var(--accent); border-right-color: var(--border-focus); }
+.input-wrap--valid   .input-prefix { color: var(--green);  border-right-color: rgba(74,222,128,0.25); }
+.input-wrap--error   .input-prefix { color: var(--red);    border-right-color: rgba(248,113,113,0.25); }
+
+.arb-input {
+  flex: 1; height: 46px;
+  background: transparent; border: none; outline: none;
+  font-family: var(--mono); font-size: 12px;
+  color: var(--text-1); letter-spacing: 0.04em;
+  padding: 0 14px;
+}
+.arb-input::placeholder { color: var(--text-4); letter-spacing: 0.02em; }
+
+.input-suffix {
+  width: 40px; height: 46px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.input-suffix--valid { color: var(--green); }
+.input-suffix--error { color: var(--red); }
+
+/* Helper text */
+.input-helper {
+  margin-top: 8px;
+  font-size: 11px; font-family: var(--mono);
+  color: var(--text-4); letter-spacing: 0.02em;
+  min-height: 16px;
+}
+
+/* Inline code */
+.inline-code {
+  font-family: var(--mono); font-size: 11px;
+  background: var(--bg-3); border: 1px solid var(--border);
+  border-radius: 4px; padding: 1px 5px;
+  color: var(--amber);
+}
+
+/* Preview card */
+.preview-card {
+  display: flex; align-items: center; gap: 12px;
+  background: rgba(74,222,128,0.05);
+  border: 1px solid rgba(74,222,128,0.20);
+  border-radius: var(--r-sm); padding: 13px 16px;
+}
+.preview-card-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--green); flex-shrink: 0;
+  animation: pulseDot 2s ease infinite;
+}
+.preview-card-badge {
+  font-size: 9px; font-family: var(--mono);
+  color: var(--text-4); background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: 20px; padding: 3px 10px;
+  white-space: nowrap; flex-shrink: 0;
+  letter-spacing: 0.06em;
+}
+
+/* CTA primary */
+.cta-primary {
+  background: var(--bg-3) !important;
+  color: var(--text-4) !important;
+  border-color: var(--border) !important;
+  cursor: not-allowed;
+  box-shadow: none !important;
+  font-family: var(--font-display) !important;
+  font-weight: 800 !important;
+  letter-spacing: -0.02em;
+}
+.cta-primary--active {
+  background: var(--accent) !important;
+  color: #0b0c0d !important;
+  border-color: var(--accent) !important;
+  cursor: pointer !important;
+  box-shadow: 0 4px 24px rgba(196,255,70,0.22) !important;
+}
+.cta-primary--active:hover {
+  background: #d4ff60 !important;
+  border-color: #d4ff60 !important;
+  box-shadow: 0 8px 40px rgba(196,255,70,0.35) !important;
+  transform: translateY(-1px);
+}
+.cta-primary--active:active { transform: translateY(0) !important; }
+
+.cta-shimmer {
+  position: absolute; top: 0; left: -100%; width: 55%; height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.18), transparent);
+  transition: left 0.55s ease; pointer-events: none;
+}
+.cta-primary--active:hover .cta-shimmer { left: 160%; }
+
+/* Skip button */
+.skip-btn {
+  font-size: 13px !important;
+  color: var(--text-3) !important;
+}
+.skip-btn:hover {
+  color: var(--text-1) !important;
+}
 `;

@@ -1,12 +1,12 @@
 "use client";
-// ============================================================
-// components/screens/Arbitrator/ArbitratorDisputeDetail.tsx
-//
-// Shows full dispute: contract terms, both party statements +
-// evidence, AI verdict breakdown, and decision panel.
-// ============================================================
-
-import { useState } from "react";
+import {
+  getSocket,
+  joinDisputeRoom,
+  DisputeUpdatedPayload,
+  leaveDisputeRoom,
+} from "@/lib/socket";
+import { updateActiveDispute } from "@/store/slices/arbitratorSlice";
+import { useEffect, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { AppDispatch, RootState } from "@/store";
 import {
@@ -402,6 +402,57 @@ export default function ArbitratorDisputeDetail() {
     activeDisputeError,
     walletAddress,
   } = useSelector((s: RootState) => s.arbitrator);
+
+  useEffect(() => {
+    if (!activeDispute?.agreement_id) return;
+
+    // Join the agreement room so this arbitrator receives dispute:updated events
+    joinDisputeRoom(activeDispute.agreement_id, activeDispute.milestone_index);
+
+    const socket = getSocket();
+
+    function onDisputeUpdated(dispute: DisputeUpdatedPayload) {
+      // Only apply if it's for the dispute we're currently viewing
+      if (
+        dispute.agreement_id === activeDispute?.agreement_id &&
+        dispute.milestone_index === activeDispute?.milestone_index
+      ) {
+        dispatch(updateActiveDispute(dispute as any));
+      }
+    }
+
+    socket.on("dispute:updated", onDisputeUpdated);
+    return () => {
+      socket.off("dispute:updated", onDisputeUpdated);
+    };
+  }, [activeDispute?.agreement_id, activeDispute?.milestone_index, dispatch]);
+
+  useEffect(() => {
+    if (!activeDispute?.agreement_id) return;
+
+    joinDisputeRoom(activeDispute.agreement_id, activeDispute.milestone_index); // ← fixed
+
+    const socket = getSocket();
+
+    function onDisputeUpdated(dispute: DisputeUpdatedPayload) {
+      if (
+        dispute.agreement_id === activeDispute?.agreement_id &&
+        dispute.milestone_index === activeDispute?.milestone_index
+      ) {
+        dispatch(updateActiveDispute(dispute as any));
+      }
+    }
+
+    socket.on("dispute:updated", onDisputeUpdated);
+
+    return () => {
+      socket.off("dispute:updated", onDisputeUpdated);
+      leaveDisputeRoom(
+        activeDispute.agreement_id,
+        activeDispute.milestone_index,
+      ); // ← add this
+    };
+  }, [activeDispute?.agreement_id, activeDispute?.milestone_index, dispatch]);
 
   if (activeDisputeLoading) {
     return (

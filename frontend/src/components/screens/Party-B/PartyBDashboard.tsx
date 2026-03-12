@@ -1,12 +1,29 @@
 "use client";
 // ============================================================
-// components/partyB/PartyBDashboard.tsx — with Dispute Evidence
+// components/partyB/PartyBDashboard.tsx
+//
+// Key fixes vs previous version:
+//  1. On mount, after fetching milestones, cross-checks the
+//     arbitrate API for each milestone and marks any that have
+//     an open dispute as status="disputed" locally — so Party B
+//     sees "In Dispute" even if the on-chain TX update didn't
+//     propagate yet.
+//  2. Subscribes to "dispute:updated" socket events (emitted
+//     to the agreement room by the arbitrate router) and
+//     immediately marks the relevant milestone as disputed.
+//  3. Shows DisputeSubmitScreen inline for disputed milestones
+//     so Party B can submit their counter-statement + evidence.
 // ============================================================
 
 import { useEffect, useState, useCallback } from "react";
 import { useSelector } from "react-redux";
 import { RootState } from "@/store";
-import { getSocket, joinAgreementRoom } from "@/lib/socket";
+import {
+  getSocket,
+  joinAgreementRoom,
+  joinDisputeRoom,
+  leaveDisputeRoom,
+} from "@/lib/socket";
 import { explorerTxUrl } from "@/lib/stacksConfig";
 import { getPartyBAgreementIds } from "@/store/slices/partyBSlice";
 import DisputeSubmitScreen from "@/components/screens/Shared/DisputeSubmitScreen";
@@ -14,6 +31,7 @@ import DisputeSubmitScreen from "@/components/screens/Shared/DisputeSubmitScreen
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 // ── Types ────────────────────────────────────────────────────
+
 type MsStatus =
   | "locked"
   | "pending"
@@ -52,6 +70,7 @@ interface AgreementData {
 }
 
 // ── Helpers ──────────────────────────────────────────────────
+
 function statusColor(s: MsStatus) {
   if (s === "complete") return "var(--green)";
   if (s === "disputed") return "var(--amber)";
@@ -84,7 +103,17 @@ function fundStateLabel(s: string) {
   return "Pending";
 }
 
-// ── History Agreement Card ────────────────────────────────────
+// Active dispute statuses — anything here means the milestone IS disputed
+const OPEN_DISPUTE_STATUSES = new Set([
+  "awaiting_statements",
+  "party_a_submitted",
+  "party_b_submitted",
+  "ai_pending",
+  "ai_complete",
+]);
+
+// ── History Card ─────────────────────────────────────────────
+
 function HistoryCard({
   agreementId,
   walletAddress,
@@ -424,6 +453,7 @@ function HistoryCard({
 }
 
 // ── Main PartyBDashboard ──────────────────────────────────────
+
 export default function PartyBDashboard() {
   const { terms, amountLocked, walletAddress, agreementId } = useSelector(
     (s: RootState) => s.partyB,
@@ -441,20 +471,69 @@ export default function PartyBDashboard() {
   const [activeTab, setActiveTab] = useState<"current" | "history">("current");
   const [historyIds, setHistoryIds] = useState<string[]>([]);
 
-  // Track dispute form open/submitted state per milestone index
+  // dispute form state per milestone
   const [disputeFormOpen, setDisputeFormOpen] = useState<
     Record<number, boolean>
   >({});
   const [disputeSubmitted, setDisputeSubmitted] = useState<
     Record<number, boolean>
   >({});
+  // track which milestone indices we've already joined dispute rooms for
+  const joinedDisputeRooms = useState<Set<number>>(() => new Set())[0];
 
   useEffect(() => {
     setHistoryIds(getPartyBAgreementIds());
   }, []);
 
+  // ── Helper: mark a milestone as disputed in local state ────
+  const markMilestoneDisputed = useCallback((milestoneIndex: number) => {
+    setData((prev) => {
+      if (!prev) return prev;
+      const already = prev.milestones.find((m) => m.index === milestoneIndex);
+      if (!already || already.status === "disputed") return prev; // no change needed
+      return {
+        ...prev,
+        milestones: prev.milestones.map((ms) =>
+          ms.index === milestoneIndex
+            ? { ...ms, status: "disputed" as MsStatus }
+            : ms,
+        ),
+      };
+    });
+  }, []);
+
+  // ── Check arbitrate API for existing open disputes ─────────
+  // Called once after milestones are loaded.
+  const checkArbitrateDisputes = useCallback(
+    async (milestones: DbMilestone[]) => {
+      if (!agreementId) return;
+      await Promise.all(
+        milestones.map(async (ms) => {
+          try {
+            const res = await fetch(
+              `${API_BASE}/api/arbitrate/${agreementId}/${ms.index}`,
+            );
+            if (!res.ok) return;
+            const json = await res.json();
+            if (
+              json.dispute &&
+              OPEN_DISPUTE_STATUSES.has(json.dispute.status)
+            ) {
+              markMilestoneDisputed(ms.index);
+            }
+          } catch {
+            /* ignore */
+          }
+        }),
+      );
+    },
+    [agreementId, markMilestoneDisputed],
+  );
+
+  // ── Fetch agreement + milestone data ───────────────────────
   const fetchData = useCallback(async () => {
     if (!agreementId) return;
+
     try {
       const res = await fetch(
         `${API_BASE}/api/agreement/${agreementId}/milestones`,
@@ -464,6 +543,8 @@ export default function PartyBDashboard() {
         if (json.milestones && json.milestones.length > 0) {
           setData(json);
           setLoading(false);
+          // After loading milestone data, cross-check arbitrate DB
+          checkArbitrateDisputes(json.milestones);
           return;
         }
       }
@@ -471,6 +552,7 @@ export default function PartyBDashboard() {
       /* fall through */
     }
 
+    // Fallback: build from agreement + redux terms
     try {
       const res = await fetch(`${API_BASE}/api/agreement/${agreementId}`);
       if (res.ok) {
@@ -488,7 +570,7 @@ export default function PartyBDashboard() {
             status: "locked" as MsStatus,
           }));
         }
-        setData({
+        const built: AgreementData = {
           agreementId,
           milestones,
           fundState: json.fundState ?? "locked",
@@ -498,13 +580,15 @@ export default function PartyBDashboard() {
           partyB: json.partyB ?? null,
           arbitrator: null,
           amountLocked: json.amountLocked ?? reduxAmount,
-        });
+        };
+        setData(built);
+        if (milestones.length > 0) checkArbitrateDisputes(milestones);
       }
     } catch {
       /* nothing */
     }
     setLoading(false);
-  }, [agreementId, reduxAmount, t]);
+  }, [agreementId, reduxAmount, t, checkArbitrateDisputes]);
 
   useEffect(() => {
     fetchData();
@@ -516,15 +600,18 @@ export default function PartyBDashboard() {
     };
   }, [fetchData]);
 
-  // Socket.io
+  // ── Socket subscriptions ───────────────────────────────────
   useEffect(() => {
     if (!agreementId) return;
+
     const socket = getSocket();
     joinAgreementRoom(agreementId);
     if (socket.connected) setConnected(true);
+
     socket.on("connect", () => setConnected(true));
     socket.on("disconnect", () => setConnected(false));
 
+    // ── milestone:updated — standard release/timeout events ──
     function onMilestoneUpdated(payload: any) {
       if (payload.milestones && payload.milestones.length > 0) {
         setData((prev) =>
@@ -564,7 +651,34 @@ export default function PartyBDashboard() {
       setTimeout(() => setFlashIndex(null), 2500);
     }
 
+    // ── dispute:updated — emitted by arbitrate router to the
+    //    agreement room whenever a statement is submitted,
+    //    AI verdict arrives, or arbitrator resolves. ──────────
+    function onDisputeUpdated(payload: any) {
+      // Guard: only handle events for this agreement
+      if (payload.agreement_id && payload.agreement_id !== agreementId) return;
+
+      const idx: number = payload.milestone_index;
+      if (idx === undefined || idx === null) return;
+
+      // Mark milestone as disputed so the form appears
+      markMilestoneDisputed(idx);
+      setLastUpdate(new Date());
+
+      // Flash the card
+      setFlashIndex(idx);
+      setTimeout(() => setFlashIndex(null), 2500);
+
+      // Also join the dispute-specific room if not already joined,
+      // so DisputeSubmitScreen gets events too
+      if (!joinedDisputeRooms.has(idx)) {
+        joinDisputeRoom(agreementId!, idx);
+        joinedDisputeRooms.add(idx);
+      }
+    }
+
     socket.on("milestone:updated", onMilestoneUpdated);
+    socket.on("dispute:updated", onDisputeUpdated);
     socket.on("funds:locked", () => setTimeout(fetchData, 1000));
     socket.on("presence:updated", fetchData);
 
@@ -572,11 +686,15 @@ export default function PartyBDashboard() {
       socket.off("connect");
       socket.off("disconnect");
       socket.off("milestone:updated", onMilestoneUpdated);
+      socket.off("dispute:updated", onDisputeUpdated);
       socket.off("funds:locked");
       socket.off("presence:updated");
+      // Leave any dispute rooms we joined
+      joinedDisputeRooms.forEach((idx) => leaveDisputeRoom(agreementId, idx));
     };
-  }, [agreementId, fetchData]);
+  }, [agreementId, fetchData, markMilestoneDisputed, joinedDisputeRooms]);
 
+  // ── Derived state ──────────────────────────────────────────
   const milestones = data?.milestones ?? [];
   const completedCount = milestones.filter((m) =>
     ["complete", "refunded"].includes(m.status),
@@ -598,6 +716,22 @@ export default function PartyBDashboard() {
     ? `${data.partyA.slice(0, 10)}…`
     : payerName;
 
+  // Build contractTerms for DisputeSubmitScreen
+  function buildContractTerms(ms: DbMilestone) {
+    return {
+      payer: data?.partyA ?? "",
+      receiver: data?.partyB ?? walletAddress ?? "",
+      arbitrator:
+        data?.arbitrator ?? (data?.terms?.arbitrator as string) ?? "TBD",
+      total_amount: data?.totalAmountUsd ?? 0,
+      milestone_description: ms.condition || ms.title,
+      milestone_percentage: ms.percentage,
+      milestone_deadline: ms.deadline || undefined,
+      agreement_type: (data?.terms?.agreement_type as string) ?? "freelance",
+    };
+  }
+
+  // ── Render ─────────────────────────────────────────────────
   return (
     <div className="page" style={{ alignItems: "flex-start", paddingTop: 48 }}>
       <style>{css}</style>
@@ -804,7 +938,7 @@ export default function PartyBDashboard() {
                     }}
                   >
                     Funds are locked. Milestone details appear once the payer
-                    opens their dashboard. Auto-refreshes every 10s.
+                    opens their dashboard.
                   </div>
                 </div>
               </div>
@@ -838,8 +972,17 @@ export default function PartyBDashboard() {
 
                     return (
                       <div key={ms.index}>
+                        {/* ── Milestone Card ── */}
                         <div
-                          className={`ms-card${isDone ? " ms-card--done" : ""}${isPending ? " ms-card--pending" : ""}${isDisputed ? " ms-card--disputed" : ""}${isFlashing ? " ms-card--flash" : ""}`}
+                          className={[
+                            "ms-card",
+                            isDone ? "ms-card--done" : "",
+                            isPending ? "ms-card--pending" : "",
+                            isDisputed ? "ms-card--disputed" : "",
+                            isFlashing ? "ms-card--flash" : "",
+                          ]
+                            .filter(Boolean)
+                            .join(" ")}
                         >
                           <div
                             style={{
@@ -873,9 +1016,14 @@ export default function PartyBDashboard() {
                                   {isDone ? "✓" : ms.index + 1}
                                 </div>
                                 <span className="ms-title">{ms.title}</span>
-                                {isFlashing && (
+                                {isFlashing && !isDisputed && (
                                   <span className="flash-badge">
                                     Just updated!
+                                  </span>
+                                )}
+                                {isDisputed && (
+                                  <span className="dispute-badge">
+                                    ⚑ Dispute Active
                                   </span>
                                 )}
                               </div>
@@ -977,7 +1125,7 @@ export default function PartyBDashboard() {
                                 gap: 8,
                               }}
                             >
-                              {/* Disputed: submit evidence button */}
+                              {/* Dispute CTA — Party B submits counter-statement here */}
                               {isDisputed && !alreadySubmitted && (
                                 <button
                                   className="action-btn action-btn--evidence"
@@ -990,7 +1138,7 @@ export default function PartyBDashboard() {
                                 >
                                   {showSubmitForm
                                     ? "✕ Hide Form"
-                                    : "📄 Submit Evidence"}
+                                    : "📄 Submit Your Evidence"}
                                 </button>
                               )}
                               {isDisputed && alreadySubmitted && (
@@ -1001,48 +1149,23 @@ export default function PartyBDashboard() {
                               {isDisputed &&
                                 !alreadySubmitted &&
                                 !showSubmitForm && (
-                                  <span
-                                    style={{
-                                      fontSize: 10,
-                                      fontFamily: "var(--mono)",
-                                      color: "var(--amber)",
-                                      background: "rgba(245,158,11,0.1)",
-                                      border: "1px solid rgba(245,158,11,0.2)",
-                                      borderRadius: 4,
-                                      padding: "2px 8px",
-                                    }}
-                                  >
-                                    Awaiting arbitration
+                                  <span className="dispute-pending-tag">
+                                    Awaiting your response
                                   </span>
                                 )}
                             </div>
                           </div>
                         </div>
 
-                        {/* ── Dispute submit form (inline below card) ── */}
-                        {showSubmitForm && agreementId && (
+                        {/* ── Dispute Submit Screen (inline below card) ── */}
+                        {isDisputed && showSubmitForm && agreementId && (
                           <div className="dispute-form-wrap fade-in">
                             <DisputeSubmitScreen
                               agreementId={agreementId}
                               milestoneIndex={ms.index}
                               party="B"
                               milestoneDescription={ms.condition || ms.title}
-                              contractTerms={{
-                                // ← ADD THIS
-                                payer: data?.partyA ?? "",
-                                receiver: data?.partyB ?? walletAddress ?? "",
-                                arbitrator:
-                                  data?.arbitrator ??
-                                  (data?.terms?.arbitrator as string) ??
-                                  "TBD",
-                                total_amount: data?.totalAmountUsd ?? 0,
-                                milestone_description: ms.condition || ms.title,
-                                milestone_percentage: ms.percentage,
-                                milestone_deadline: ms.deadline || undefined,
-                                agreement_type:
-                                  (data?.terms?.agreement_type as string) ??
-                                  "freelance",
-                              }}
+                              contractTerms={buildContractTerms(ms)}
                               onSubmitted={() => {
                                 setDisputeSubmitted((prev) => ({
                                   ...prev,
@@ -1111,11 +1234,11 @@ export default function PartyBDashboard() {
               >
                 Updates push{" "}
                 <strong style={{ color: "var(--text-2)" }}>instantly</strong>{" "}
-                via Socket.io. If a milestone is disputed, click{" "}
-                <strong style={{ color: "var(--text-2)" }}>
-                  Submit Evidence
+                via Socket.io. When a milestone is disputed, click{" "}
+                <strong style={{ color: "var(--amber)" }}>
+                  Submit Your Evidence
                 </strong>{" "}
-                to present your case to the arbitrator.
+                to present your counter-statement to the arbitrator.
               </p>
             </div>
           </>
@@ -1125,6 +1248,8 @@ export default function PartyBDashboard() {
   );
 }
 
+// ── CSS ───────────────────────────────────────────────────────
+
 const css = `
 .page-title { font-size: clamp(24px, 3.5vw, 36px); font-weight: 700; letter-spacing: -0.04em; line-height: 1.05; margin: 0; }
 .mono-label { font-size: 10px; font-family: var(--mono); color: var(--text-4); text-transform: uppercase; letter-spacing: 0.1em; }
@@ -1133,50 +1258,86 @@ const css = `
 .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: pulse 2s ease-in-out infinite; }
 .status-dot--offline { background: var(--text-4); animation: none; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
-.tabs { display: flex; gap: 4; margin-top: 16px; background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 4px; width: fit-content; }
+
+.tabs { display: flex; gap: 4px; margin-top: 16px; background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 4px; width: fit-content; }
 .tab { background: none; border: none; padding: 6px 16px; font-size: 12px; font-family: var(--mono); color: var(--text-3); cursor: pointer; border-radius: 4px; display: flex; align-items: center; gap: 7px; transition: all 0.15s; }
 .tab:hover { color: var(--text-1); }
 .tab--active { background: var(--bg-3); color: var(--text-1); font-weight: 600; border: 1px solid var(--border); }
 .tab-badge { font-size: 9px; background: var(--bg-1); border: 1px solid var(--border); border-radius: 10px; padding: 1px 6px; color: var(--text-4); }
+
 .hist-card { background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; transition: border-color 0.2s; }
 .hist-card:hover { border-color: var(--border-hi); }
+
 .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
 @media (max-width: 640px) { .summary-grid { grid-template-columns: 1fr 1fr; } }
 .summary-card { background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 14px 16px; }
 .summary-label { font-size: 9px; font-family: var(--mono); color: var(--text-4); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 6px; }
 .summary-value { font-size: 13px; font-weight: 700; color: var(--text-1); letter-spacing: -0.02em; margin-bottom: 3px; word-break: break-all; }
 .summary-sub { font-size: 10px; font-family: var(--mono); color: var(--text-4); }
+
 .progress-track { height: 4px; background: var(--bg-3); border-radius: 2px; overflow: hidden; }
 .progress-fill { height: 100%; background: var(--green); border-radius: 2px; transition: width 0.6s ease; min-width: 4px; }
+
 .ms-card { background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--r); padding: 16px 18px; transition: border-color 0.3s, box-shadow 0.3s, background 0.3s; }
 .ms-card--done { opacity: 0.75; border-color: rgba(34,197,94,0.15); }
 .ms-card--pending { border-color: rgba(255,255,255,0.15); background: var(--bg-2); }
-.ms-card--disputed { border-color: rgba(245,158,11,0.35); background: rgba(245,158,11,0.03); border-radius: var(--r) var(--r) 0 0; }
+.ms-card--disputed {
+  border-color: rgba(245,158,11,0.5) !important;
+  background: rgba(245,158,11,0.04);
+  border-radius: var(--r) var(--r) 0 0;
+  box-shadow: 0 0 0 1px rgba(245,158,11,0.15);
+}
 .ms-card--flash { animation: flashGreen 2.5s ease; }
 @keyframes flashGreen { 0% { border-color: rgba(34,197,94,0.8); box-shadow: 0 0 0 3px rgba(34,197,94,0.15); background: rgba(34,197,94,0.05); } 60% { border-color: rgba(34,197,94,0.4); } 100% { border-color: rgba(34,197,94,0.15); box-shadow: none; background: var(--bg-1); } }
+
 .ms-index { width: 20px; height: 20px; border-radius: 50%; background: var(--bg-3); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 9px; font-family: var(--mono); color: var(--text-3); font-weight: 700; flex-shrink: 0; transition: all 0.3s; }
 .ms-title { font-size: 13px; font-weight: 600; color: var(--text-1); }
 .ms-condition { font-size: 11px; color: var(--text-3); line-height: 1.6; max-width: 420px; }
 .ms-amount { font-size: 14px; font-weight: 700; color: var(--text-1); font-family: var(--mono); transition: color 0.3s; }
 .ms-pct { font-size: 10px; color: var(--text-4); font-family: var(--mono); }
 .ms-status { font-size: 11px; font-family: var(--mono); font-weight: 600; }
+
+.dispute-badge {
+  font-size: 10px; font-family: var(--mono); font-weight: 700;
+  color: var(--amber); background: rgba(245,158,11,0.12);
+  border: 1px solid rgba(245,158,11,0.35); border-radius: 6px;
+  padding: 2px 8px; animation: disputePulse 2s ease infinite;
+}
+@keyframes disputePulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
+
+.dispute-pending-tag {
+  font-size: 10px; font-family: var(--mono);
+  color: var(--amber); background: rgba(245,158,11,0.08);
+  border: 1px solid rgba(245,158,11,0.2); border-radius: 4px; padding: 2px 8px;
+}
+
 .flash-badge { font-size: 9px; font-family: var(--mono); color: var(--green); background: rgba(34,197,94,0.12); border: 1px solid rgba(34,197,94,0.25); border-radius: 10px; padding: 2px 8px; }
+
 .action-btn { padding: 5px 12px; border-radius: var(--r-xs); font-size: 11px; font-family: var(--mono); cursor: pointer; border: 1px solid; transition: all 0.15s; display: flex; align-items: center; gap: 5px; background: none; }
-.action-btn--evidence { background: rgba(96,165,250,0.08); border-color: rgba(96,165,250,0.3); color: #60a5fa; }
-.action-btn--evidence:hover { background: rgba(96,165,250,0.15); border-color: rgba(96,165,250,0.5); }
+.action-btn--evidence { background: rgba(245,158,11,0.10); border-color: rgba(245,158,11,0.4); color: var(--amber); font-weight: 600; }
+.action-btn--evidence:hover { background: rgba(245,158,11,0.18); border-color: rgba(245,158,11,0.65); }
+
 .submitted-badge { font-size: 10px; font-family: var(--mono); color: var(--green); background: rgba(34,197,94,0.08); border: 1px solid rgba(34,197,94,0.2); border-radius: var(--r-xs); padding: 4px 10px; }
-.dispute-form-wrap { border: 1px solid rgba(245,158,11,0.2); border-top: none; border-radius: 0 0 var(--r) var(--r); background: rgba(245,158,11,0.02); overflow: hidden; }
+
+.dispute-form-wrap {
+  border: 1px solid rgba(245,158,11,0.3);
+  border-top: none;
+  border-radius: 0 0 var(--r) var(--r);
+  background: rgba(245,158,11,0.02);
+  overflow: hidden;
+}
+
 .info-strip { display: flex; gap: 10px; align-items: flex-start; background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 12px 14px; }
 .complete-banner { text-align: center; background: rgba(34,197,94,0.06); border: 1px solid rgba(34,197,94,0.2); border-radius: var(--r); padding: 28px 20px; }
 .waiting-card { display: flex; gap: 14px; align-items: flex-start; background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--r); padding: 18px 20px; }
 .waiting-icon { width: 36px; height: 36px; border-radius: 50%; background: var(--bg-3); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+
 .spinner { display: inline-block; border: 2px solid var(--bg-3); border-top-color: var(--green); border-radius: 50%; animation: spin 0.7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
 .fade-up { animation: fadeUp 0.4s ease both; }
 .fade-in { animation: fadeIn 0.3s ease both; }
-.d1 { animation-delay: 0.06s; }
-.d2 { animation-delay: 0.12s; }
-.d3 { animation-delay: 0.18s; }
+.d1 { animation-delay: 0.06s; } .d2 { animation-delay: 0.12s; } .d3 { animation-delay: 0.18s; }
 @keyframes fadeUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 `;

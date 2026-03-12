@@ -1,6 +1,5 @@
 // ============================================================
 // lib/socket.ts — Socket.io client singleton
-// Connects once, reused across components.
 // ============================================================
 
 import { io, Socket } from "socket.io-client";
@@ -31,12 +30,23 @@ export function joinAgreementRoom(agreementId: string) {
   getSocket().emit("join:agreement", agreementId);
 }
 
+// Join a dispute-specific room for real-time statement/evidence updates.
+// Room key on server: "dispute:{agreementId}:{milestoneIndex}"
+export function joinDisputeRoom(agreementId: string, milestoneIndex: number) {
+  getSocket().emit("join:dispute", { agreementId, milestoneIndex });
+}
+
+export function leaveDisputeRoom(agreementId: string, milestoneIndex: number) {
+  getSocket().emit("leave:dispute", { agreementId, milestoneIndex });
+}
+
 export function disconnectSocket() {
   socket?.disconnect();
   socket = null;
 }
 
-// ── Event types emitted by the server ─────────────────────────
+// ── Event payload types ───────────────────────────────────────
+
 export interface MilestoneUpdatedPayload {
   agreementId: string;
   milestoneIndex: number;
@@ -67,4 +77,36 @@ export interface FundsLockedPayload {
   agreementId: string;
   amountLocked: string;
   txId: string;
+}
+
+// Emitted to "dispute:{agreementId}:{milestoneIndex}" room whenever:
+//  - A party submits their statement
+//  - AI verdict is generated
+//  - Arbitrator resolves
+export interface DisputeUpdatedPayload {
+  agreement_id: string;
+  milestone_index: number;
+  status: string;
+  party_a_statement?: string;
+  party_a_evidence?: string[];
+  party_a_submitted_at?: string;
+  party_b_statement?: string;
+  party_b_evidence?: string[];
+  party_b_submitted_at?: string;
+  ai_verdict?: {
+    verdict: "release_to_receiver" | "refund_to_payer" | "split";
+    confidence: number;
+    reasoning: string;
+    key_factors: string[];
+    warnings: string[];
+    split_percentage?: number;
+    generated_at: string;
+  };
+  arbitrator_decision?: {
+    outcome: string;
+    followed_ai: boolean;
+    override_reason?: string;
+    decided_at: string;
+    arbitrator_address: string;
+  };
 }

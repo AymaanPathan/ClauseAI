@@ -1,5 +1,6 @@
 import { Router, Request, Response } from "express";
 import multer from "multer";
+import { Server as SocketIOServer } from "socket.io";
 import { Dispute, DisputeMemStore, IDispute } from "../models/Dispute";
 import { AIVerdict, VerdictOutcome } from "../types/dispute";
 import { isMongoAvailable } from "../lib/db";
@@ -10,7 +11,29 @@ import cloudinary from "../lib/cloudinary";
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
 
-// ── DB helpers (Mongo with in-memory fallback) ────────────────
+// ── Socket.io injection ───────────────────────────────────────
+let _io: SocketIOServer | null = null;
+export function setArbitrateSocketIO(io: SocketIOServer) {
+  _io = io;
+}
+
+// Emit to everyone in the dispute room AND the agreement room.
+// This means Party A dashboard, Party B dashboard, and the
+// arbitrator detail view all receive the update simultaneously.
+function emitDisputeUpdate(dispute: IDispute) {
+  if (!_io) return;
+  const payload = dispute; // full dispute object
+
+  // Dispute-specific room (joined by DisputeSubmitScreen / arbitrator detail)
+  _io
+    .to(`dispute:${dispute.agreement_id}:${dispute.milestone_index}`)
+    .emit("dispute:updated", payload);
+
+  // Agreement room (joined by both party dashboards)
+  _io.to(`agreement:${dispute.agreement_id}`).emit("dispute:updated", payload);
+}
+
+// ── DB helpers ────────────────────────────────────────────────
 
 async function findDispute(
   agreementId: string,
@@ -41,7 +64,7 @@ async function saveDispute(
   return DisputeMemStore.upsert(agreementId, milestoneIndex, data);
 }
 
-// ── SSE registry (dispute live updates) ──────────────────────
+// ── SSE registry (kept for backward-compat / arbitrator portal) ──
 
 const disputeSSE = new Map<string, Set<Response>>();
 
@@ -49,13 +72,9 @@ function sseKey(agreementId: string, milestoneIndex: number): string {
   return `${agreementId}:${milestoneIndex}`;
 }
 
-function notifyDisputeSSE(
-  agreementId: string,
-  milestoneIndex: number,
-  data: unknown,
-): void {
+function notifySSE(agreementId: string, milestoneIndex: number, data: unknown) {
   const clients = disputeSSE.get(sseKey(agreementId, milestoneIndex));
-  if (!clients || clients.size === 0) return;
+  if (!clients?.size) return;
   const payload = `data: ${JSON.stringify(data)}\n\n`;
   for (const client of clients) {
     try {
@@ -66,7 +85,19 @@ function notifyDisputeSSE(
   }
 }
 
-// ── GET /api/arbitrate/:id/:index/events — SSE stream ────────
+// Single helper: persist + notify BOTH SSE and Socket.io
+async function saveAndBroadcast(
+  agreementId: string,
+  milestoneIndex: number,
+  data: Partial<IDispute>,
+): Promise<IDispute> {
+  const updated = await saveDispute(agreementId, milestoneIndex, data);
+  notifySSE(agreementId, milestoneIndex, updated);
+  emitDisputeUpdate(updated);
+  return updated;
+}
+
+// ── GET /api/arbitrate/:id/:index/events — SSE ────────────────
 router.get("/:id/:index/events", async (req: Request, res: Response) => {
   const { id, index } = req.params;
   const milestoneIndex = parseInt(index, 10);
@@ -103,17 +134,14 @@ router.get("/:id/:index/events", async (req: Request, res: Response) => {
   });
 });
 
-// ── GET /api/arbitrate/dashboard/:address ───────────────────
+// ── GET /api/arbitrate/dashboard/:address ────────────────────
 router.get("/dashboard/:address", async (req: Request, res: Response) => {
   const { address } = req.params;
-
-  if (!address) {
+  if (!address)
     return res.status(400).json({ error: "arbitrator address is required" });
-  }
 
   try {
     let disputes: IDispute[];
-
     if (isMongoAvailable()) {
       disputes = await Dispute.find({
         "contract_terms.arbitrator": address,
@@ -145,20 +173,16 @@ router.get("/dashboard/:address", async (req: Request, res: Response) => {
   }
 });
 
-// ── GET /api/arbitrate/:id/:index — single dispute ────────────
+// ── GET /api/arbitrate/:id/:index ────────────────────────────
 router.get("/:id/:index", async (req: Request, res: Response) => {
   const { id, index } = req.params;
   const milestoneIndex = parseInt(index, 10);
-
-  if (isNaN(milestoneIndex)) {
+  if (isNaN(milestoneIndex))
     return res.status(400).json({ error: "milestone index must be a number" });
-  }
 
   try {
     const dispute = await findDispute(id, milestoneIndex);
-    if (!dispute) {
-      return res.status(404).json({ error: "Dispute not found" });
-    }
+    if (!dispute) return res.status(404).json({ error: "Dispute not found" });
     res.json({ success: true, dispute });
   } catch (err) {
     console.error("[GET dispute]", err);
@@ -167,8 +191,6 @@ router.get("/:id/:index", async (req: Request, res: Response) => {
 });
 
 // ── POST /api/arbitrate/open ──────────────────────────────────
-// Called when a milestone is disputed on-chain.
-// Body: { agreement_id, milestone_index, contract_terms }
 router.post("/open", async (req: Request, res: Response) => {
   const { agreement_id, milestone_index, contract_terms } = req.body as {
     agreement_id: string;
@@ -177,34 +199,36 @@ router.post("/open", async (req: Request, res: Response) => {
   };
 
   if (!agreement_id || milestone_index === undefined || !contract_terms) {
-    return res.status(400).json({
-      error: "agreement_id, milestone_index, and contract_terms are required",
-    });
+    return res
+      .status(400)
+      .json({
+        error: "agreement_id, milestone_index, and contract_terms are required",
+      });
   }
-
   if (
     !contract_terms.payer ||
     !contract_terms.receiver ||
     !contract_terms.arbitrator ||
     !contract_terms.milestone_description
   ) {
-    return res.status(400).json({
-      error:
-        "contract_terms must include: payer, receiver, arbitrator, milestone_description",
-    });
+    return res
+      .status(400)
+      .json({
+        error:
+          "contract_terms must include: payer, receiver, arbitrator, milestone_description",
+      });
   }
 
   try {
     const existing = await findDispute(agreement_id, milestone_index);
-    if (existing) {
+    if (existing)
       return res.json({
         success: true,
         dispute: existing,
         already_exists: true,
       });
-    }
 
-    const dispute = await saveDispute(agreement_id, milestone_index, {
+    const dispute = await saveAndBroadcast(agreement_id, milestone_index, {
       agreement_id,
       milestone_index,
       contract_terms,
@@ -215,8 +239,6 @@ router.post("/open", async (req: Request, res: Response) => {
       party_b_evidence: [],
       opened_at: new Date(),
     } as Partial<IDispute>);
-
-    notifyDisputeSSE(agreement_id, milestone_index, dispute);
 
     res.json({ success: true, dispute });
   } catch (err) {
@@ -231,13 +253,10 @@ router.post(
   upload.array("files", 10),
   async (req: Request, res: Response) => {
     const files = req.files as Express.Multer.File[];
-
-    if (!files || files.length === 0) {
+    if (!files || files.length === 0)
       return res.status(400).json({ error: "No files uploaded" });
-    }
 
     if (!process.env.CLOUDINARY_CLOUD_NAME) {
-      console.warn("[Cloudinary] Not configured — returning placeholder URLs");
       const placeholderUrls = files.map(
         (f, i) =>
           `https://placeholder.clauseai.xyz/evidence/${Date.now()}_${i}_${f.originalname}`,
@@ -272,31 +291,21 @@ router.post(
             stream.end(file.buffer);
           }),
       );
-
       const urls = await Promise.all(uploadPromises);
       res.json({ success: true, urls });
     } catch (err: any) {
       console.error("[Cloudinary upload]", err);
-      res.status(500).json({
-        error: "Evidence upload failed",
-        details: err?.message || err,
-      });
+      res
+        .status(500)
+        .json({
+          error: "Evidence upload failed",
+          details: err?.message || err,
+        });
     }
   },
 );
 
 // ── POST /api/arbitrate/submit ────────────────────────────────
-// A party submits their statement and optional evidence URLs.
-//
-// KEY FIX: If the dispute doesn't exist yet and contract_terms are
-// provided, we auto-open it here. This prevents the "Dispute not found.
-// Call /open first." error when parties submit directly.
-//
-// Body: {
-//   agreement_id, milestone_index, party, statement,
-//   evidence_urls?,
-//   contract_terms?   ← optional; used to auto-open if dispute is missing
-// }
 router.post("/submit", async (req: Request, res: Response) => {
   const {
     agreement_id,
@@ -304,7 +313,7 @@ router.post("/submit", async (req: Request, res: Response) => {
     party,
     statement,
     evidence_urls = [],
-    contract_terms, // ← NEW optional field
+    contract_terms,
   } = req.body as {
     agreement_id: string;
     milestone_index: number;
@@ -314,56 +323,46 @@ router.post("/submit", async (req: Request, res: Response) => {
     contract_terms?: IDispute["contract_terms"];
   };
 
-  // ── Validate required fields ──────────────────────────────
   if (!agreement_id || milestone_index === undefined || !party || !statement) {
-    return res.status(400).json({
-      error:
-        "agreement_id, milestone_index, party (A|B), and statement are required",
-    });
+    return res
+      .status(400)
+      .json({
+        error:
+          "agreement_id, milestone_index, party (A|B), and statement are required",
+      });
   }
-  if (!["A", "B"].includes(party)) {
+  if (!["A", "B"].includes(party))
     return res.status(400).json({ error: 'party must be "A" or "B"' });
-  }
-  if (statement.trim().length < 10) {
+  if (statement.trim().length < 10)
     return res
       .status(400)
       .json({ error: "Statement must be at least 10 characters" });
-  }
-
-  console.log("[/submit] Incoming:", { agreement_id, milestone_index, party });
 
   try {
     let dispute = await findDispute(agreement_id, milestone_index);
 
-    // ── AUTO-OPEN if dispute not found and terms provided ────
+    // Auto-open if missing and contract_terms provided
     if (!dispute) {
       if (!contract_terms) {
         return res.status(404).json({
           error:
-            "Dispute not found. Either call POST /open first, or include contract_terms in this request to auto-open.",
+            "Dispute not found. Either call POST /open first, or include contract_terms to auto-open.",
         });
       }
-
-      // Validate the minimum required contract_terms fields
       if (
         !contract_terms.payer ||
         !contract_terms.receiver ||
         !contract_terms.arbitrator ||
         !contract_terms.milestone_description
       ) {
-        return res.status(400).json({
-          error:
-            "contract_terms must include: payer, receiver, arbitrator, milestone_description",
-        });
+        return res
+          .status(400)
+          .json({
+            error:
+              "contract_terms must include: payer, receiver, arbitrator, milestone_description",
+          });
       }
-
-      console.log(
-        "[/submit] Dispute not found — auto-opening:",
-        agreement_id,
-        milestone_index,
-      );
-
-      dispute = await saveDispute(agreement_id, milestone_index, {
+      dispute = await saveAndBroadcast(agreement_id, milestone_index, {
         agreement_id,
         milestone_index,
         contract_terms,
@@ -374,11 +373,8 @@ router.post("/submit", async (req: Request, res: Response) => {
         party_b_evidence: [],
         opened_at: new Date(),
       } as Partial<IDispute>);
-
-      notifyDisputeSSE(agreement_id, milestone_index, dispute);
     }
 
-    // ── Prevent re-submission ────────────────────────────────
     if (party === "A" && dispute.party_a_submitted_at) {
       return res
         .status(409)
@@ -390,7 +386,6 @@ router.post("/submit", async (req: Request, res: Response) => {
         .json({ error: "Party B has already submitted their statement" });
     }
 
-    // ── Build update payload ─────────────────────────────────
     const updateData: Partial<IDispute> =
       party === "A"
         ? {
@@ -404,22 +399,16 @@ router.post("/submit", async (req: Request, res: Response) => {
             party_b_submitted_at: new Date(),
           };
 
-    // Determine new status
     const aSubmitted = party === "A" ? true : !!dispute.party_a_submitted_at;
     const bSubmitted = party === "B" ? true : !!dispute.party_b_submitted_at;
 
-    if (aSubmitted && bSubmitted) {
-      updateData.status = "ai_pending";
-    } else if (aSubmitted) {
-      updateData.status = "party_a_submitted";
-    } else if (bSubmitted) {
-      updateData.status = "party_b_submitted";
-    }
+    if (aSubmitted && bSubmitted) updateData.status = "ai_pending";
+    else if (aSubmitted) updateData.status = "party_a_submitted";
+    else if (bSubmitted) updateData.status = "party_b_submitted";
 
-    dispute = await saveDispute(agreement_id, milestone_index, updateData);
-    notifyDisputeSSE(agreement_id, milestone_index, dispute);
+    // ── Save + broadcast to ALL connected clients ─────────────
+    dispute = await saveAndBroadcast(agreement_id, milestone_index, updateData);
 
-    // Auto-trigger AI when both parties have submitted
     if (updateData.status === "ai_pending") {
       runAIArbitration(dispute).catch((err) =>
         console.error("[AI auto-trigger error]", err),
@@ -446,7 +435,6 @@ router.post("/verdict", async (req: Request, res: Response) => {
     agreement_id: string;
     milestone_index: number;
   };
-
   if (!agreement_id || milestone_index === undefined) {
     return res
       .status(400)
@@ -455,18 +443,17 @@ router.post("/verdict", async (req: Request, res: Response) => {
 
   try {
     const dispute = await findDispute(agreement_id, milestone_index);
-    if (!dispute) {
-      return res.status(404).json({ error: "Dispute not found" });
-    }
+    if (!dispute) return res.status(404).json({ error: "Dispute not found" });
     if (!dispute.party_a_submitted_at || !dispute.party_b_submitted_at) {
-      return res.status(400).json({
-        error:
-          "Both parties must submit statements before AI arbitration can run",
-      });
+      return res
+        .status(400)
+        .json({
+          error:
+            "Both parties must submit statements before AI arbitration can run",
+        });
     }
-    if (dispute.ai_verdict) {
+    if (dispute.ai_verdict)
       return res.json({ success: true, dispute, cached: true });
-    }
 
     const updated = await runAIArbitration(dispute);
     res.json({ success: true, dispute: updated });
@@ -498,10 +485,12 @@ router.post("/resolve", async (req: Request, res: Response) => {
     !arbitrator_address ||
     !action
   ) {
-    return res.status(400).json({
-      error:
-        "agreement_id, milestone_index, arbitrator_address, and action are required",
-    });
+    return res
+      .status(400)
+      .json({
+        error:
+          "agreement_id, milestone_index, arbitrator_address, and action are required",
+      });
   }
 
   const validActions = ["confirm", "override_release", "override_refund"];
@@ -513,26 +502,27 @@ router.post("/resolve", async (req: Request, res: Response) => {
 
   try {
     const dispute = await findDispute(agreement_id, milestone_index);
-    if (!dispute) {
-      return res.status(404).json({ error: "Dispute not found" });
-    }
-    if (dispute.status === "resolved") {
+    if (!dispute) return res.status(404).json({ error: "Dispute not found" });
+    if (dispute.status === "resolved")
       return res.status(409).json({ error: "Dispute already resolved" });
-    }
-    if (!dispute.ai_verdict) {
-      return res.status(400).json({
-        error: "AI verdict must be generated before arbitrator can decide",
-      });
-    }
+    if (!dispute.ai_verdict)
+      return res
+        .status(400)
+        .json({
+          error: "AI verdict must be generated before arbitrator can decide",
+        });
 
     if (
       dispute.contract_terms.arbitrator &&
       dispute.contract_terms.arbitrator !== arbitrator_address &&
       dispute.contract_terms.arbitrator !== "TBD"
     ) {
-      return res.status(403).json({
-        error: "This wallet is not the designated arbitrator for this dispute",
-      });
+      return res
+        .status(403)
+        .json({
+          error:
+            "This wallet is not the designated arbitrator for this dispute",
+        });
     }
 
     let outcome: VerdictOutcome;
@@ -549,7 +539,7 @@ router.post("/resolve", async (req: Request, res: Response) => {
       followedAI = dispute.ai_verdict.verdict === "refund_to_payer";
     }
 
-    const updated = await saveDispute(agreement_id, milestone_index, {
+    const updated = await saveAndBroadcast(agreement_id, milestone_index, {
       status: "resolved",
       resolved_at: new Date(),
       arbitrator_decision: {
@@ -560,8 +550,6 @@ router.post("/resolve", async (req: Request, res: Response) => {
         arbitrator_address,
       },
     } as Partial<IDispute>);
-
-    notifyDisputeSSE(agreement_id, milestone_index, updated);
 
     res.json({
       success: true,
@@ -582,7 +570,6 @@ router.post("/resolve", async (req: Request, res: Response) => {
 async function runAIArbitration(dispute: IDispute): Promise<IDispute> {
   const start = Date.now();
   const client = getGroqClient();
-
   const { contract_terms } = dispute;
   const totalAmount = contract_terms.total_amount ?? 0;
   const milestoneAmount =
@@ -599,63 +586,42 @@ Your role is to analyze a commercial dispute and output a structured verdict. Yo
 CRITICAL RULES:
 1. Award based on contractual deliverables ONLY, not subjective quality unless quality standards were specified
 2. Award based on completion, not effort
-3. Deadlines are binding UNLESS both parties agreed to extension (look for evidence of this)
-4. Partial completion → consider "split" verdict with reasoned percentage to receiver
+3. Deadlines are binding UNLESS both parties agreed to extension
+4. Partial completion → consider "split" verdict with reasoned percentage
 5. Missing evidence from a party weakens their claim significantly
-6. If Party B (receiver) claims delivery, look for proof of delivery in their evidence
 
-You must respond ONLY with valid JSON. No markdown fences, no preamble, nothing outside the JSON object.
+You must respond ONLY with valid JSON. No markdown, no preamble.
 
 Required JSON shape:
 {
   "verdict": "release_to_receiver" | "refund_to_payer" | "split",
   "confidence": <integer 0-100>,
-  "reasoning": "<2-4 clear sentences explaining your decision>",
+  "reasoning": "<2-4 sentences>",
   "key_factors": ["<factor 1>", "<factor 2>", "<factor 3>"],
-  "warnings": ["<any warnings, e.g. missing evidence, ambiguous deadline>"],
-  "split_percentage": <integer 0-100, receiver gets this %, ONLY include if verdict is "split">
+  "warnings": ["<any warnings>"],
+  "split_percentage": <integer 0-100, ONLY if verdict is "split">
 }`;
 
   const userPrompt = `=== CONTRACT TERMS ===
 Agreement Type: ${contract_terms.agreement_type ?? "freelance"}
-Payer (Party A — wants refund): ${contract_terms.payer}
-Receiver (Party B — wants payment): ${contract_terms.receiver}
+Payer (Party A): ${contract_terms.payer}
+Receiver (Party B): ${contract_terms.receiver}
 Total Contract Value: ${totalAmount} sBTC
 Milestone: "${contract_terms.milestone_description}"
-Milestone Amount at Stake: ${milestoneAmount.toFixed(6)} sBTC (${contract_terms.milestone_percentage}% of total)
-${contract_terms.milestone_deadline ? `Deadline: ${contract_terms.milestone_deadline}` : "No deadline specified for this milestone"}
+Milestone Amount: ${milestoneAmount.toFixed(6)} sBTC (${contract_terms.milestone_percentage}%)
+${contract_terms.milestone_deadline ? `Deadline: ${contract_terms.milestone_deadline}` : "No deadline specified"}
 
-=== PARTY A STATEMENT (Payer — claiming non-delivery or defect) ===
-${dispute.party_a_statement || "[Party A did not submit a statement]"}
+=== PARTY A STATEMENT (Payer) ===
+${dispute.party_a_statement || "[No statement]"}
+Evidence (${dispute.party_a_evidence?.length ?? 0} file(s)):
+${dispute.party_a_evidence?.length ? dispute.party_a_evidence.map((url, i) => `  [A-${i + 1}] ${url}`).join("\n") : "  None"}
 
-Party A Evidence (${dispute.party_a_evidence?.length ?? 0} file(s)):
-${
-  dispute.party_a_evidence?.length
-    ? dispute.party_a_evidence
-        .map((url, i) => `  [A-${i + 1}] ${url}`)
-        .join("\n")
-    : "  No evidence submitted"
-}
+=== PARTY B STATEMENT (Receiver) ===
+${dispute.party_b_statement || "[No statement]"}
+Evidence (${dispute.party_b_evidence?.length ?? 0} file(s)):
+${dispute.party_b_evidence?.length ? dispute.party_b_evidence.map((url, i) => `  [B-${i + 1}] ${url}`).join("\n") : "  None"}
 
-=== PARTY B STATEMENT (Receiver — claiming delivery and payment) ===
-${dispute.party_b_statement || "[Party B did not submit a statement]"}
-
-Party B Evidence (${dispute.party_b_evidence?.length ?? 0} file(s)):
-${
-  dispute.party_b_evidence?.length
-    ? dispute.party_b_evidence
-        .map((url, i) => `  [B-${i + 1}] ${url}`)
-        .join("\n")
-    : "  No evidence submitted"
-}
-
-=== YOUR TASK ===
-Based strictly on the contract terms and submitted evidence, determine:
-1. Milestone deliverable was completed as specified → release_to_receiver
-2. Deliverable was NOT completed or conditions not met → refund_to_payer
-3. Partial completion that warrants splitting payment → split
-
-The human arbitrator will review your recommendation and can override it.`;
+Determine: release_to_receiver | refund_to_payer | split`;
 
   let verdictData: AIVerdict;
 
@@ -675,7 +641,6 @@ The human arbitrator will review your recommendation and can override it.`;
       .replace(/```json\n?/gi, "")
       .replace(/```\n?/gi, "")
       .trim();
-
     const parsed = JSON.parse(clean);
 
     if (
@@ -683,7 +648,7 @@ The human arbitrator will review your recommendation and can override it.`;
         parsed.verdict,
       )
     ) {
-      throw new Error(`Invalid verdict value: ${parsed.verdict}`);
+      throw new Error(`Invalid verdict: ${parsed.verdict}`);
     }
 
     verdictData = {
@@ -703,7 +668,7 @@ The human arbitrator will review your recommendation and can override it.`;
       verdict: "refund_to_payer",
       confidence: 0,
       reasoning:
-        "AI arbitration encountered a technical error. Human arbitrator must review this case manually.",
+        "AI arbitration encountered a technical error. Human arbitrator must review manually.",
       key_factors: ["AI error — manual review required"],
       warnings: [
         "AI response could not be parsed. Please review evidence manually.",
@@ -714,7 +679,8 @@ The human arbitrator will review your recommendation and can override it.`;
     };
   }
 
-  const updated = await saveDispute(
+  // Save + broadcast AI verdict to all parties + arbitrator
+  const updated = await saveAndBroadcast(
     dispute.agreement_id,
     dispute.milestone_index,
     {
@@ -722,8 +688,6 @@ The human arbitrator will review your recommendation and can override it.`;
       status: "ai_complete",
     } as Partial<IDispute>,
   );
-
-  notifyDisputeSSE(dispute.agreement_id, dispute.milestone_index, updated);
 
   return updated;
 }

@@ -1,18 +1,7 @@
 "use client";
 // ============================================================
-// components/partyB/PartyBDashboard.tsx
-//
-// Key fixes vs previous version:
-//  1. On mount, after fetching milestones, cross-checks the
-//     arbitrate API for each milestone and marks any that have
-//     an open dispute as status="disputed" locally — so Party B
-//     sees "In Dispute" even if the on-chain TX update didn't
-//     propagate yet.
-//  2. Subscribes to "dispute:updated" socket events (emitted
-//     to the agreement room by the arbitrate router) and
-//     immediately marks the relevant milestone as disputed.
-//  3. Shows DisputeSubmitScreen inline for disputed milestones
-//     so Party B can submit their counter-statement + evidence.
+// components/partyB/PartyBDashboard.tsx — 2026 redesign
+// Uses ONLY class names from globals.css + dashboard-additions.css
 // ============================================================
 
 import { useEffect, useState, useCallback } from "react";
@@ -30,8 +19,6 @@ import DisputeSubmitScreen from "@/components/screens/Shared/DisputeSubmitScreen
 import DisputeDetailView from "../Shared/Disputedetailview";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-
-// ── Types ────────────────────────────────────────────────────
 
 type MsStatus =
   | "locked"
@@ -55,7 +42,6 @@ interface DbMilestone {
   completedAt?: string;
   disputedAt?: string;
 }
-
 interface AgreementData {
   agreementId: string;
   milestones: DbMilestone[];
@@ -70,32 +56,24 @@ interface AgreementData {
   createdAt?: string;
 }
 
-// ── Helpers ──────────────────────────────────────────────────
-
 function statusColor(s: MsStatus) {
   if (s === "complete") return "var(--green)";
   if (s === "disputed") return "var(--amber)";
-  if (s === "refunded" || s === "failed") return "#ef4444";
+  if (s === "refunded" || s === "failed") return "var(--red)";
   if (s === "pending") return "var(--text-3)";
   return "var(--text-4)";
 }
 function statusLabel(s: MsStatus) {
-  if (s === "complete") return "Released ✓";
-  if (s === "disputed") return "In Dispute ⚑";
-  if (s === "refunded") return "Refunded ↩";
-  if (s === "failed") return "Tx Failed ✕";
-  if (s === "pending") return "Confirming…";
-  return "Awaiting Release";
+  if (s === "complete") return "Released";
+  if (s === "disputed") return "In Dispute";
+  if (s === "refunded") return "Refunded";
+  if (s === "failed") return "Failed";
+  if (s === "pending") return "Confirming";
+  return "Locked";
 }
 function formatSats(sats: number): string {
   if (!sats) return "—";
   return `${(sats / 100_000_000).toFixed(8)} sBTC`;
-}
-function fundStateColor(s: string) {
-  if (s === "locked") return "var(--amber)";
-  if (s === "released") return "var(--green)";
-  if (s === "disputed") return "#ef4444";
-  return "var(--text-4)";
 }
 function fundStateLabel(s: string) {
   if (s === "locked") return "Active";
@@ -104,7 +82,6 @@ function fundStateLabel(s: string) {
   return "Pending";
 }
 
-// Active dispute statuses — anything here means the milestone IS disputed
 const OPEN_DISPUTE_STATUSES = new Set([
   "awaiting_statements",
   "party_a_submitted",
@@ -113,73 +90,44 @@ const OPEN_DISPUTE_STATUSES = new Set([
   "ai_complete",
 ]);
 
-// ── History Card ─────────────────────────────────────────────
+// ── History Card ──────────────────────────────────────────────
 
-function HistoryCard({
-  agreementId,
-  walletAddress,
-}: {
-  agreementId: string;
-  walletAddress: string;
-}) {
+function HistoryCard({ agreementId }: { agreementId: string }) {
   const [data, setData] = useState<AgreementData | null>(null);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
-    async function load() {
-      try {
-        const res = await fetch(
-          `${API_BASE}/api/agreement/${agreementId}/milestones`,
-        );
-        if (res.ok) setData(await res.json());
-      } catch {
-        /* ignore */
-      }
-      setLoading(false);
-    }
-    load();
+    fetch(`${API_BASE}/api/agreement/${agreementId}/milestones`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d) setData(d);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
   }, [agreementId]);
 
-  if (loading) {
+  if (loading)
     return (
-      <div className="hist-card" style={{ padding: "14px 18px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span className="spinner" style={{ width: 12, height: 12 }} />
-          <span
-            style={{
-              fontSize: 11,
-              fontFamily: "var(--mono)",
-              color: "var(--text-4)",
-            }}
-          >
-            Loading #{agreementId}…
-          </span>
-        </div>
+      <div className="db-hist-row">
+        <span className="spinner" style={{ width: 10, height: 10 }} />
+        <span className="db-hist-id">#{agreementId}</span>
       </div>
     );
-  }
-
-  if (!data) {
+  if (!data)
     return (
-      <div className="hist-card" style={{ padding: "14px 18px", opacity: 0.5 }}>
-        <span
-          style={{
-            fontSize: 11,
-            fontFamily: "var(--mono)",
-            color: "var(--text-4)",
-          }}
-        >
-          #{agreementId} — not found
+      <div className="db-hist-row" style={{ opacity: 0.4 }}>
+        <span className="db-hist-id">#{agreementId}</span>
+        <span className="label" style={{ marginLeft: 6 }}>
+          not found
         </span>
       </div>
     );
-  }
 
   const completedMs = data.milestones.filter((m) =>
     ["complete", "refunded"].includes(m.status),
   ).length;
-  const progressPct =
+  const pct =
     data.milestones.length > 0
       ? Math.round((completedMs / data.milestones.length) * 100)
       : 0;
@@ -187,197 +135,89 @@ function HistoryCard({
     data.terms?.partyA ??
     data.partyA ??
     "Payer") as string;
-  const displayAmount = data.amountLocked ?? String(data.totalAmountUsd);
+  const displayAmt = data.amountLocked ?? String(data.totalAmountUsd);
 
   return (
-    <div className="hist-card">
+    <div
+      className={`db-hist-row${expanded ? " db-hist-row--open" : ""}`}
+      onClick={() => setExpanded(!expanded)}
+    >
+      {/* Left */}
       <div
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 12,
-          padding: "14px 18px",
-          cursor: "pointer",
+          gap: 10,
+          flex: 1,
+          minWidth: 0,
         }}
-        onClick={() => setExpanded(!expanded)}
       >
-        <div style={{ flex: 1 }}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              marginBottom: 4,
-            }}
-          >
-            <span
-              style={{
-                fontSize: 10,
-                fontFamily: "var(--mono)",
-                color: "var(--text-4)",
-                background: "var(--bg-3)",
-                border: "1px solid var(--border)",
-                borderRadius: 4,
-                padding: "2px 7px",
-              }}
-            >
-              #{agreementId}
-            </span>
-            <span
-              style={{
-                fontSize: 9,
-                fontFamily: "var(--mono)",
-                fontWeight: 700,
-                textTransform: "uppercase" as const,
-                letterSpacing: "0.06em",
-                color: fundStateColor(data.fundState),
-                background: fundStateColor(data.fundState) + "15",
-                border: `1px solid ${fundStateColor(data.fundState)}40`,
-                borderRadius: 10,
-                padding: "2px 8px",
-              }}
-            >
-              {fundStateLabel(data.fundState)}
-            </span>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span
-              style={{ fontSize: 13, fontWeight: 600, color: "var(--text-1)" }}
-            >
-              ← {payerName}
-            </span>
-            <span
-              style={{
-                fontSize: 11,
-                color: "var(--text-3)",
-                fontFamily: "var(--mono)",
-              }}
-            >
-              ${displayAmount} USD
-            </span>
-          </div>
-        </div>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            flexShrink: 0,
-          }}
-        >
-          <div style={{ textAlign: "right" }}>
-            <div
-              style={{
-                fontSize: 10,
-                fontFamily: "var(--mono)",
-                color: "var(--text-4)",
-                marginBottom: 4,
-              }}
-            >
-              {completedMs}/{data.milestones.length} done
-            </div>
-            <div
-              style={{
-                height: 3,
-                width: 72,
-                background: "var(--bg-3)",
-                borderRadius: 2,
-                overflow: "hidden",
-              }}
-            >
-              <div
-                style={{
-                  height: "100%",
-                  background: "var(--green)",
-                  width: `${progressPct}%`,
-                  minWidth: progressPct > 0 ? 3 : 0,
-                  borderRadius: 2,
-                }}
-              />
-            </div>
-          </div>
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="var(--text-4)"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            style={{
-              transform: expanded ? "rotate(180deg)" : "none",
-              transition: "transform 0.2s",
-            }}
-          >
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
+        <span className="db-hist-id">#{agreementId}</span>
+        <div style={{ minWidth: 0 }}>
+          <div className="db-hist-payer">← {payerName}</div>
+          <div className="db-hist-amount">${displayAmt} USD</div>
         </div>
       </div>
-
-      {expanded && (
-        <div
-          style={{
-            borderTop: "1px solid var(--border)",
-            padding: "12px 18px",
-            display: "flex",
-            flexDirection: "column",
-            gap: 6,
-          }}
-        >
-          {data.milestones.map((ms) => (
+      {/* Right */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 14,
+          flexShrink: 0,
+        }}
+      >
+        <div className="db-hist-bar-wrap">
+          <div className="db-hist-bar-label">
+            {completedMs}/{data.milestones.length}
+          </div>
+          <div className="db-hist-bar">
             <div
-              key={ms.index}
+              className="db-hist-bar-fill"
               style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                padding: "8px 12px",
-                background: "var(--bg-2)",
-                border: "1px solid var(--border)",
-                borderRadius: "var(--r-sm)",
+                width: `${pct}%`,
+                background: pct === 100 ? "var(--green)" : "var(--text-3)",
               }}
-            >
+            />
+          </div>
+        </div>
+        <span className={`state-tag state-tag--${data.fundState}`}>
+          {fundStateLabel(data.fundState)}
+        </span>
+        <svg
+          className={`db-hist-chevron${expanded ? " db-hist-chevron--open" : ""}`}
+          width="10"
+          height="10"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </div>
+
+      {/* Expanded */}
+      {expanded && (
+        <div className="db-hist-expanded" onClick={(e) => e.stopPropagation()}>
+          {data.milestones.map((ms) => (
+            <div key={ms.index} className="db-hist-ms">
               <div
+                className="db-hist-ms-dot"
                 style={{
-                  width: 18,
-                  height: 18,
-                  borderRadius: "50%",
-                  flexShrink: 0,
-                  background: statusColor(ms.status) + "20",
-                  border: `1px solid ${statusColor(ms.status)}40`,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: 8,
-                  fontFamily: "var(--mono)",
-                  fontWeight: 700,
                   color: statusColor(ms.status),
+                  background: statusColor(ms.status) + "15",
+                  borderColor: statusColor(ms.status) + "35",
                 }}
               >
                 {ms.status === "complete" ? "✓" : ms.index + 1}
               </div>
-              <div style={{ flex: 1 }}>
-                <div
-                  style={{
-                    fontSize: 12,
-                    fontWeight: 500,
-                    color: "var(--text-1)",
-                  }}
-                >
-                  {ms.title}
-                </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="db-hist-ms-title">{ms.title}</div>
                 {ms.condition && (
-                  <div
-                    style={{
-                      fontSize: 10,
-                      color: "var(--text-4)",
-                      fontFamily: "var(--mono)",
-                      marginTop: 1,
-                    }}
-                  >
-                    {ms.condition.length > 55
-                      ? ms.condition.slice(0, 55) + "…"
+                  <div className="db-hist-ms-cond">
+                    {ms.condition.length > 60
+                      ? ms.condition.slice(0, 60) + "…"
                       : ms.condition}
                   </div>
                 )}
@@ -390,25 +230,13 @@ function HistoryCard({
                   flexShrink: 0,
                 }}
               >
+                <span className="db-hist-ms-amt">${ms.amountUsd}</span>
                 <span
+                  className="ms-status-pill"
                   style={{
-                    fontSize: 11,
-                    fontFamily: "var(--mono)",
-                    color: "var(--text-3)",
-                  }}
-                >
-                  ${ms.amountUsd} · {ms.percentage}%
-                </span>
-                <span
-                  style={{
-                    fontSize: 9,
-                    fontFamily: "var(--mono)",
-                    fontWeight: 700,
                     color: statusColor(ms.status),
-                    background: statusColor(ms.status) + "15",
-                    border: `1px solid ${statusColor(ms.status)}30`,
-                    borderRadius: 4,
-                    padding: "2px 7px",
+                    background: statusColor(ms.status) + "10",
+                    borderColor: statusColor(ms.status) + "28",
                   }}
                 >
                   {statusLabel(ms.status)}
@@ -418,12 +246,7 @@ function HistoryCard({
                     href={ms.txUrl ?? explorerTxUrl(ms.txId)}
                     target="_blank"
                     rel="noopener noreferrer"
-                    style={{
-                      fontSize: 10,
-                      fontFamily: "var(--mono)",
-                      color: "var(--text-3)",
-                      textDecoration: "none",
-                    }}
+                    className="db-ms-tx-link"
                   >
                     tx ↗
                   </a>
@@ -432,20 +255,9 @@ function HistoryCard({
             </div>
           ))}
           {data.fundState === "locked" && (
-            <div style={{ marginTop: 8 }}>
-              <a
-                href={`/agreement/${agreementId}`}
-                style={{
-                  display: "inline-block",
-                  fontSize: 12,
-                  color: "var(--text-2)",
-                  fontFamily: "var(--mono)",
-                  textDecoration: "none",
-                }}
-              >
-                Open Live Dashboard →
-              </a>
-            </div>
+            <a href={`/agreement/${agreementId}`} className="db-hist-open-link">
+              Open Live Dashboard →
+            </a>
           )}
         </div>
       )}
@@ -453,7 +265,7 @@ function HistoryCard({
   );
 }
 
-// ── Main PartyBDashboard ──────────────────────────────────────
+// ── Main Dashboard ────────────────────────────────────────────
 
 export default function PartyBDashboard() {
   const { terms, amountLocked, walletAddress, agreementId } = useSelector(
@@ -471,27 +283,23 @@ export default function PartyBDashboard() {
   const [connected, setConnected] = useState(false);
   const [activeTab, setActiveTab] = useState<"current" | "history">("current");
   const [historyIds, setHistoryIds] = useState<string[]>([]);
-
-  // dispute form state per milestone
   const [disputeFormOpen, setDisputeFormOpen] = useState<
     Record<number, boolean>
   >({});
   const [disputeSubmitted, setDisputeSubmitted] = useState<
     Record<number, boolean>
   >({});
-  // track which milestone indices we've already joined dispute rooms for
   const joinedDisputeRooms = useState<Set<number>>(() => new Set())[0];
 
   useEffect(() => {
     setHistoryIds(getPartyBAgreementIds());
   }, []);
 
-  // ── Helper: mark a milestone as disputed in local state ────
   const markMilestoneDisputed = useCallback((milestoneIndex: number) => {
     setData((prev) => {
       if (!prev) return prev;
       const already = prev.milestones.find((m) => m.index === milestoneIndex);
-      if (!already || already.status === "disputed") return prev; // no change needed
+      if (!already || already.status === "disputed") return prev;
       return {
         ...prev,
         milestones: prev.milestones.map((ms) =>
@@ -503,8 +311,6 @@ export default function PartyBDashboard() {
     });
   }, []);
 
-  // ── Check arbitrate API for existing open disputes ─────────
-  // Called once after milestones are loaded.
   const checkArbitrateDisputes = useCallback(
     async (milestones: DbMilestone[]) => {
       if (!agreementId) return;
@@ -516,12 +322,8 @@ export default function PartyBDashboard() {
             );
             if (!res.ok) return;
             const json = await res.json();
-            if (
-              json.dispute &&
-              OPEN_DISPUTE_STATUSES.has(json.dispute.status)
-            ) {
+            if (json.dispute && OPEN_DISPUTE_STATUSES.has(json.dispute.status))
               markMilestoneDisputed(ms.index);
-            }
           } catch {
             /* ignore */
           }
@@ -531,20 +333,17 @@ export default function PartyBDashboard() {
     [agreementId, markMilestoneDisputed],
   );
 
-  // ── Fetch agreement + milestone data ───────────────────────
   const fetchData = useCallback(async () => {
     if (!agreementId) return;
-
     try {
       const res = await fetch(
         `${API_BASE}/api/agreement/${agreementId}/milestones`,
       );
       if (res.ok) {
         const json = await res.json();
-        if (json.milestones && json.milestones.length > 0) {
+        if (json.milestones?.length > 0) {
           setData(json);
           setLoading(false);
-          // After loading milestone data, cross-check arbitrate DB
           checkArbitrateDisputes(json.milestones);
           return;
         }
@@ -552,8 +351,6 @@ export default function PartyBDashboard() {
     } catch {
       /* fall through */
     }
-
-    // Fallback: build from agreement + redux terms
     try {
       const res = await fetch(`${API_BASE}/api/agreement/${agreementId}`);
       if (res.ok) {
@@ -571,7 +368,7 @@ export default function PartyBDashboard() {
             status: "locked" as MsStatus,
           }));
         }
-        const built: AgreementData = {
+        setData({
           agreementId,
           milestones,
           fundState: json.fundState ?? "locked",
@@ -581,8 +378,7 @@ export default function PartyBDashboard() {
           partyB: json.partyB ?? null,
           arbitrator: null,
           amountLocked: json.amountLocked ?? reduxAmount,
-        };
-        setData(built);
+        });
         if (milestones.length > 0) checkArbitrateDisputes(milestones);
       }
     } catch {
@@ -593,28 +389,24 @@ export default function PartyBDashboard() {
 
   useEffect(() => {
     fetchData();
-    const quickRetry = setTimeout(fetchData, 2000);
-    const interval = setInterval(fetchData, 10_000);
+    const q = setTimeout(fetchData, 2000);
+    const iv = setInterval(fetchData, 10_000);
     return () => {
-      clearTimeout(quickRetry);
-      clearInterval(interval);
+      clearTimeout(q);
+      clearInterval(iv);
     };
   }, [fetchData]);
 
-  // ── Socket subscriptions ───────────────────────────────────
   useEffect(() => {
     if (!agreementId) return;
-
     const socket = getSocket();
     joinAgreementRoom(agreementId);
     if (socket.connected) setConnected(true);
-
     socket.on("connect", () => setConnected(true));
     socket.on("disconnect", () => setConnected(false));
 
-    // ── milestone:updated — standard release/timeout events ──
     function onMilestoneUpdated(payload: any) {
-      if (payload.milestones && payload.milestones.length > 0) {
+      if (payload.milestones?.length > 0) {
         setData((prev) =>
           prev
             ? {
@@ -652,26 +444,14 @@ export default function PartyBDashboard() {
       setTimeout(() => setFlashIndex(null), 2500);
     }
 
-    // ── dispute:updated — emitted by arbitrate router to the
-    //    agreement room whenever a statement is submitted,
-    //    AI verdict arrives, or arbitrator resolves. ──────────
     function onDisputeUpdated(payload: any) {
-      // Guard: only handle events for this agreement
       if (payload.agreement_id && payload.agreement_id !== agreementId) return;
-
       const idx: number = payload.milestone_index;
       if (idx === undefined || idx === null) return;
-
-      // Mark milestone as disputed so the form appears
       markMilestoneDisputed(idx);
       setLastUpdate(new Date());
-
-      // Flash the card
       setFlashIndex(idx);
       setTimeout(() => setFlashIndex(null), 2500);
-
-      // Also join the dispute-specific room if not already joined,
-      // so DisputeSubmitScreen gets events too
       if (!joinedDisputeRooms.has(idx)) {
         joinDisputeRoom(agreementId!, idx);
         joinedDisputeRooms.add(idx);
@@ -690,12 +470,10 @@ export default function PartyBDashboard() {
       socket.off("dispute:updated", onDisputeUpdated);
       socket.off("funds:locked");
       socket.off("presence:updated");
-      // Leave any dispute rooms we joined
       joinedDisputeRooms.forEach((idx) => leaveDisputeRoom(agreementId, idx));
     };
   }, [agreementId, fetchData, markMilestoneDisputed, joinedDisputeRooms]);
 
-  // ── Derived state ──────────────────────────────────────────
   const milestones = data?.milestones ?? [];
   const completedCount = milestones.filter((m) =>
     ["complete", "refunded"].includes(m.status),
@@ -714,10 +492,9 @@ export default function PartyBDashboard() {
     data?.totalAmountUsd?.toString() ??
     "—";
   const displayPayer = data?.partyA
-    ? `${data.partyA.slice(0, 10)}…`
+    ? `${data.partyA.slice(0, 8)}…${data.partyA.slice(-4)}`
     : payerName;
 
-  // Build contractTerms for DisputeSubmitScreen
   function buildContractTerms(ms: DbMilestone) {
     return {
       payer: data?.partyA ?? "",
@@ -732,637 +509,519 @@ export default function PartyBDashboard() {
     };
   }
 
-  // ── Render ─────────────────────────────────────────────────
+  const statsCards = [
+    {
+      label: "Total Locked",
+      value: totalSats > 0 ? formatSats(totalSats) : `$${displayAmount}`,
+      sub: totalSats > 0 ? `≈ $${displayAmount} USD` : "USD in escrow",
+      icon: "◈",
+    },
+    {
+      label: "Your Role",
+      value: receiverName,
+      sub: walletAddress
+        ? `${walletAddress.slice(0, 8)}…${walletAddress.slice(-4)}`
+        : "Receiver",
+      icon: "◉",
+    },
+    {
+      label: "Earned",
+      value: earnedSats > 0 ? formatSats(earnedSats) : "—",
+      sub: `${completedCount} milestone${completedCount !== 1 ? "s" : ""} released`,
+      icon: "◈",
+    },
+    { label: "Payer", value: displayPayer, sub: "counterparty", icon: "◎" },
+  ];
+
   return (
-    <div className="page" style={{ alignItems: "flex-start", paddingTop: 48 }}>
-      <style>{css}</style>
-      <div style={{ maxWidth: 680, width: "100%" }}>
-        {/* Header */}
-        <div className="fade-up" style={{ marginBottom: 28 }}>
+    <div>
+      {/* ── Topbar ── */}
+      <div className="db-topbar">
+        <div className="db-topbar-left">
+          <a className="db-brand" href="/">
+            <span className="db-brand-mark">◈</span>
+            <span className="db-brand-name">ClauseAI</span>
+          </a>
+          <div className="db-topbar-sep" />
+          <nav className="db-breadcrumb">
+            <span>Agreement</span>
+            <span className="db-breadcrumb-sep">/</span>
+            <span>#{agreementId}</span>
+            <span className="db-breadcrumb-sep">/</span>
+            <span className="db-breadcrumb-cur">Party B</span>
+          </nav>
+        </div>
+        <div className="db-topbar-right">
+          {lastUpdate && (
+            <span className="db-timestamp">
+              {lastUpdate.toLocaleTimeString()}
+            </span>
+          )}
           <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              marginBottom: 8,
-            }}
+            className={`db-live-badge${connected ? "" : " db-live-badge--off"}`}
           >
-            <div>
-              <div className="mono-label">
-                Agreement #{agreementId} · Party B
-              </div>
-              <h2 className="page-title">Your Dashboard</h2>
-            </div>
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "flex-end",
-                gap: 6,
-              }}
-            >
-              <div
-                className={`status-pill${connected ? "" : " status-pill--offline"}`}
+            <span
+              className={`db-live-dot${connected ? "" : " db-live-dot--off"}`}
+            />
+            {connected ? "Live" : "Reconnecting"}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Shell ── */}
+      <div className="db-shell">
+        {/* ── Sidebar ── */}
+        <aside className="db-sidebar">
+          <div className="db-sidebar-section">
+            <div className="db-sidebar-label">Navigation</div>
+            <nav className="db-nav">
+              <button
+                className={`db-nav-item${activeTab === "current" ? " db-nav-item--active" : ""}`}
+                onClick={() => setActiveTab("current")}
               >
-                <div
-                  className={`status-dot${connected ? "" : " status-dot--offline"}`}
-                />
-                {connected ? "Live" : "Reconnecting…"}
-              </div>
-              {lastUpdate && (
-                <span className="mono-label" style={{ fontSize: 9 }}>
-                  Updated {lastUpdate.toLocaleTimeString()}
+                <span className="db-nav-icon">▣</span> Dashboard
+              </button>
+              <button
+                className={`db-nav-item${activeTab === "history" ? " db-nav-item--active" : ""}`}
+                onClick={() => setActiveTab("history")}
+              >
+                <span className="db-nav-icon">◫</span> History
+                {historyIds.length > 0 && (
+                  <span className="db-nav-badge">{historyIds.length}</span>
+                )}
+              </button>
+            </nav>
+          </div>
+
+          <div className="db-sidebar-section">
+            <div className="db-sidebar-label">Agreement</div>
+            <div className="db-meta-list">
+              <div className="db-meta-row">
+                <span className="db-meta-key">Status</span>
+                <span
+                  className={`state-tag state-tag--${data?.fundState ?? "idle"}`}
+                >
+                  {fundStateLabel(data?.fundState ?? "idle")}
                 </span>
+              </div>
+              <div className="db-meta-row">
+                <span className="db-meta-key">Milestones</span>
+                <span className="db-meta-val">
+                  {completedCount}/{milestones.length}
+                </span>
+              </div>
+              <div className="db-meta-row">
+                <span className="db-meta-key">Progress</span>
+                <span className="db-meta-val">{progressPct}%</span>
+              </div>
+              {data?.arbitrator && (
+                <div className="db-meta-row">
+                  <span className="db-meta-key">Arbitrator</span>
+                  <span className="db-meta-val">
+                    {data.arbitrator.slice(0, 8)}…
+                  </span>
+                </div>
               )}
             </div>
           </div>
 
-          {historyIds.length > 1 && (
-            <div className="tabs">
-              <button
-                className={`tab${activeTab === "current" ? " tab--active" : ""}`}
-                onClick={() => setActiveTab("current")}
+          {/* Progress ring */}
+          <div className="db-ring-wrap">
+            <svg width="72" height="72" viewBox="0 0 72 72">
+              <circle
+                cx="36"
+                cy="36"
+                r="28"
+                fill="none"
+                stroke="var(--bg-4)"
+                strokeWidth="4"
+              />
+              <circle
+                cx="36"
+                cy="36"
+                r="28"
+                fill="none"
+                stroke={progressPct === 100 ? "var(--green)" : "var(--amber)"}
+                strokeWidth="4"
+                strokeDasharray={`${2 * Math.PI * 28}`}
+                strokeDashoffset={`${2 * Math.PI * 28 * (1 - progressPct / 100)}`}
+                strokeLinecap="round"
+                transform="rotate(-90 36 36)"
+                style={{
+                  transition:
+                    "stroke-dashoffset 0.8s cubic-bezier(0.16,1,0.3,1)",
+                }}
+              />
+              <text
+                x="36"
+                y="40"
+                textAnchor="middle"
+                fill="var(--text-1)"
+                fontSize="12"
+                fontWeight="700"
+                fontFamily="var(--mono)"
               >
-                Current Agreement
-              </button>
-              <button
-                className={`tab${activeTab === "history" ? " tab--active" : ""}`}
-                onClick={() => setActiveTab("history")}
-              >
-                History
-                <span className="tab-badge">{historyIds.length}</span>
-              </button>
+                {progressPct}%
+              </text>
+            </svg>
+            <div className="db-ring-label">Overall</div>
+          </div>
+        </aside>
+
+        {/* ── Main ── */}
+        <main className="db-main">
+          {/* ── HISTORY TAB ── */}
+          {activeTab === "history" && (
+            <div className="fade-up">
+              <div className="db-page-header" style={{ marginBottom: 0 }}>
+                <div>
+                  <div className="db-eyebrow">Transaction History</div>
+                  <h1 className="db-page-title">All Agreements</h1>
+                </div>
+              </div>
+              <div className="db-hist-list" style={{ marginTop: 24 }}>
+                {historyIds.map((id) => (
+                  <HistoryCard key={id} agreementId={id} />
+                ))}
+                {historyIds.length === 0 && (
+                  <div className="db-loading">
+                    <span className="db-loading-text">No agreements yet.</span>
+                  </div>
+                )}
+              </div>
             </div>
           )}
-        </div>
 
-        {/* ── HISTORY TAB ── */}
-        {activeTab === "history" && (
-          <div className="fade-up">
-            <div className="mono-label" style={{ marginBottom: 12 }}>
-              All agreements you've joined on this device
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {historyIds.map((id) => (
-                <HistoryCard
-                  key={id}
-                  agreementId={id}
-                  walletAddress={walletAddress ?? ""}
-                />
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* ── CURRENT TAB ── */}
-        {activeTab === "current" && (
-          <>
-            {/* Summary cards */}
-            <div
-              className="fade-up d1 summary-grid"
-              style={{ marginBottom: 24 }}
-            >
-              {[
-                {
-                  label: "Total Locked",
-                  value:
-                    totalSats > 0 ? formatSats(totalSats) : `$${displayAmount}`,
-                  sub:
-                    totalSats > 0
-                      ? `≈ $${displayAmount} USD`
-                      : "USD locked in escrow",
-                },
-                {
-                  label: "Your Role",
-                  value: receiverName,
-                  sub: walletAddress
-                    ? `${walletAddress.slice(0, 10)}…`
-                    : "Receiver",
-                },
-                {
-                  label: "Earned",
-                  value: earnedSats > 0 ? formatSats(earnedSats) : "—",
-                  sub: `${completedCount} milestone${completedCount !== 1 ? "s" : ""} released`,
-                },
-                { label: "Payer", value: displayPayer, sub: "locked funds" },
-              ].map(({ label, value, sub }) => (
-                <div key={label} className="summary-card">
-                  <div className="summary-label">{label}</div>
-                  <div className="summary-value">{value}</div>
-                  <div className="summary-sub">{sub}</div>
-                </div>
-              ))}
-            </div>
-
-            {/* Progress bar */}
-            <div className="fade-up d1" style={{ marginBottom: 24 }}>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  marginBottom: 8,
-                }}
-              >
-                <span className="mono-label">Overall Progress</span>
-                <span className="mono-label">
-                  {milestones.length > 0
-                    ? `${completedCount}/${milestones.length} milestones · ${progressPct}%`
-                    : "Waiting for milestone data…"}
-                </span>
-              </div>
-              <div className="progress-track">
-                <div
-                  className="progress-fill"
-                  style={{ width: `${progressPct > 0 ? progressPct : 2}%` }}
-                />
-              </div>
-            </div>
-
-            {loading && (
-              <div
-                style={{
-                  textAlign: "center",
-                  padding: "40px 0",
-                  color: "var(--text-3)",
-                  fontSize: 13,
-                }}
-              >
-                <span
-                  className="spinner"
-                  style={{
-                    width: 16,
-                    height: 16,
-                    margin: "0 auto 12px",
-                    display: "block",
-                  }}
-                />
-                Loading…
-              </div>
-            )}
-
-            {!loading && milestones.length === 0 && (
-              <div
-                className="fade-up d2 waiting-card"
-                style={{ marginBottom: 24 }}
-              >
-                <div className="waiting-icon">
-                  <svg
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="var(--text-3)"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <circle cx="12" cy="12" r="10" />
-                    <polyline points="12 6 12 12 16 14" />
-                  </svg>
-                </div>
+          {/* ── CURRENT TAB ── */}
+          {activeTab === "current" && (
+            <>
+              {/* Page header */}
+              <div className="db-page-header fade-up">
                 <div>
-                  <div
-                    style={{
-                      fontSize: 13,
-                      fontWeight: 600,
-                      color: "var(--text-1)",
-                      marginBottom: 4,
-                    }}
-                  >
-                    Waiting for milestone details
+                  <div className="db-eyebrow">Receiver Dashboard</div>
+                  <h1 className="db-page-title">Your Dashboard</h1>
+                </div>
+                {walletAddress && (
+                  <div className="db-wallet-chip">
+                    <span className="db-wallet-dot" />
+                    <span className="db-wallet-addr">
+                      {walletAddress.slice(0, 10)}…{walletAddress.slice(-6)}
+                    </span>
                   </div>
-                  <div
-                    style={{
-                      fontSize: 11,
-                      color: "var(--text-3)",
-                      lineHeight: 1.6,
-                    }}
-                  >
-                    Funds are locked. Milestone details appear once the payer
-                    opens their dashboard.
+                )}
+              </div>
+
+              {/* Stats grid */}
+              <div className="db-stats-grid fade-up d1">
+                {statsCards.map(({ label, value, sub, icon }) => (
+                  <div key={label} className="db-stat-card">
+                    <div className="db-stat-icon">{icon}</div>
+                    <div className="db-stat-label">{label}</div>
+                    <div className="db-stat-value">{value}</div>
+                    <div className="db-stat-sub">{sub}</div>
                   </div>
+                ))}
+              </div>
+
+              {/* Progress bar */}
+              <div className="db-progress-wrap fade-up d2">
+                <div className="db-progress-header">
+                  <span className="label">Completion</span>
+                  <span className="label">
+                    {milestones.length > 0
+                      ? `${completedCount} of ${milestones.length} milestones`
+                      : "Awaiting data"}
+                  </span>
+                </div>
+                <div className="db-progress-track">
+                  <div
+                    className="db-progress-fill"
+                    style={{
+                      width: `${progressPct > 0 ? progressPct : 0.5}%`,
+                      background:
+                        progressPct === 100 ? "var(--green)" : "var(--text-1)",
+                    }}
+                  />
                 </div>
               </div>
-            )}
 
-            {/* Milestone cards */}
-            {!loading && milestones.length > 0 && (
-              <div className="fade-up d2" style={{ marginBottom: 24 }}>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    marginBottom: 12,
-                  }}
-                >
-                  <span className="mono-label">Milestones</span>
+              {/* Loading */}
+              {loading && (
+                <div className="db-loading fade-in">
+                  <span className="spinner" style={{ width: 16, height: 16 }} />
+                  <span className="db-loading-text">
+                    Fetching milestone data…
+                  </span>
                 </div>
-                <div
-                  style={{ display: "flex", flexDirection: "column", gap: 10 }}
-                >
-                  {milestones.map((ms) => {
-                    const isDone =
-                      ms.status === "complete" || ms.status === "refunded";
-                    const isPending = ms.status === "pending";
-                    const isDisputed = ms.status === "disputed";
-                    const isFlashing = flashIndex === ms.index;
-                    const showSubmitForm =
-                      isDisputed && disputeFormOpen[ms.index];
-                    const alreadySubmitted = disputeSubmitted[ms.index];
+              )}
 
-                    return (
-                      <div key={ms.index}>
-                        {/* ── Milestone Card ── */}
-                        <div
-                          className={[
-                            "ms-card",
-                            isDone ? "ms-card--done" : "",
-                            isPending ? "ms-card--pending" : "",
-                            isDisputed ? "ms-card--disputed" : "",
-                            isFlashing ? "ms-card--flash" : "",
-                          ]
-                            .filter(Boolean)
-                            .join(" ")}
-                        >
+              {/* Empty state */}
+              {!loading && milestones.length === 0 && (
+                <div className="db-empty-state fade-up d3">
+                  <div className="db-empty-icon">
+                    <svg
+                      width="20"
+                      height="20"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                    >
+                      <circle cx="12" cy="12" r="10" />
+                      <polyline points="12 6 12 12 16 14" />
+                    </svg>
+                  </div>
+                  <div>
+                    <div className="db-empty-title">
+                      Awaiting milestone data
+                    </div>
+                    <div className="db-empty-body">
+                      Funds are locked. Details appear once the payer opens
+                      their dashboard.
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Milestones */}
+              {!loading && milestones.length > 0 && (
+                <div className="fade-up d3">
+                  <div className="db-section-head">
+                    <span className="label">Milestones</span>
+                    <span className="db-section-count">
+                      {milestones.length} total
+                    </span>
+                  </div>
+                  <div className="db-ms-list">
+                    {milestones.map((ms) => {
+                      const isDone =
+                        ms.status === "complete" || ms.status === "refunded";
+                      const isPending = ms.status === "pending";
+                      const isDisputed = ms.status === "disputed";
+                      const isFlashing = flashIndex === ms.index;
+                      const showSubmit =
+                        isDisputed && disputeFormOpen[ms.index];
+                      const alreadySub = disputeSubmitted[ms.index];
+
+                      return (
+                        <div key={ms.index} className="db-ms-block">
                           <div
-                            style={{
-                              display: "flex",
-                              alignItems: "flex-start",
-                              justifyContent: "space-between",
-                              marginBottom: 10,
-                            }}
+                            className={[
+                              "db-ms-row",
+                              isDone ? "db-ms-row--done" : "",
+                              isPending ? "db-ms-row--pending" : "",
+                              isDisputed ? "db-ms-row--disputed" : "",
+                              isFlashing ? "db-ms-row--flash" : "",
+                            ]
+                              .filter(Boolean)
+                              .join(" ")}
                           >
-                            <div>
-                              <div
-                                style={{
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: 8,
-                                  marginBottom: 4,
-                                }}
-                              >
-                                <div
-                                  className="ms-index"
-                                  style={
-                                    isDone
-                                      ? {
-                                          background: "rgba(34,197,94,0.12)",
-                                          borderColor: "rgba(34,197,94,0.3)",
-                                          color: "var(--green)",
-                                        }
-                                      : {}
-                                  }
-                                >
-                                  {isDone ? "✓" : ms.index + 1}
-                                </div>
-                                <span className="ms-title">{ms.title}</span>
-                                {isFlashing && !isDisputed && (
-                                  <span className="flash-badge">
-                                    Just updated!
+                            {/* Index dot */}
+                            <div
+                              className={[
+                                "db-ms-num",
+                                isDone ? "db-ms-num--done" : "",
+                                isDisputed ? "db-ms-num--disputed" : "",
+                              ]
+                                .filter(Boolean)
+                                .join(" ")}
+                            >
+                              {isDone ? "✓" : ms.index + 1}
+                            </div>
+
+                            {/* Info */}
+                            <div className="db-ms-info">
+                              <div className="db-ms-title-row">
+                                <span className="db-ms-title">{ms.title}</span>
+                                {isDisputed && (
+                                  <span className="db-dispute-chip">
+                                    ⚑ Dispute
                                   </span>
                                 )}
-                                {isDisputed && (
-                                  <span className="dispute-badge">
-                                    ⚑ Dispute Active
-                                  </span>
+                                {isFlashing && !isDisputed && (
+                                  <span className="db-flash-chip">Updated</span>
                                 )}
                               </div>
                               {ms.condition && (
-                                <div className="ms-condition">
+                                <div className="db-ms-condition">
                                   {ms.condition}
                                 </div>
                               )}
-                            </div>
-                            <div
-                              style={{
-                                textAlign: "right",
-                                flexShrink: 0,
-                                marginLeft: 12,
-                              }}
-                            >
-                              <div
-                                className="ms-amount"
-                                style={isDone ? { color: "var(--green)" } : {}}
-                              >
-                                {ms.amountSats > 0
-                                  ? formatSats(ms.amountSats)
-                                  : `$${ms.amountUsd}`}
-                              </div>
-                              <div className="ms-pct">
-                                {ms.percentage}%
-                                {ms.amountUsd !== "0"
-                                  ? ` · ≈ $${ms.amountUsd}`
-                                  : ""}
-                              </div>
-                            </div>
-                          </div>
-
-                          {ms.txId && (
-                            <div
-                              style={{
-                                marginTop: 6,
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 6,
-                              }}
-                            >
-                              <span className="mono-label">TX:</span>
-                              <a
-                                href={ms.txUrl ?? explorerTxUrl(ms.txId)}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                style={{
-                                  fontSize: 10,
-                                  fontFamily: "var(--mono)",
-                                  color: "var(--text-3)",
-                                  textDecoration: "none",
-                                }}
-                              >
-                                {ms.txId.slice(0, 14)}… ↗
-                              </a>
-                              {isPending && (
-                                <span
-                                  className="spinner"
-                                  style={{ width: 10, height: 10 }}
-                                />
+                              {ms.deadline && (
+                                <div className="db-ms-deadline">
+                                  ⏱ {ms.deadline}
+                                </div>
+                              )}
+                              {ms.txId && (
+                                <div className="db-ms-tx">
+                                  <span className="db-ms-tx-label">TX</span>
+                                  <a
+                                    href={ms.txUrl ?? explorerTxUrl(ms.txId)}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="db-ms-tx-link"
+                                  >
+                                    {ms.txId.slice(0, 12)}… ↗
+                                  </a>
+                                  {isPending && (
+                                    <span
+                                      className="spinner"
+                                      style={{ width: 8, height: 8 }}
+                                    />
+                                  )}
+                                </div>
+                              )}
+                              {ms.completedAt && (
+                                <div className="db-ms-released">
+                                  Released{" "}
+                                  {new Date(ms.completedAt).toLocaleString()}
+                                </div>
                               )}
                             </div>
-                          )}
 
-                          {ms.completedAt && (
-                            <div
-                              style={{
-                                marginTop: 4,
-                                fontSize: 10,
-                                fontFamily: "var(--mono)",
-                                color: "var(--text-4)",
-                              }}
-                            >
-                              Released:{" "}
-                              {new Date(ms.completedAt).toLocaleString()}
-                            </div>
-                          )}
-
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "space-between",
-                              marginTop: 12,
-                            }}
-                          >
-                            <span
-                              className="ms-status"
-                              style={{ color: statusColor(ms.status) }}
-                            >
-                              {statusLabel(ms.status)}
-                            </span>
-
-                            <div
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 8,
-                              }}
-                            >
-                              {/* Dispute CTA — Party B submits counter-statement here */}
-                              {isDisputed && !alreadySubmitted && (
-                                <button
-                                  className="action-btn action-btn--evidence"
-                                  onClick={() =>
-                                    setDisputeFormOpen((prev) => ({
-                                      ...prev,
-                                      [ms.index]: !prev[ms.index],
-                                    }))
-                                  }
+                            {/* Right */}
+                            <div className="db-ms-right">
+                              <div>
+                                <div
+                                  className={`db-ms-amount${isDone ? " db-ms-amount--done" : ""}`}
                                 >
-                                  {showSubmitForm
-                                    ? "✕ Hide Form"
-                                    : "📄 Submit Your Evidence"}
-                                </button>
-                              )}
-                              {isDisputed && alreadySubmitted && (
-                                <span className="submitted-badge">
-                                  ✓ Statement Submitted
+                                  {ms.amountSats > 0
+                                    ? formatSats(ms.amountSats)
+                                    : `$${ms.amountUsd}`}
+                                </div>
+                                <div className="db-ms-pct">
+                                  {ms.percentage}%
+                                </div>
+                              </div>
+                              <div className="db-ms-actions">
+                                <span
+                                  className="ms-status-pill"
+                                  style={{
+                                    color: statusColor(ms.status),
+                                    background: statusColor(ms.status) + "10",
+                                    borderColor: statusColor(ms.status) + "28",
+                                  }}
+                                >
+                                  {statusLabel(ms.status)}
                                 </span>
-                              )}
-                              {isDisputed &&
-                                !alreadySubmitted &&
-                                !showSubmitForm && (
-                                  <span className="dispute-pending-tag">
-                                    Awaiting your response
+                                {isDisputed && !alreadySub && (
+                                  <button
+                                    className="db-btn db-btn--evidence"
+                                    onClick={() =>
+                                      setDisputeFormOpen((p) => ({
+                                        ...p,
+                                        [ms.index]: !p[ms.index],
+                                      }))
+                                    }
+                                  >
+                                    {showSubmit ? "✕ Hide" : "📄 Evidence"}
+                                  </button>
+                                )}
+                                {isDisputed && alreadySub && (
+                                  <span className="db-submitted-badge">
+                                    ✓ Filed
                                   </span>
                                 )}
+                              </div>
                             </div>
                           </div>
+
+                          {/* Dispute detail */}
+                          {isDisputed && agreementId && (
+                            <div className="db-dispute-panel">
+                              <DisputeDetailView
+                                agreementId={agreementId}
+                                milestoneIndex={ms.index}
+                                viewerRole="B"
+                              />
+                            </div>
+                          )}
+
+                          {/* Submit form */}
+                          {isDisputed && showSubmit && agreementId && (
+                            <div className="db-submit-panel">
+                              <DisputeSubmitScreen
+                                agreementId={agreementId}
+                                milestoneIndex={ms.index}
+                                party="B"
+                                milestoneDescription={ms.condition || ms.title}
+                                contractTerms={buildContractTerms(ms)}
+                                onSubmitted={() => {
+                                  setDisputeSubmitted((p) => ({
+                                    ...p,
+                                    [ms.index]: true,
+                                  }));
+                                  setDisputeFormOpen((p) => ({
+                                    ...p,
+                                    [ms.index]: false,
+                                  }));
+                                }}
+                              />
+                            </div>
+                          )}
                         </div>
-
-                        {/* ── Dispute Detail View — live dispute info for Party B ── */}
-                        {isDisputed && agreementId && (
-                          <div
-                            style={{
-                              border: "1px solid rgba(245,158,11,0.3)",
-                              borderTop: "none",
-                              borderRadius: showSubmitForm
-                                ? "0"
-                                : "0 0 var(--r) var(--r)",
-                              background: "rgba(245,158,11,0.02)",
-                              padding: "12px",
-                            }}
-                          >
-                            <DisputeDetailView
-                              agreementId={agreementId}
-                              milestoneIndex={ms.index}
-                              viewerRole="B"
-                            />
-                          </div>
-                        )}
-
-                        {/* ── Dispute Submit Screen (inline below detail view) ── */}
-                        {isDisputed && showSubmitForm && agreementId && (
-                          <div
-                            className="dispute-form-wrap fade-in"
-                            style={{ borderRadius: "0 0 var(--r) var(--r)" }}
-                          >
-                            <DisputeSubmitScreen
-                              agreementId={agreementId}
-                              milestoneIndex={ms.index}
-                              party="B"
-                              milestoneDescription={ms.condition || ms.title}
-                              contractTerms={buildContractTerms(ms)}
-                              onSubmitted={() => {
-                                setDisputeSubmitted((prev) => ({
-                                  ...prev,
-                                  [ms.index]: true,
-                                }));
-                                setDisputeFormOpen((prev) => ({
-                                  ...prev,
-                                  [ms.index]: false,
-                                }));
-                              }}
-                            />
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {progressPct === 100 && milestones.length > 0 && (
-              <div
-                className="fade-up d3 complete-banner"
-                style={{ marginBottom: 24 }}
-              >
-                <div style={{ fontSize: 28, marginBottom: 8 }}>🎉</div>
-                <div
-                  style={{
-                    fontSize: 15,
-                    fontWeight: 700,
-                    color: "var(--text-1)",
-                    marginBottom: 4,
-                  }}
+              {/* Complete banner */}
+              {progressPct === 100 && milestones.length > 0 && (
+                <div className="db-complete-banner fade-up">
+                  <div style={{ fontSize: 28, marginBottom: 8 }}>🎉</div>
+                  <div
+                    style={{
+                      fontSize: 16,
+                      fontWeight: 700,
+                      color: "var(--text-1)",
+                      letterSpacing: "-0.03em",
+                      marginBottom: 4,
+                    }}
+                  >
+                    All milestones complete
+                  </div>
+                  <div
+                    className="label"
+                    style={{
+                      textTransform: "none",
+                      letterSpacing: 0,
+                      fontSize: 11,
+                    }}
+                  >
+                    {formatSats(earnedSats)} released to your wallet
+                  </div>
+                </div>
+              )}
+
+              {/* Info strip */}
+              <div className="db-info-strip fade-up">
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="var(--text-4)"
+                  strokeWidth="1.5"
+                  style={{ flexShrink: 0, marginTop: 2 }}
                 >
-                  All milestones complete!
-                </div>
-                <div style={{ fontSize: 12, color: "var(--text-3)" }}>
-                  {formatSats(earnedSats)} released to your wallet
-                </div>
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+                <p className="db-info-text">
+                  Updates push{" "}
+                  <strong style={{ color: "var(--text-2)", fontWeight: 500 }}>
+                    instantly
+                  </strong>{" "}
+                  via Socket.io. When a milestone is disputed, submit your
+                  evidence so the arbitrator can review your case.
+                </p>
               </div>
-            )}
-
-            <div className="fade-up d3 info-strip">
-              <svg
-                width="12"
-                height="12"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="var(--text-3)"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                style={{ flexShrink: 0, marginTop: 2 }}
-              >
-                <circle cx="12" cy="12" r="10" />
-                <line x1="12" y1="8" x2="12" y2="12" />
-                <line x1="12" y1="16" x2="12.01" y2="16" />
-              </svg>
-              <p
-                style={{
-                  fontSize: 11,
-                  color: "var(--text-3)",
-                  lineHeight: 1.6,
-                  margin: 0,
-                }}
-              >
-                Updates push{" "}
-                <strong style={{ color: "var(--text-2)" }}>instantly</strong>{" "}
-                via Socket.io. When a milestone is disputed, click{" "}
-                <strong style={{ color: "var(--amber)" }}>
-                  Submit Your Evidence
-                </strong>{" "}
-                to present your counter-statement to the arbitrator.
-              </p>
-            </div>
-          </>
-        )}
+            </>
+          )}
+        </main>
       </div>
     </div>
   );
 }
-
-// ── CSS ───────────────────────────────────────────────────────
-
-const css = `
-.page-title { font-size: clamp(24px, 3.5vw, 36px); font-weight: 700; letter-spacing: -0.04em; line-height: 1.05; margin: 0; }
-.mono-label { font-size: 10px; font-family: var(--mono); color: var(--text-4); text-transform: uppercase; letter-spacing: 0.1em; }
-.status-pill { display: flex; align-items: center; gap: 7px; font-size: 11px; font-family: var(--mono); color: var(--green); background: rgba(34,197,94,0.08); border: 1px solid rgba(34,197,94,0.2); border-radius: 20px; padding: 5px 12px; }
-.status-pill--offline { color: var(--text-3); background: var(--bg-2); border-color: var(--border); }
-.status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: pulse 2s ease-in-out infinite; }
-.status-dot--offline { background: var(--text-4); animation: none; }
-@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
-
-.tabs { display: flex; gap: 4px; margin-top: 16px; background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 4px; width: fit-content; }
-.tab { background: none; border: none; padding: 6px 16px; font-size: 12px; font-family: var(--mono); color: var(--text-3); cursor: pointer; border-radius: 4px; display: flex; align-items: center; gap: 7px; transition: all 0.15s; }
-.tab:hover { color: var(--text-1); }
-.tab--active { background: var(--bg-3); color: var(--text-1); font-weight: 600; border: 1px solid var(--border); }
-.tab-badge { font-size: 9px; background: var(--bg-1); border: 1px solid var(--border); border-radius: 10px; padding: 1px 6px; color: var(--text-4); }
-
-.hist-card { background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; transition: border-color 0.2s; }
-.hist-card:hover { border-color: var(--border-hi); }
-
-.summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
-@media (max-width: 640px) { .summary-grid { grid-template-columns: 1fr 1fr; } }
-.summary-card { background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 14px 16px; }
-.summary-label { font-size: 9px; font-family: var(--mono); color: var(--text-4); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 6px; }
-.summary-value { font-size: 13px; font-weight: 700; color: var(--text-1); letter-spacing: -0.02em; margin-bottom: 3px; word-break: break-all; }
-.summary-sub { font-size: 10px; font-family: var(--mono); color: var(--text-4); }
-
-.progress-track { height: 4px; background: var(--bg-3); border-radius: 2px; overflow: hidden; }
-.progress-fill { height: 100%; background: var(--green); border-radius: 2px; transition: width 0.6s ease; min-width: 4px; }
-
-.ms-card { background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--r); padding: 16px 18px; transition: border-color 0.3s, box-shadow 0.3s, background 0.3s; }
-.ms-card--done { opacity: 0.75; border-color: rgba(34,197,94,0.15); }
-.ms-card--pending { border-color: rgba(255,255,255,0.15); background: var(--bg-2); }
-.ms-card--disputed {
-  border-color: rgba(245,158,11,0.5) !important;
-  background: rgba(245,158,11,0.04);
-  border-radius: var(--r) var(--r) 0 0;
-  box-shadow: 0 0 0 1px rgba(245,158,11,0.15);
-}
-.ms-card--flash { animation: flashGreen 2.5s ease; }
-@keyframes flashGreen { 0% { border-color: rgba(34,197,94,0.8); box-shadow: 0 0 0 3px rgba(34,197,94,0.15); background: rgba(34,197,94,0.05); } 60% { border-color: rgba(34,197,94,0.4); } 100% { border-color: rgba(34,197,94,0.15); box-shadow: none; background: var(--bg-1); } }
-
-.ms-index { width: 20px; height: 20px; border-radius: 50%; background: var(--bg-3); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 9px; font-family: var(--mono); color: var(--text-3); font-weight: 700; flex-shrink: 0; transition: all 0.3s; }
-.ms-title { font-size: 13px; font-weight: 600; color: var(--text-1); }
-.ms-condition { font-size: 11px; color: var(--text-3); line-height: 1.6; max-width: 420px; }
-.ms-amount { font-size: 14px; font-weight: 700; color: var(--text-1); font-family: var(--mono); transition: color 0.3s; }
-.ms-pct { font-size: 10px; color: var(--text-4); font-family: var(--mono); }
-.ms-status { font-size: 11px; font-family: var(--mono); font-weight: 600; }
-
-.dispute-badge {
-  font-size: 10px; font-family: var(--mono); font-weight: 700;
-  color: var(--amber); background: rgba(245,158,11,0.12);
-  border: 1px solid rgba(245,158,11,0.35); border-radius: 6px;
-  padding: 2px 8px; animation: disputePulse 2s ease infinite;
-}
-@keyframes disputePulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
-
-.dispute-pending-tag {
-  font-size: 10px; font-family: var(--mono);
-  color: var(--amber); background: rgba(245,158,11,0.08);
-  border: 1px solid rgba(245,158,11,0.2); border-radius: 4px; padding: 2px 8px;
-}
-
-.flash-badge { font-size: 9px; font-family: var(--mono); color: var(--green); background: rgba(34,197,94,0.12); border: 1px solid rgba(34,197,94,0.25); border-radius: 10px; padding: 2px 8px; }
-
-.action-btn { padding: 5px 12px; border-radius: var(--r-xs); font-size: 11px; font-family: var(--mono); cursor: pointer; border: 1px solid; transition: all 0.15s; display: flex; align-items: center; gap: 5px; background: none; }
-.action-btn--evidence { background: rgba(245,158,11,0.10); border-color: rgba(245,158,11,0.4); color: var(--amber); font-weight: 600; }
-.action-btn--evidence:hover { background: rgba(245,158,11,0.18); border-color: rgba(245,158,11,0.65); }
-
-.submitted-badge { font-size: 10px; font-family: var(--mono); color: var(--green); background: rgba(34,197,94,0.08); border: 1px solid rgba(34,197,94,0.2); border-radius: var(--r-xs); padding: 4px 10px; }
-
-.dispute-form-wrap {
-  border: 1px solid rgba(245,158,11,0.3);
-  border-top: none;
-  border-radius: 0 0 var(--r) var(--r);
-  background: rgba(245,158,11,0.02);
-  overflow: hidden;
-}
-
-.info-strip { display: flex; gap: 10px; align-items: flex-start; background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--r-sm); padding: 12px 14px; }
-.complete-banner { text-align: center; background: rgba(34,197,94,0.06); border: 1px solid rgba(34,197,94,0.2); border-radius: var(--r); padding: 28px 20px; }
-.waiting-card { display: flex; gap: 14px; align-items: flex-start; background: var(--bg-1); border: 1px solid var(--border); border-radius: var(--r); padding: 18px 20px; }
-.waiting-icon { width: 36px; height: 36px; border-radius: 50%; background: var(--bg-3); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-
-.spinner { display: inline-block; border: 2px solid var(--bg-3); border-top-color: var(--green); border-radius: 50%; animation: spin 0.7s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
-
-.fade-up { animation: fadeUp 0.4s ease both; }
-.fade-in { animation: fadeIn 0.3s ease both; }
-.d1 { animation-delay: 0.06s; } .d2 { animation-delay: 0.12s; } .d3 { animation-delay: 0.18s; }
-@keyframes fadeUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-`;

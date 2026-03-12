@@ -1,37 +1,8 @@
 "use client";
 // ============================================================
-// components/screens/Shared/DisputeDetailView.tsx
-//
-// Shows full dispute details to BOTH parties (and arbitrator).
-// Displays in real-time via Socket.io "dispute:updated" events.
-//
-// Features:
-//  - Both party statements & evidence (redacted until both submitted)
-//  - AI verdict with confidence bar & key factors
-//  - Arbitrator decision with override reason
-//  - Live status timeline
-//  - Socket.io subscription to dispute room for instant updates
-//
-// Usage — Party A dashboard (disputed milestone):
-//   <DisputeDetailView
-//     agreementId={agreementId}
-//     milestoneIndex={ms.index}
-//     viewerRole="A"
-//   />
-//
-// Usage — Party B dashboard (disputed milestone):
-//   <DisputeDetailView
-//     agreementId={agreementId}
-//     milestoneIndex={ms.index}
-//     viewerRole="B"
-//   />
-//
-// Usage — Arbitrator portal:
-//   <DisputeDetailView
-//     agreementId={agreementId}
-//     milestoneIndex={ms.index}
-//     viewerRole="arbitrator"
-//   />
+// components/screens/Shared/DisputeDetailView.tsx — 2026 redesign
+// Uses ONLY class names from globals.css + dashboard-additions.css
+// Zero inline style overrides except dynamic color values.
 // ============================================================
 
 import { useEffect, useState, useCallback } from "react";
@@ -97,14 +68,10 @@ interface DisputeData {
   updated_at: string;
 }
 
-// ── Props ─────────────────────────────────────────────────────
-
 export interface DisputeDetailViewProps {
   agreementId: string;
   milestoneIndex: number;
-  /** Controls which party label shows "(You)" and redaction logic */
   viewerRole: "A" | "B" | "arbitrator";
-  /** Optional pre-loaded dispute (will still subscribe to live updates) */
   initialData?: DisputeData;
 }
 
@@ -112,18 +79,16 @@ export interface DisputeDetailViewProps {
 
 function verdictColor(v?: string) {
   if (v === "release_to_receiver") return "var(--green)";
-  if (v === "refund_to_payer") return "#ef4444";
+  if (v === "refund_to_payer") return "var(--red)";
   if (v === "split") return "var(--amber)";
   return "var(--text-3)";
 }
-
 function verdictLabel(v?: string) {
   if (v === "release_to_receiver") return "Release to Receiver ✓";
   if (v === "refund_to_payer") return "Refund to Payer ↩";
   if (v === "split") return "Split Payment ↔";
   return "—";
 }
-
 function statusStep(s: DisputeStatus): number {
   const steps: DisputeStatus[] = [
     "awaiting_statements",
@@ -134,9 +99,8 @@ function statusStep(s: DisputeStatus): number {
     "resolved",
   ];
   const idx = steps.indexOf(s);
-  return idx === -1 ? 5 : idx; // auto_refunded → resolved level
+  return idx === -1 ? 5 : idx;
 }
-
 function formatDate(iso?: string) {
   if (!iso) return "—";
   return new Date(iso).toLocaleString(undefined, {
@@ -146,14 +110,11 @@ function formatDate(iso?: string) {
     minute: "2-digit",
   });
 }
-
 function truncateAddr(addr: string) {
   if (!addr || addr === "TBD") return addr;
   if (addr.length <= 16) return addr;
   return `${addr.slice(0, 10)}…${addr.slice(-6)}`;
 }
-
-// ── Timeline steps ────────────────────────────────────────────
 
 const TIMELINE_STEPS = [
   { key: "awaiting_statements", label: "Opened" },
@@ -179,7 +140,6 @@ export default function DisputeDetailView({
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [flash, setFlash] = useState(false);
 
-  // ── Fetch dispute ──────────────────────────────────────────
   const fetchDispute = useCallback(async () => {
     try {
       const res = await fetch(
@@ -202,29 +162,20 @@ export default function DisputeDetailView({
     fetchDispute();
   }, [fetchDispute]);
 
-  // ── Socket.io — real-time updates ─────────────────────────
-  // The arbitrate router emits "dispute:updated" to BOTH:
-  //   • dispute:{agreementId}:{milestoneIndex}  (dispute-specific room)
-  //   • agreement:{agreementId}                 (agreement room)
-  // So both parties in the agreement room AND anyone watching
-  // the dispute room receive instant updates.
   useEffect(() => {
     const socket = getSocket();
     joinDisputeRoom(agreementId, milestoneIndex);
-
     function onDisputeUpdated(payload: any) {
       if (
         payload.agreement_id !== agreementId ||
         payload.milestone_index !== milestoneIndex
       )
         return;
-
       setDispute(payload as DisputeData);
       setLastUpdate(new Date());
       setFlash(true);
       setTimeout(() => setFlash(false), 1500);
     }
-
     socket.on("dispute:updated", onDisputeUpdated);
     return () => {
       socket.off("dispute:updated", onDisputeUpdated);
@@ -232,123 +183,57 @@ export default function DisputeDetailView({
     };
   }, [agreementId, milestoneIndex]);
 
-  // ── Redaction logic ────────────────────────────────────────
-  // Neither party can see the other's statement until BOTH have
-  // submitted — prevents gaming the response.
   const bothSubmitted =
     !!dispute?.party_a_submitted_at && !!dispute?.party_b_submitted_at;
-
   const canSeePartyA =
     viewerRole === "A" || viewerRole === "arbitrator" || bothSubmitted;
   const canSeePartyB =
     viewerRole === "B" || viewerRole === "arbitrator" || bothSubmitted;
 
-  // ── Early states ───────────────────────────────────────────
-  if (loading) {
+  if (loading)
     return (
-      <div style={styles.wrap}>
-        <style>{css}</style>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            padding: 24,
-          }}
-        >
+      <div className="ddv-wrap">
+        <div className="db-loading">
           <span className="ddv-spinner" />
-          <span
-            style={{
-              fontSize: 12,
-              color: "var(--text-3)",
-              fontFamily: "var(--mono)",
-            }}
-          >
-            Loading dispute…
-          </span>
+          <span className="db-loading-text">Loading dispute…</span>
         </div>
       </div>
     );
-  }
 
-  if (!dispute) {
+  if (!dispute)
     return (
-      <div style={styles.wrap}>
-        <style>{css}</style>
-        <div
-          style={{
-            padding: 24,
-            textAlign: "center" as const,
-            color: "var(--text-4)",
-            fontSize: 12,
-          }}
-        >
-          No dispute record found.
+      <div className="ddv-wrap">
+        <div className="db-loading">
+          <span className="db-loading-text">No dispute record found.</span>
         </div>
       </div>
     );
-  }
 
   const currentStep = statusStep(dispute.status);
   const isResolved =
     dispute.status === "resolved" || dispute.status === "auto_refunded";
+  const vc = verdictColor(dispute.arbitrator_decision?.outcome);
 
   return (
-    <div
-      style={{
-        ...styles.wrap,
-        boxShadow: flash ? "0 0 0 2px rgba(245,158,11,0.45)" : "none",
-        transition: "box-shadow 0.4s ease",
-      }}
-    >
-      <style>{css}</style>
-
+    <div className={`ddv-wrap${flash ? " ddv-wrap--flash" : ""}`}>
       {/* ── Header ── */}
-      <div style={styles.header}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={styles.label}>
+      <div className="ddv-header">
+        <div className="ddv-header-left">
+          <div className="ddv-eyebrow">
             Dispute · Milestone {milestoneIndex + 1}
           </div>
-          <div style={styles.title}>
+          <div className="ddv-title">
             {dispute.contract_terms.milestone_description}
           </div>
         </div>
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column" as const,
-            alignItems: "flex-end",
-            gap: 5,
-            flexShrink: 0,
-          }}
-        >
-          <div
-            style={{
-              fontSize: 10,
-              fontFamily: "var(--mono)",
-              fontWeight: 700,
-              padding: "3px 10px",
-              borderRadius: 12,
-              border: "1px solid",
-              color: isResolved ? "var(--green)" : "var(--amber)",
-              background: isResolved
-                ? "rgba(34,197,94,0.1)"
-                : "rgba(245,158,11,0.1)",
-              borderColor: isResolved
-                ? "rgba(34,197,94,0.3)"
-                : "rgba(245,158,11,0.3)",
-            }}
+        <div className="ddv-header-right">
+          <span
+            className={`ddv-status-badge${isResolved ? " ddv-status-badge--resolved" : " ddv-status-badge--active"}`}
           >
             {isResolved ? "✓ Resolved" : "⚑ Active Dispute"}
-          </div>
+          </span>
           {lastUpdate && (
-            <span
-              style={{
-                fontSize: 9,
-                fontFamily: "var(--mono)",
-                color: "var(--text-4)",
-              }}
-            >
+            <span className="ddv-live-ts">
               Live · {lastUpdate.toLocaleTimeString()}
             </span>
           )}
@@ -356,68 +241,32 @@ export default function DisputeDetailView({
       </div>
 
       {/* ── Timeline ── */}
-      <div style={styles.timeline}>
+      <div className="ddv-timeline">
         {TIMELINE_STEPS.map((step, i) => {
           const done = i <= currentStep;
           const active = i === currentStep;
           return (
-            <div
-              key={step.key}
-              style={{
-                flex: 1,
-                display: "flex",
-                flexDirection: "column" as const,
-                alignItems: "center",
-                position: "relative" as const,
-                minWidth: 48,
-              }}
-            >
-              {/* Connector line (right half) */}
+            <div key={step.key} className="ddv-timeline-step">
               {i < TIMELINE_STEPS.length - 1 && (
                 <div
+                  className="ddv-timeline-line"
                   style={{
-                    position: "absolute" as const,
-                    top: 5,
-                    left: "50%",
-                    right: 0,
-                    height: 2,
                     background:
                       i < currentStep ? "var(--green)" : "var(--border)",
-                    transition: "background 0.4s",
                   }}
                 />
               )}
-              {/* Dot */}
               <div
-                style={{
-                  width: 12,
-                  height: 12,
-                  borderRadius: "50%",
-                  border: `2px solid ${done ? (active ? "var(--amber)" : "var(--green)") : "var(--border)"}`,
-                  background: done
-                    ? active
-                      ? "var(--amber)"
-                      : "var(--green)"
-                    : "var(--bg-3)",
-                  zIndex: 1,
-                  flexShrink: 0,
-                  boxShadow: active
-                    ? "0 0 0 3px rgba(245,158,11,0.25)"
-                    : "none",
-                  transition: "all 0.3s",
-                }}
+                className={[
+                  "ddv-timeline-dot",
+                  done && !active ? "ddv-timeline-dot--done" : "",
+                  active ? "ddv-timeline-dot--active" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
               />
-              {/* Label */}
               <div
-                style={{
-                  fontSize: 9,
-                  fontFamily: "var(--mono)",
-                  color: done ? "var(--text-2)" : "var(--text-4)",
-                  fontWeight: active ? 700 : 400,
-                  textAlign: "center" as const,
-                  marginTop: 5,
-                  lineHeight: 1.3,
-                }}
+                className={`ddv-timeline-step-label${active ? " ddv-timeline-step-label--active" : ""}`}
               >
                 {step.label}
               </div>
@@ -427,7 +276,7 @@ export default function DisputeDetailView({
       </div>
 
       {/* ── Contract info pills ── */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" as const }}>
+      <div className="ddv-pills">
         <InfoPill
           label="Payer"
           value={truncateAddr(dispute.contract_terms.payer)}
@@ -453,8 +302,8 @@ export default function DisputeDetailView({
         <InfoPill label="Opened" value={formatDate(dispute.opened_at)} />
       </div>
 
-      {/* ── Statements (side-by-side) ── */}
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap" as const }}>
+      {/* ── Statements ── */}
+      <div className="ddv-statements">
         <StatementCard
           party="A"
           label={`Payer${viewerRole === "A" ? " (You)" : ""}`}
@@ -475,9 +324,9 @@ export default function DisputeDetailView({
         />
       </div>
 
-      {/* Redaction notice for parties */}
+      {/* Redaction notice */}
       {!bothSubmitted && viewerRole !== "arbitrator" && (
-        <div style={styles.notice}>
+        <div className="ddv-notice">
           <svg
             width="12"
             height="12"
@@ -490,9 +339,7 @@ export default function DisputeDetailView({
             <line x1="12" y1="8" x2="12" y2="12" />
             <line x1="12" y1="16" x2="12.01" y2="16" />
           </svg>
-          <span
-            style={{ fontSize: 11, color: "var(--amber)", lineHeight: 1.6 }}
-          >
+          <span className="ddv-notice-text">
             The other party's statement is hidden until both parties have
             submitted. This ensures neither side can strategically tailor their
             response.
@@ -500,87 +347,46 @@ export default function DisputeDetailView({
         </div>
       )}
 
-      {/* ── AI + Arbitrator sections — arbitrator only ── */}
+      {/* ── Arbitrator-only: AI + decision ── */}
       {viewerRole === "arbitrator" && (
         <>
-          {/* AI Pending indicator */}
           {dispute.status === "ai_pending" && (
-            <div style={styles.aiPending}>
+            <div className="ddv-ai-pending">
               <span className="ddv-spinner ddv-spinner--amber" />
-              <span
-                style={{
-                  fontSize: 12,
-                  color: "var(--text-2)",
-                  fontWeight: 600,
-                }}
-              >
+              <span className="ddv-ai-pending-text">
                 AI is analyzing both statements…
               </span>
-              <span
-                style={{
-                  fontSize: 11,
-                  color: "var(--text-4)",
-                  marginLeft: "auto",
-                }}
-              >
+              <span className="ddv-ai-pending-sub">
                 Usually takes 5–15 seconds
               </span>
             </div>
           )}
-
-          {/* AI Verdict */}
           {dispute.ai_verdict && <AIVerdictCard verdict={dispute.ai_verdict} />}
-
-          {/* Awaiting arbitrator */}
           {dispute.status === "ai_complete" && !dispute.arbitrator_decision && (
-            <div style={styles.awaitingArbitrator}>
-              <div
-                style={{
-                  fontSize: 13,
-                  fontWeight: 700,
-                  color: "var(--text-1)",
-                  marginBottom: 4,
-                }}
-              >
+            <div className="ddv-awaiting">
+              <div className="ddv-awaiting-title">
                 ⚖️ Awaiting Arbitrator Decision
               </div>
-              <div
-                style={{
-                  fontSize: 11,
-                  color: "var(--text-3)",
-                  lineHeight: 1.6,
-                }}
-              >
+              <div className="ddv-awaiting-body">
                 The AI has issued its recommendation. The designated arbitrator
                 ({truncateAddr(dispute.contract_terms.arbitrator)}) must now
                 confirm or override the verdict to finalize this dispute.
               </div>
             </div>
           )}
-
-          {/* Arbitrator Decision */}
           {dispute.arbitrator_decision && (
             <ArbitratorDecisionCard decision={dispute.arbitrator_decision} />
           )}
         </>
       )}
 
-      {/* ── Parties: show pending notice while arbitrator reviews ── */}
+      {/* ── Party view: awaiting arbitrator ── */}
       {viewerRole !== "arbitrator" && bothSubmitted && !isResolved && (
-        <div style={styles.awaitingArbitrator}>
-          <div
-            style={{
-              fontSize: 13,
-              fontWeight: 700,
-              color: "var(--text-1)",
-              marginBottom: 4,
-            }}
-          >
+        <div className="ddv-awaiting">
+          <div className="ddv-awaiting-title">
             ⚖️ Awaiting Arbitrator Review
           </div>
-          <div
-            style={{ fontSize: 11, color: "var(--text-3)", lineHeight: 1.6 }}
-          >
+          <div className="ddv-awaiting-body">
             Both statements have been received. The arbitrator (
             {truncateAddr(dispute.contract_terms.arbitrator)}) is now reviewing
             the case and will issue a final decision.
@@ -588,43 +394,19 @@ export default function DisputeDetailView({
         </div>
       )}
 
-      {/* ── Parties: show outcome only once fully resolved ── */}
+      {/* ── Party view: resolved outcome ── */}
       {viewerRole !== "arbitrator" &&
         isResolved &&
         dispute.arbitrator_decision && (
           <div
-            style={{
-              padding: "13px 15px",
-              background:
-                verdictColor(dispute.arbitrator_decision.outcome) + "0d",
-              border: `1px solid ${verdictColor(dispute.arbitrator_decision.outcome)}35`,
-              borderRadius: 10,
-            }}
+            className="ddv-resolved-card"
+            style={{ background: vc + "08", borderColor: vc + "30" }}
           >
-            <div
-              style={{
-                fontSize: 13,
-                fontWeight: 700,
-                color: "var(--text-1)",
-                marginBottom: 4,
-              }}
-            >
-              ⚖️ Dispute Resolved
-            </div>
-            <div
-              style={{
-                fontSize: 14,
-                fontWeight: 700,
-                color: verdictColor(dispute.arbitrator_decision.outcome),
-                fontFamily: "var(--mono)",
-                marginBottom: 6,
-              }}
-            >
+            <div className="ddv-resolved-title">⚖️ Dispute Resolved</div>
+            <div className="ddv-resolved-verdict" style={{ color: vc }}>
               {verdictLabel(dispute.arbitrator_decision.outcome)}
             </div>
-            <div
-              style={{ fontSize: 11, color: "var(--text-3)", lineHeight: 1.6 }}
-            >
+            <div className="ddv-resolved-body">
               The arbitrator has issued a final decision. The on-chain
               transaction will reflect this outcome.
             </div>
@@ -633,14 +415,8 @@ export default function DisputeDetailView({
 
       {/* ── Footer ── */}
       {dispute.resolved_at && (
-        <div style={{ display: "flex", justifyContent: "flex-end" }}>
-          <span
-            style={{
-              fontSize: 10,
-              fontFamily: "var(--mono)",
-              color: "var(--green)",
-            }}
-          >
+        <div className="ddv-footer">
+          <span className="ddv-footer-ts">
             Resolved: {formatDate(dispute.resolved_at)}
           </span>
         </div>
@@ -653,37 +429,9 @@ export default function DisputeDetailView({
 
 function InfoPill({ label, value }: { label: string; value: string }) {
   return (
-    <div
-      style={{
-        padding: "6px 11px",
-        background: "var(--bg-2)",
-        border: "1px solid var(--border)",
-        borderRadius: 6,
-      }}
-    >
-      <div
-        style={{
-          fontSize: 9,
-          fontFamily: "var(--mono)",
-          color: "var(--text-4)",
-          textTransform: "uppercase" as const,
-          letterSpacing: "0.07em",
-          marginBottom: 2,
-        }}
-      >
-        {label}
-      </div>
-      <div
-        style={{
-          fontSize: 11,
-          fontFamily: "var(--mono)",
-          color: "var(--text-2)",
-          fontWeight: 600,
-          wordBreak: "break-all" as const,
-        }}
-      >
-        {value}
-      </div>
+    <div className="ddv-pill">
+      <div className="ddv-pill-label">{label}</div>
+      <div className="ddv-pill-value">{value}</div>
     </div>
   );
 }
@@ -705,205 +453,66 @@ function StatementCard({
   submitted: boolean;
   visible: boolean;
 }) {
-  const color = party === "A" ? "#60a5fa" : "var(--amber)";
-  const bg = party === "A" ? "rgba(96,165,250,0.07)" : "rgba(245,158,11,0.07)";
-  const border =
-    party === "A" ? "rgba(96,165,250,0.22)" : "rgba(245,158,11,0.22)";
-
+  const p = party.toLowerCase() as "a" | "b";
   return (
-    <div
-      style={{
-        flex: 1,
-        minWidth: 240,
-        background: "var(--bg-1)",
-        border: `1px solid ${border}`,
-        borderRadius: 10,
-        overflow: "hidden",
-      }}
-    >
-      {/* Header row */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "9px 13px",
-          background: bg,
-          borderBottom: `1px solid ${border}`,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-          <div
-            style={{
-              width: 20,
-              height: 20,
-              borderRadius: "50%",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: 9,
-              fontFamily: "var(--mono)",
-              fontWeight: 800,
-              color,
-              background: color + "20",
-              border: `1px solid ${color}35`,
-            }}
-          >
-            {party}
-          </div>
-          <span
-            style={{ fontSize: 12, fontWeight: 600, color: "var(--text-1)" }}
-          >
-            {label}
-          </span>
+    <div className={`ddv-stmt-card ddv-stmt-card--${p}`}>
+      <div className={`ddv-stmt-head ddv-stmt-head--${p}`}>
+        <div className="ddv-stmt-party">
+          <div className={`ddv-stmt-avatar ddv-stmt-avatar--${p}`}>{party}</div>
+          <span className="ddv-stmt-name">{label}</span>
         </div>
         {submitted ? (
-          <span
-            style={{
-              fontSize: 9,
-              fontFamily: "var(--mono)",
-              color: "var(--green)",
-              background: "rgba(34,197,94,0.1)",
-              border: "1px solid rgba(34,197,94,0.2)",
-              borderRadius: 4,
-              padding: "1px 6px",
-            }}
-          >
-            ✓ Submitted
-          </span>
+          <span className="ddv-stmt-badge--submitted">✓ Submitted</span>
         ) : (
-          <span
-            style={{
-              fontSize: 9,
-              fontFamily: "var(--mono)",
-              color: "var(--text-4)",
-              background: "var(--bg-3)",
-              border: "1px solid var(--border)",
-              borderRadius: 4,
-              padding: "1px 6px",
-            }}
-          >
-            Pending
-          </span>
+          <span className="ddv-stmt-badge--pending">Pending</span>
         )}
       </div>
-
-      {/* Body */}
-      <div style={{ padding: "12px 13px" }}>
+      <div className="ddv-stmt-body">
         {!submitted ? (
-          <p
-            style={{
-              fontSize: 11,
-              color: "var(--text-4)",
-              fontStyle: "italic",
-              lineHeight: 1.7,
-              margin: 0,
-            }}
-          >
+          <p className="ddv-stmt-waiting">
             Waiting for {label.split(" ")[0].toLowerCase()} to submit their
             statement…
           </p>
         ) : !visible ? (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              fontSize: 11,
-              color: "var(--text-4)",
-            }}
-          >
+          <div className="ddv-stmt-locked">
             <span>🔒</span>
-            <span style={{ fontStyle: "italic", lineHeight: 1.6 }}>
-              Revealed once you submit your own statement.
-            </span>
+            <span>Revealed once you submit your own statement.</span>
           </div>
         ) : (
           <>
-            <p
-              style={{
-                fontSize: 12,
-                color: "var(--text-2)",
-                lineHeight: 1.75,
-                whiteSpace: "pre-wrap" as const,
-                margin: "0 0 10px 0",
-              }}
-            >
+            <p className="ddv-stmt-text">
               {statement || (
-                <span style={{ color: "var(--text-4)", fontStyle: "italic" }}>
+                <span style={{ fontStyle: "italic", color: "var(--text-4)" }}>
                   No statement provided.
                 </span>
               )}
             </p>
-
             {evidence.length > 0 && (
               <div>
-                <div
-                  style={{
-                    fontSize: 9,
-                    fontFamily: "var(--mono)",
-                    color: "var(--text-4)",
-                    textTransform: "uppercase" as const,
-                    letterSpacing: "0.07em",
-                    marginBottom: 6,
-                  }}
-                >
+                <div className="ddv-evidence-label">
                   Evidence ({evidence.length})
                 </div>
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column" as const,
-                    gap: 4,
-                  }}
-                >
+                <div className="ddv-evidence-list">
                   {evidence.map((url, i) => (
                     <a
                       key={i}
                       href={url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      style={{
-                        fontSize: 11,
-                        fontFamily: "var(--mono)",
-                        color,
-                        textDecoration: "none",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 6,
-                        padding: "5px 8px",
-                        background: bg,
-                        border: `1px solid ${border}`,
-                        borderRadius: 5,
-                      }}
+                      className={`ddv-evidence-item ddv-evidence-item--${p}`}
                     >
-                      <span style={{ flexShrink: 0 }}>📎</span>
-                      <span
-                        style={{
-                          flex: 1,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap" as const,
-                        }}
-                      >
+                      <span>📎</span>
+                      <span className="ddv-evidence-filename">
                         [{party}-{i + 1}] {url.split("/").pop() ?? url}
                       </span>
-                      <span style={{ flexShrink: 0 }}>↗</span>
+                      <span>↗</span>
                     </a>
                   ))}
                 </div>
               </div>
             )}
-
             {submittedAt && (
-              <div
-                style={{
-                  marginTop: 8,
-                  fontSize: 9,
-                  fontFamily: "var(--mono)",
-                  color: "var(--text-4)",
-                }}
-              >
+              <div className="ddv-stmt-ts">
                 Submitted{" "}
                 {new Date(submittedAt).toLocaleString(undefined, {
                   month: "short",
@@ -922,80 +531,38 @@ function StatementCard({
 
 function AIVerdictCard({ verdict }: { verdict: AIVerdict }) {
   const vc = verdictColor(verdict.verdict);
-
   return (
-    <div
-      style={{
-        background: "var(--bg-1)",
-        border: `1px solid ${vc}40`,
-        borderRadius: 10,
-        overflow: "hidden",
-      }}
-    >
+    <div className="ddv-verdict-card" style={{ border: `1px solid ${vc}35` }}>
       <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "10px 15px",
-          background: vc + "0d",
-          borderBottom: `1px solid ${vc}28`,
-        }}
+        className="ddv-verdict-head"
+        style={{ background: vc + "0c", borderColor: vc + "25" }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+        <div className="ddv-verdict-head-left">
           <span style={{ fontSize: 14 }}>🤖</span>
-          <span
-            style={{ fontSize: 12, fontWeight: 700, color: "var(--text-1)" }}
-          >
-            AI Arbitration Verdict
-          </span>
+          <span className="ddv-verdict-title">AI Arbitration Verdict</span>
         </div>
-        <span
-          style={{
-            fontSize: 10,
-            fontFamily: "var(--mono)",
-            color: "var(--text-4)",
-          }}
-        >
-          {verdict.model ? `${verdict.model}` : "AI"}
+        <span className="ddv-verdict-model">
+          {verdict.model ?? "AI"}
           {verdict.latency_ms
             ? ` · ${(verdict.latency_ms / 1000).toFixed(1)}s`
             : ""}
         </span>
       </div>
-
-      <div
-        style={{
-          padding: "14px 15px",
-          display: "flex",
-          flexDirection: "column" as const,
-          gap: 12,
-        }}
-      >
-        {/* Verdict + confidence */}
+      <div className="ddv-verdict-body">
         <div
           style={{
             display: "flex",
             alignItems: "center",
             gap: 12,
-            flexWrap: "wrap" as const,
+            flexWrap: "wrap",
           }}
         >
-          <div
-            style={{
-              fontSize: 13,
-              fontWeight: 700,
-              color: vc,
-              fontFamily: "var(--mono)",
-              padding: "5px 12px",
-              background: vc + "14",
-              border: `1px solid ${vc}35`,
-              borderRadius: 7,
-            }}
+          <span
+            className="ddv-verdict-pill"
+            style={{ color: vc, background: vc + "12", borderColor: vc + "35" }}
           >
             {verdictLabel(verdict.verdict)}
-          </div>
-
+          </span>
           {verdict.split_percentage !== undefined && (
             <span
               style={{
@@ -1008,102 +575,35 @@ function AIVerdictCard({ verdict }: { verdict: AIVerdict }) {
               {100 - verdict.split_percentage}%
             </span>
           )}
-
-          <div
-            style={{
-              marginLeft: "auto",
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-            }}
-          >
-            <span
-              style={{
-                fontSize: 10,
-                fontFamily: "var(--mono)",
-                color: "var(--text-4)",
-              }}
-            >
-              Confidence
-            </span>
-            <div
-              style={{
-                width: 80,
-                height: 5,
-                background: "var(--bg-3)",
-                borderRadius: 3,
-                overflow: "hidden",
-              }}
-            >
+          <div className="ddv-confidence-row">
+            <span className="ddv-confidence-label">Confidence</span>
+            <div className="ddv-confidence-bar">
               <div
+                className="ddv-confidence-fill"
                 style={{
-                  height: "100%",
                   width: `${verdict.confidence}%`,
                   background:
                     verdict.confidence >= 70
                       ? "var(--green)"
                       : verdict.confidence >= 40
                         ? "var(--amber)"
-                        : "#ef4444",
-                  borderRadius: 3,
-                  transition: "width 0.6s",
+                        : "var(--red)",
                 }}
               />
             </div>
-            <span
-              style={{
-                fontSize: 11,
-                fontFamily: "var(--mono)",
-                fontWeight: 700,
-                color: "var(--text-2)",
-              }}
-            >
-              {verdict.confidence}%
-            </span>
+            <span className="ddv-confidence-pct">{verdict.confidence}%</span>
           </div>
         </div>
-
-        {/* Reasoning */}
         <div>
-          <SectionLabel>Reasoning</SectionLabel>
-          <p
-            style={{
-              fontSize: 12,
-              color: "var(--text-2)",
-              lineHeight: 1.75,
-              margin: 0,
-            }}
-          >
-            {verdict.reasoning}
-          </p>
+          <div className="ddv-section-label">Reasoning</div>
+          <p className="ddv-reasoning">{verdict.reasoning}</p>
         </div>
-
-        {/* Key factors */}
         {verdict.key_factors.length > 0 && (
           <div>
-            <SectionLabel>Key Factors</SectionLabel>
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column" as const,
-                gap: 4,
-              }}
-            >
+            <div className="ddv-section-label">Key Factors</div>
+            <div className="ddv-factors">
               {verdict.key_factors.map((f, i) => (
-                <div
-                  key={i}
-                  style={{
-                    fontSize: 11,
-                    color: "var(--text-2)",
-                    display: "flex",
-                    alignItems: "flex-start",
-                    gap: 8,
-                    padding: "5px 10px",
-                    background: "var(--bg-2)",
-                    border: "1px solid var(--border)",
-                    borderRadius: 5,
-                  }}
-                >
+                <div key={i} className="ddv-factor-row">
                   <span style={{ color: vc, flexShrink: 0 }}>→</span>
                   {f}
                 </div>
@@ -1111,41 +611,24 @@ function AIVerdictCard({ verdict }: { verdict: AIVerdict }) {
             </div>
           </div>
         )}
-
-        {/* Warnings */}
         {verdict.warnings.length > 0 && (
           <div>
-            <SectionLabel color="var(--amber)">⚠ Warnings</SectionLabel>
             <div
-              style={{
-                display: "flex",
-                flexDirection: "column" as const,
-                gap: 4,
-              }}
+              className="ddv-section-label"
+              style={{ color: "var(--amber)" }}
             >
+              ⚠ Warnings
+            </div>
+            <div className="ddv-factors">
               {verdict.warnings.map((w, i) => (
-                <div
-                  key={i}
-                  style={{
-                    fontSize: 11,
-                    color: "var(--amber)",
-                    display: "flex",
-                    alignItems: "flex-start",
-                    gap: 7,
-                    padding: "5px 10px",
-                    background: "rgba(245,158,11,0.06)",
-                    border: "1px solid rgba(245,158,11,0.2)",
-                    borderRadius: 5,
-                  }}
-                >
-                  <span style={{ flexShrink: 0 }}>⚠</span>
+                <div key={i} className="ddv-warning-row">
+                  <span>⚠</span>
                   {w}
                 </div>
               ))}
             </div>
           </div>
         )}
-
         <span
           style={{
             fontSize: 9,
@@ -1166,101 +649,47 @@ function ArbitratorDecisionCard({
   decision: ArbitratorDecision;
 }) {
   const dc = verdictColor(decision.outcome);
-
   return (
-    <div
-      style={{
-        background: "var(--bg-1)",
-        border: `2px solid ${dc}55`,
-        borderRadius: 10,
-        overflow: "hidden",
-      }}
-    >
+    <div className="ddv-decision-card" style={{ border: `2px solid ${dc}45` }}>
       <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "10px 15px",
-          background: dc + "0f",
-          borderBottom: `1px solid ${dc}30`,
-        }}
+        className="ddv-decision-head"
+        style={{ background: dc + "0c", borderColor: dc + "28" }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+        <div className="ddv-decision-head-left">
           <span style={{ fontSize: 14 }}>⚖️</span>
-          <span
-            style={{ fontSize: 12, fontWeight: 700, color: "var(--text-1)" }}
-          >
-            Final Arbitrator Decision
-          </span>
+          <span className="ddv-decision-title">Final Arbitrator Decision</span>
         </div>
         <span
-          style={{
-            fontSize: 9,
-            fontFamily: "var(--mono)",
-            fontWeight: 700,
-            padding: "2px 8px",
-            borderRadius: 5,
-            border: "1px solid",
-            color: decision.followed_ai ? "var(--green)" : "var(--amber)",
-            background: decision.followed_ai
-              ? "rgba(34,197,94,0.1)"
-              : "rgba(245,158,11,0.1)",
-            borderColor: decision.followed_ai
-              ? "rgba(34,197,94,0.25)"
-              : "rgba(245,158,11,0.25)",
-          }}
+          className={
+            decision.followed_ai
+              ? "ddv-decision-badge--ai"
+              : "ddv-decision-badge--ov"
+          }
         >
           {decision.followed_ai ? "Confirmed AI" : "Overrode AI"}
         </span>
       </div>
-
-      <div
-        style={{
-          padding: "14px 15px",
-          display: "flex",
-          flexDirection: "column" as const,
-          gap: 12,
-        }}
-      >
-        <div
-          style={{
-            fontSize: 14,
-            fontWeight: 700,
-            color: dc,
-            fontFamily: "var(--mono)",
-            padding: "5px 12px",
-            background: dc + "12",
-            border: `1px solid ${dc}35`,
-            borderRadius: 7,
-            display: "inline-block",
-          }}
+      <div className="ddv-decision-body">
+        <span
+          className="ddv-decision-pill"
+          style={{ color: dc, background: dc + "10", borderColor: dc + "35" }}
         >
           {verdictLabel(decision.outcome)}
-        </div>
-
+        </span>
         {decision.override_reason && (
           <div>
-            <SectionLabel color="var(--amber)">Override Reason</SectionLabel>
             <div
-              style={{
-                fontSize: 12,
-                color: "var(--text-2)",
-                lineHeight: 1.7,
-                padding: "8px 12px",
-                background: "rgba(245,158,11,0.06)",
-                border: "1px solid rgba(245,158,11,0.2)",
-                borderRadius: 6,
-              }}
+              className="ddv-section-label"
+              style={{ color: "var(--amber)" }}
             >
-              {decision.override_reason}
+              Override Reason
             </div>
+            <div className="ddv-override-box">{decision.override_reason}</div>
           </div>
         )}
-
-        <div style={{ display: "flex", gap: 20, flexWrap: "wrap" as const }}>
-          <div>
-            <SectionLabel>Arbitrator</SectionLabel>
+        <div className="ddv-decision-meta">
+          <div className="ddv-decision-meta-item">
+            <div className="ddv-section-label">Arbitrator</div>
             <span
               style={{
                 fontSize: 11,
@@ -1273,8 +702,8 @@ function ArbitratorDecisionCard({
                 : decision.arbitrator_address}
             </span>
           </div>
-          <div>
-            <SectionLabel>Decided</SectionLabel>
+          <div className="ddv-decision-meta-item">
+            <div className="ddv-section-label">Decided</div>
             <span
               style={{
                 fontSize: 11,
@@ -1290,104 +719,3 @@ function ArbitratorDecisionCard({
     </div>
   );
 }
-
-function SectionLabel({
-  children,
-  color,
-}: {
-  children: React.ReactNode;
-  color?: string;
-}) {
-  return (
-    <div
-      style={{
-        fontSize: 9,
-        fontFamily: "var(--mono)",
-        color: color ?? "var(--text-4)",
-        textTransform: "uppercase" as const,
-        letterSpacing: "0.08em",
-        marginBottom: 6,
-      }}
-    >
-      {children}
-    </div>
-  );
-}
-
-// ── Styles ────────────────────────────────────────────────────
-
-const styles: Record<string, React.CSSProperties> = {
-  wrap: {
-    background: "var(--bg-2)",
-    border: "1px solid var(--border)",
-    borderRadius: 12,
-    padding: 20,
-    display: "flex",
-    flexDirection: "column",
-    gap: 16,
-  },
-  header: {
-    display: "flex",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: 12,
-  },
-  label: {
-    fontSize: 10,
-    fontFamily: "var(--mono)",
-    color: "var(--text-4)",
-    textTransform: "uppercase",
-    letterSpacing: "0.1em",
-    marginBottom: 4,
-  },
-  title: {
-    fontSize: 15,
-    fontWeight: 700,
-    color: "var(--text-1)",
-    lineHeight: 1.3,
-  },
-  timeline: {
-    display: "flex",
-    alignItems: "flex-start",
-    overflowX: "auto",
-    paddingBottom: 4,
-  },
-  notice: {
-    display: "flex",
-    alignItems: "flex-start",
-    gap: 8,
-    padding: "10px 13px",
-    background: "rgba(245,158,11,0.05)",
-    border: "1px solid rgba(245,158,11,0.2)",
-    borderRadius: 8,
-  },
-  aiPending: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-    padding: "13px 15px",
-    background: "var(--bg-1)",
-    border: "1px solid var(--border)",
-    borderRadius: 10,
-  },
-  awaitingArbitrator: {
-    padding: "13px 15px",
-    background: "rgba(245,158,11,0.04)",
-    border: "1px solid rgba(245,158,11,0.2)",
-    borderRadius: 10,
-  },
-};
-
-const css = `
-.ddv-spinner {
-  display: inline-block;
-  width: 14px; height: 14px;
-  border: 2px solid var(--bg-3);
-  border-top-color: var(--green);
-  border-radius: 50%;
-  animation: ddv-spin 0.7s linear infinite;
-  flex-shrink: 0;
-}
-.ddv-spinner--amber { border-top-color: var(--amber); }
-@keyframes ddv-spin { to { transform: rotate(360deg); } }
-`;

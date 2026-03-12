@@ -1,6 +1,6 @@
 "use client";
 // ============================================================
-// components/partyA/ScreenDashboard.tsx — 2026 redesign v2
+// components/partyA/ScreenDashboard.tsx — Unmarshal-style flat
 // ============================================================
 
 import { useEffect, useCallback, useState } from "react";
@@ -64,52 +64,52 @@ function statusMeta(s: MilestoneUIStatus) {
       return {
         label: "Released",
         color: "#4ade80",
-        bg: "rgba(74,222,128,0.10)",
-        border: "rgba(74,222,128,0.22)",
+        bg: "rgba(74,222,128,0.08)",
+        border: "rgba(74,222,128,0.18)",
       };
     case "disputed":
       return {
         label: "In Dispute",
-        color: "#fbbf24",
-        bg: "rgba(251,191,36,0.10)",
-        border: "rgba(251,191,36,0.22)",
+        color: "#d4ff00",
+        bg: "rgba(212,255,0,0.08)",
+        border: "rgba(212,255,0,0.20)",
       };
     case "refunded":
       return {
         label: "Refunded",
         color: "#f87171",
-        bg: "rgba(248,113,113,0.10)",
-        border: "rgba(248,113,113,0.22)",
+        bg: "rgba(248,113,113,0.08)",
+        border: "rgba(248,113,113,0.18)",
       };
     case "failed":
       return {
         label: "Tx Failed",
         color: "#f87171",
-        bg: "rgba(248,113,113,0.10)",
-        border: "rgba(248,113,113,0.22)",
+        bg: "rgba(248,113,113,0.08)",
+        border: "rgba(248,113,113,0.18)",
       };
     case "pending":
       return {
         label: "Confirming",
-        color: "rgba(240,242,245,0.55)",
-        bg: "rgba(240,242,245,0.06)",
-        border: "rgba(240,242,245,0.12)",
+        color: "rgba(255,255,255,0.45)",
+        bg: "rgba(255,255,255,0.04)",
+        border: "rgba(255,255,255,0.10)",
       };
     default:
       return {
         label: "Locked",
-        color: "rgba(240,242,245,0.32)",
-        bg: "rgba(240,242,245,0.04)",
-        border: "rgba(240,242,245,0.10)",
+        color: "rgba(255,255,255,0.25)",
+        bg: "rgba(255,255,255,0.03)",
+        border: "rgba(255,255,255,0.08)",
       };
   }
 }
 
 const MS_COLORS = [
-  "#c4ff46",
-  "#60a5fa",
+  "#d4ff00",
+  "#ffffff",
   "#4ade80",
-  "#fbbf24",
+  "#60a5fa",
   "#f472b6",
   "#a78bfa",
 ];
@@ -157,7 +157,6 @@ export default function ScreenDashboard() {
     },
   ];
 
-  // Evidence modal state (for already-disputed milestones)
   const [evidenceModalMs, setEvidenceModalMs] = useState<MilestoneUI | null>(
     null,
   );
@@ -167,7 +166,6 @@ export default function ScreenDashboard() {
   const [savedToDb, setSavedToDb] = useState(false);
   const [lastRefresh, setLastRefresh] = useState(0);
 
-  // Dispute confirmation modal state
   const [disputeModal, setDisputeModal] = useState<{
     open: boolean;
     ms: MilestoneUI | null;
@@ -377,7 +375,6 @@ export default function ScreenDashboard() {
       <div className="v2-shell">
         {/* ── Sidebar ── */}
         <aside className="v2-sidebar">
-          {/* Nav */}
           <div className="v2-sidebar-block">
             <div className="v2-sidebar-label">Navigation</div>
             <nav className="v2-nav">
@@ -425,7 +422,6 @@ export default function ScreenDashboard() {
             </nav>
           </div>
 
-          {/* Progress ring */}
           <div className="v2-ring-block">
             <svg width="80" height="80" viewBox="0 0 80 80">
               <circle
@@ -433,34 +429,30 @@ export default function ScreenDashboard() {
                 cy="40"
                 r="32"
                 fill="none"
-                stroke="rgba(240,242,245,0.06)"
-                strokeWidth="5"
+                stroke="rgba(255,255,255,0.06)"
+                strokeWidth="4"
               />
               <circle
                 cx="40"
                 cy="40"
                 r="32"
                 fill="none"
-                stroke={progressPct === 100 ? "#4ade80" : "#c4ff46"}
-                strokeWidth="5"
+                stroke={progressPct === 100 ? "#4ade80" : "#d4ff00"}
+                strokeWidth="4"
                 strokeDasharray={`${2 * Math.PI * 32}`}
                 strokeDashoffset={`${2 * Math.PI * 32 * (1 - progressPct / 100)}`}
                 strokeLinecap="round"
                 transform="rotate(-90 40 40)"
-                style={{
-                  transition:
-                    "stroke-dashoffset 0.9s cubic-bezier(0.16,1,0.3,1), stroke 0.4s ease",
-                }}
+                style={{ transition: "stroke-dashoffset 0.6s ease" }}
               />
               <text
                 x="40"
                 y="44"
                 textAnchor="middle"
-                fill={progressPct === 100 ? "#4ade80" : "#f0f2f5"}
+                fill="#ffffff"
                 fontSize="13"
-                fontWeight="800"
+                fontWeight="700"
                 fontFamily="'DM Mono', monospace"
-                style={{ letterSpacing: "-0.02em" }}
               >
                 {progressPct}%
               </text>
@@ -470,7 +462,6 @@ export default function ScreenDashboard() {
             </div>
           </div>
 
-          {/* Agreement meta */}
           <div className="v2-sidebar-block">
             <div className="v2-sidebar-label">Agreement</div>
             <div className="v2-meta-list">
@@ -500,7 +491,6 @@ export default function ScreenDashboard() {
             </div>
           </div>
 
-          {/* Milestone mini-list */}
           {milestones.length > 1 && (
             <div className="v2-sidebar-block">
               <div className="v2-sidebar-label">Milestones</div>
@@ -513,8 +503,8 @@ export default function ScreenDashboard() {
                       <div
                         className="v2-ms-mini-dot"
                         style={{
-                          background: col + "20",
-                          border: `1px solid ${col}45`,
+                          background: col + "15",
+                          border: `1px solid ${col}30`,
                           color: col,
                         }}
                       >
@@ -540,7 +530,6 @@ export default function ScreenDashboard() {
             </div>
           )}
 
-          {/* Bottom CTA */}
           <div className="v2-sidebar-footer">
             <button
               className="v2-btn-ghost-sm"
@@ -568,36 +557,33 @@ export default function ScreenDashboard() {
 
         {/* ── Main canvas ── */}
         <main className="v2-main">
-          {/* Page header */}
-          <div className="v2-page-header v2-fade-up">
+          <div className="v2-page-header">
             <div className="v2-page-header-left">
               <div className="v2-eyebrow">Payer Dashboard</div>
               <h1 className="v2-page-title">Manage Agreement</h1>
             </div>
-            <div className="v2-page-header-right">
-              <div className="v2-agreement-id-chip">
-                <span className="v2-agreement-id-label">ID</span>
-                <span className="v2-agreement-id-val">#{agreementId}</span>
-              </div>
+            <div className="v2-agreement-id-chip">
+              <span className="v2-agreement-id-label">ID</span>
+              <span className="v2-agreement-id-val">#{agreementId}</span>
             </div>
           </div>
 
           {/* Stats grid */}
-          <div className="v2-stats-grid v2-fade-up v2-d1">
+          <div className="v2-stats-grid">
             {[
               {
                 label: "Total Locked",
                 value: formatSats(totalSats),
                 sub: `≈ $${totalAmountUsd.toLocaleString()} USD`,
                 icon: "◈",
-                accent: "#c4ff46",
+                accent: "#d4ff00",
               },
               {
                 label: "Payer",
                 value: payerName,
                 sub: walletAddress ? `${walletAddress.slice(0, 8)}…` : "You",
                 icon: "◉",
-                accent: "#60a5fa",
+                accent: "#ffffff",
               },
               {
                 label: "Receiver",
@@ -614,18 +600,11 @@ export default function ScreenDashboard() {
                     : arbitrator,
                 sub: "dispute resolver",
                 icon: "⚖",
-                accent: "#fbbf24",
+                accent: "#60a5fa",
               },
             ].map(({ label, value, sub, icon, accent }) => (
               <div key={label} className="v2-stat-card">
-                <div
-                  className="v2-stat-icon-wrap"
-                  style={{
-                    background: accent + "12",
-                    border: `1px solid ${accent}28`,
-                    color: accent,
-                  }}
-                >
+                <div className="v2-stat-icon" style={{ color: accent }}>
                   {icon}
                 </div>
                 <div className="v2-stat-label">{label}</div>
@@ -636,26 +615,13 @@ export default function ScreenDashboard() {
           </div>
 
           {/* Progress bar */}
-          <div className="v2-progress-card v2-fade-up v2-d2">
+          <div className="v2-progress-card">
             <div className="v2-progress-top">
-              <div className="v2-progress-title">
-                <svg
-                  width="11"
-                  height="11"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="var(--accent)"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                >
-                  <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-                </svg>
-                Contract Progress
-              </div>
+              <span className="v2-progress-title">Contract Progress</span>
               <div className="v2-progress-stat">
                 <span
                   className="v2-progress-pct"
-                  style={{ color: progressPct === 100 ? "#4ade80" : "#c4ff46" }}
+                  style={{ color: progressPct === 100 ? "#4ade80" : "#d4ff00" }}
                 >
                   {progressPct}%
                 </span>
@@ -669,56 +635,16 @@ export default function ScreenDashboard() {
                 className="v2-progress-fill"
                 style={{
                   width: `${progressPct > 0 ? progressPct : 0.5}%`,
-                  background:
-                    progressPct === 100
-                      ? "linear-gradient(90deg, #4ade80, #22c55e)"
-                      : "linear-gradient(90deg, #c4ff46, #a3e635)",
+                  background: progressPct === 100 ? "#4ade80" : "#d4ff00",
                 }}
               />
             </div>
-            <div className="v2-progress-segments">
-              {milestones.map((ms, i) => {
-                const st = getStatus(ms.index);
-                const done = ["complete", "refunded"].includes(st);
-                return (
-                  <div
-                    key={i}
-                    className="v2-progress-seg"
-                    title={`${ms.title} — ${ms.percentage}%`}
-                    style={{ flex: ms.percentage }}
-                  >
-                    <div
-                      className="v2-progress-seg-dot"
-                      style={{
-                        background: done
-                          ? "#4ade80"
-                          : MS_COLORS[i % MS_COLORS.length] + "40",
-                      }}
-                    />
-                  </div>
-                );
-              })}
-            </div>
           </div>
 
-          {/* Milestones section */}
-          <div className="v2-fade-up v2-d3">
+          {/* Milestones */}
+          <div>
             <div className="v2-section-head">
-              <div className="v2-section-title">
-                <svg
-                  width="11"
-                  height="11"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="var(--text-4)"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                >
-                  <path d="M9 11l3 3L22 4" />
-                  <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
-                </svg>
-                Milestones
-              </div>
+              <span className="v2-section-title">Milestones</span>
               <span className="v2-section-count">
                 {milestones.length} total
               </span>
@@ -749,36 +675,29 @@ export default function ScreenDashboard() {
                       .join(" ")}
                   >
                     <div className="v2-ms-row">
-                      {/* Left accent bar */}
                       <div
                         className="v2-ms-accent-bar"
                         style={{
                           background: isDone
-                            ? "#4ade8060"
+                            ? "#4ade80"
                             : isDisputed
-                              ? "#fbbf2460"
-                              : accent + "60",
+                              ? "#d4ff00"
+                              : accent,
                         }}
                       />
 
-                      {/* Number badge */}
                       <div
                         className="v2-ms-num"
                         style={{
-                          background: isDone
-                            ? "rgba(74,222,128,0.12)"
-                            : isDisputed
-                              ? "rgba(251,191,36,0.12)"
-                              : accent + "12",
                           borderColor: isDone
-                            ? "rgba(74,222,128,0.28)"
+                            ? "#4ade80"
                             : isDisputed
-                              ? "rgba(251,191,36,0.28)"
-                              : accent + "35",
+                              ? "#d4ff00"
+                              : accent + "60",
                           color: isDone
                             ? "#4ade80"
                             : isDisputed
-                              ? "#fbbf24"
+                              ? "#d4ff00"
                               : accent,
                         }}
                       >
@@ -799,7 +718,6 @@ export default function ScreenDashboard() {
                         )}
                       </div>
 
-                      {/* Info */}
                       <div className="v2-ms-info">
                         <div className="v2-ms-title-row">
                           <span className="v2-ms-title">{ms.title}</span>
@@ -867,14 +785,11 @@ export default function ScreenDashboard() {
                         </div>
                       </div>
 
-                      {/* Right: amount + actions */}
                       <div className="v2-ms-right">
                         <div className="v2-ms-amount-block">
                           <div
                             className="v2-ms-amount"
-                            style={{
-                              color: isDone ? "#4ade80" : "var(--text-1)",
-                            }}
+                            style={{ color: isDone ? "#4ade80" : "#ffffff" }}
                           >
                             {formatSats(ms.amountSats)}
                           </div>
@@ -882,9 +797,7 @@ export default function ScreenDashboard() {
                             {ms.percentage}% · ≈ ${ms.amountUsd}
                           </div>
                         </div>
-
                         <div className="v2-ms-actions">
-                          {/* Status pill */}
                           <span
                             className="v2-status-pill"
                             style={{
@@ -899,7 +812,6 @@ export default function ScreenDashboard() {
                             {meta.label}
                           </span>
 
-                          {/* Buttons */}
                           {isFailed && (
                             <button
                               className="v2-btn v2-btn--retry"
@@ -932,8 +844,6 @@ export default function ScreenDashboard() {
                               Retry
                             </button>
                           )}
-
-                          {/* Evidence button — now opens modal */}
                           {isDisputed && !alreadySub && (
                             <button
                               className="v2-btn v2-btn--evidence"
@@ -954,7 +864,6 @@ export default function ScreenDashboard() {
                               Evidence
                             </button>
                           )}
-
                           {isDisputed && alreadySub && (
                             <span className="v2-filed-badge">
                               <svg
@@ -971,7 +880,6 @@ export default function ScreenDashboard() {
                               Filed
                             </span>
                           )}
-
                           {!isDone &&
                             !isPending &&
                             !isFailed &&
@@ -1037,7 +945,6 @@ export default function ScreenDashboard() {
                       </div>
                     </div>
 
-                    {/* Dispute detail */}
                     {isDisputed && agreementId && (
                       <div className="v2-dispute-panel">
                         <DisputeDetailView
@@ -1047,8 +954,6 @@ export default function ScreenDashboard() {
                         />
                       </div>
                     )}
-
-                    {/* Evidence submit panel removed — now in modal */}
                   </div>
                 );
               })}
@@ -1056,22 +961,7 @@ export default function ScreenDashboard() {
           </div>
 
           {/* Help strip */}
-          <div className="v2-info-strip v2-fade-up v2-d4">
-            <div className="v2-info-icon">
-              <svg
-                width="11"
-                height="11"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-              >
-                <circle cx="12" cy="12" r="10" />
-                <line x1="12" y1="8" x2="12" y2="12" />
-                <line x1="12" y1="16" x2="12.01" y2="16" />
-              </svg>
-            </div>
+          <div className="v2-info-strip">
             <p className="v2-info-text">
               Click <strong>Release</strong> to send sBTC on-chain once work is
               approved. Use <strong>Dispute</strong> to open arbitration if
@@ -1080,16 +970,15 @@ export default function ScreenDashboard() {
             </p>
           </div>
 
-          {/* Complete banner */}
           {allComplete && (
-            <div className="v2-complete-banner v2-fade-up">
+            <div className="v2-complete-banner">
               <div className="v2-complete-icon">
                 <svg
                   width="24"
                   height="24"
                   viewBox="0 0 24 24"
                   fill="none"
-                  stroke="#4ade80"
+                  stroke="#0a0a0a"
                   strokeWidth="2.5"
                   strokeLinecap="round"
                 >
@@ -1131,7 +1020,6 @@ export default function ScreenDashboard() {
           }}
         >
           <div className="v2-modal">
-            {/* Modal header */}
             <div className="v2-modal-header">
               <div className="v2-modal-header-left">
                 <div className="v2-modal-icon">
@@ -1140,7 +1028,7 @@ export default function ScreenDashboard() {
                     height="14"
                     viewBox="0 0 24 24"
                     fill="none"
-                    stroke="#fbbf24"
+                    stroke="#d4ff00"
                     strokeWidth="1.8"
                     strokeLinecap="round"
                   >
@@ -1170,7 +1058,6 @@ export default function ScreenDashboard() {
               </button>
             </div>
 
-            {/* Step indicator */}
             <div className="v2-modal-steps">
               <div
                 className={`v2-modal-step ${disputeModal.step === "confirm" ? "v2-modal-step--active" : "v2-modal-step--done"}`}
@@ -1199,8 +1086,8 @@ export default function ScreenDashboard() {
                 style={{
                   background:
                     disputeModal.step === "submit"
-                      ? "#c4ff46"
-                      : "rgba(240,242,245,0.08)",
+                      ? "#d4ff00"
+                      : "rgba(255,255,255,0.08)",
                 }}
               />
               <div
@@ -1211,7 +1098,6 @@ export default function ScreenDashboard() {
               </div>
             </div>
 
-            {/* Step 1 — Confirm dispute */}
             {disputeModal.step === "confirm" && (
               <div className="v2-modal-body">
                 <div className="v2-modal-warn-banner">
@@ -1220,7 +1106,7 @@ export default function ScreenDashboard() {
                     height="14"
                     viewBox="0 0 24 24"
                     fill="none"
-                    stroke="#fbbf24"
+                    stroke="#d4ff00"
                     strokeWidth="1.8"
                     strokeLinecap="round"
                   >
@@ -1233,7 +1119,6 @@ export default function ScreenDashboard() {
                     the dispute is resolved by the arbitrator.
                   </p>
                 </div>
-
                 <div className="v2-modal-detail-grid">
                   <div className="v2-modal-detail">
                     <span className="v2-modal-detail-label">Milestone</span>
@@ -1247,10 +1132,10 @@ export default function ScreenDashboard() {
                     </span>
                     <span
                       className="v2-modal-detail-val"
-                      style={{ color: "#fbbf24" }}
+                      style={{ color: "#d4ff00" }}
                     >
                       {formatSats(disputeModal.ms.amountSats)}{" "}
-                      <span style={{ opacity: 0.5, fontSize: 10 }}>
+                      <span style={{ opacity: 0.4, fontSize: 10 }}>
                         ≈ ${disputeModal.ms.amountUsd}
                       </span>
                     </span>
@@ -1269,7 +1154,7 @@ export default function ScreenDashboard() {
                       <span
                         className="v2-modal-detail-val"
                         style={{
-                          color: "rgba(240,242,245,0.50)",
+                          color: "rgba(255,255,255,0.45)",
                           fontSize: 12,
                         }}
                       >
@@ -1278,7 +1163,6 @@ export default function ScreenDashboard() {
                     </div>
                   )}
                 </div>
-
                 <div className="v2-modal-footer">
                   <button
                     className="v2-btn-secondary"
@@ -1307,7 +1191,6 @@ export default function ScreenDashboard() {
               </div>
             )}
 
-            {/* Step 2 — Submit statement */}
             {disputeModal.step === "submit" && agreementId && (
               <div className="v2-modal-body v2-modal-body--scroll">
                 <div className="v2-modal-tx-notice">
@@ -1349,7 +1232,7 @@ export default function ScreenDashboard() {
         </div>
       )}
 
-      {/* ── Evidence Modal (for already-disputed milestones) ── */}
+      {/* ── Evidence Modal ── */}
       {evidenceModalMs && agreementId && (
         <div
           className="v2-modal-backdrop"
@@ -1358,7 +1241,6 @@ export default function ScreenDashboard() {
           }}
         >
           <div className="v2-modal v2-modal--evidence">
-            {/* Header */}
             <div className="v2-modal-header">
               <div className="v2-modal-header-left">
                 <div className="v2-modal-icon">
@@ -1367,7 +1249,7 @@ export default function ScreenDashboard() {
                     height="14"
                     viewBox="0 0 24 24"
                     fill="none"
-                    stroke="#fbbf24"
+                    stroke="#d4ff00"
                     strokeWidth="1.8"
                     strokeLinecap="round"
                   >
@@ -1375,7 +1257,6 @@ export default function ScreenDashboard() {
                     <polyline points="14 2 14 8 20 8" />
                     <line x1="16" y1="13" x2="8" y2="13" />
                     <line x1="16" y1="17" x2="8" y2="17" />
-                    <polyline points="10 9 9 9 8 9" />
                   </svg>
                 </div>
                 <div>
@@ -1403,8 +1284,6 @@ export default function ScreenDashboard() {
                 </svg>
               </button>
             </div>
-
-            {/* Scrollable body with DisputeSubmitScreen */}
             <div className="v2-modal-body v2-modal-body--scroll">
               <DisputeSubmitScreen
                 agreementId={agreementId}
@@ -1441,256 +1320,211 @@ export default function ScreenDashboard() {
 }
 
 /* ════════════════════════════════════════════════════════════
-   COMPONENT CSS — 2026 Redesign v2
+   CSS — Flat / Unmarshal-style
    ════════════════════════════════════════════════════════════ */
 const css = `
 
 /* ── Topbar ── */
 .v2-topbar {
   position: sticky; top: 0; z-index: 100;
-  height: 54px;
-  background: rgba(11,12,13,0.90);
-  backdrop-filter: blur(24px) saturate(1.8);
-  border-bottom: 1px solid rgba(240,242,245,0.07);
+  height: 56px;
+  background: #0a0a0a;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
   display: flex; align-items: center; justify-content: space-between;
-  padding: 0 24px; gap: 12px;
+  padding: 0 28px; gap: 12px;
 }
-.v2-topbar-left  { display: flex; align-items: center; gap: 0; }
+.v2-topbar-left  { display: flex; align-items: center; }
 .v2-topbar-right { display: flex; align-items: center; gap: 10px; }
-.v2-topbar-sep   { width: 1px; height: 16px; background: rgba(240,242,245,0.10); margin: 0 18px; }
+.v2-topbar-sep   { width: 1px; height: 16px; background: rgba(255,255,255,0.08); margin: 0 20px; }
 
-.v2-brand { display: flex; align-items: center; gap: 8px; text-decoration: none; }
+.v2-brand { display: flex; align-items: center; gap: 9px; text-decoration: none; }
 .v2-brand-mark {
-  width: 28px; height: 28px; border-radius: 7px;
-  background: #c4ff46; display: flex; align-items: center; justify-content: center;
-  font-size: 14px; font-weight: 800; color: #0b0c0d;
+  width: 28px; height: 28px; border-radius: 6px;
+  background: #d4ff00; display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 900; color: #0a0a0a;
   font-family: 'Syne', sans-serif; flex-shrink: 0;
-  box-shadow: 0 2px 10px rgba(196,255,70,0.28);
 }
 .v2-brand-name {
   font-family: 'Syne', sans-serif; font-size: 15px; font-weight: 800;
-  color: #f0f2f5; letter-spacing: -0.03em;
+  color: #ffffff; letter-spacing: -0.02em;
 }
 
-.v2-breadcrumb { display: flex; align-items: center; gap: 0; }
-.v2-bc-dim   { font-size: 11px; font-family: 'DM Mono', monospace; color: rgba(240,242,245,0.30); }
-.v2-bc-arrow { font-size: 11px; color: rgba(240,242,245,0.18); margin: 0 6px; }
-.v2-bc-cur   { font-size: 11px; font-family: 'DM Mono', monospace; color: rgba(240,242,245,0.65); font-weight: 600; }
+.v2-breadcrumb { display: flex; align-items: center; }
+.v2-bc-dim   { font-size: 11px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.22); }
+.v2-bc-arrow { font-size: 11px; color: rgba(255,255,255,0.15); margin: 0 6px; }
+.v2-bc-cur   { font-size: 11px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.55); }
 
 .v2-wallet-pill {
   display: flex; align-items: center; gap: 7px;
-  background: rgba(196,255,70,0.06); border: 1px solid rgba(196,255,70,0.15);
-  border-radius: 20px; padding: 5px 12px;
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 4px; padding: 5px 12px;
 }
-.v2-wallet-dot {
-  width: 5px; height: 5px; border-radius: 50%; background: #c4ff46; flex-shrink: 0;
-  animation: v2PulseDot 2s ease infinite;
-}
-.v2-wallet-addr { font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(240,242,245,0.55); }
+.v2-wallet-dot  { width: 5px; height: 5px; border-radius: 50%; background: #d4ff00; flex-shrink: 0; }
+.v2-wallet-addr { font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.45); }
 
 .v2-live-badge {
   display: flex; align-items: center; gap: 6px;
   font-size: 10px; font-family: 'DM Mono', monospace; font-weight: 700;
-  letter-spacing: 0.06em; text-transform: uppercase; color: #c4ff46;
-  background: rgba(196,255,70,0.08); border: 1px solid rgba(196,255,70,0.18);
-  border-radius: 20px; padding: 4px 11px;
+  letter-spacing: 0.06em; text-transform: uppercase; color: #d4ff00;
+  border: 1px solid rgba(212,255,0,0.25); border-radius: 4px; padding: 4px 10px;
 }
-.v2-live-dot {
-  width: 5px; height: 5px; border-radius: 50%; background: #c4ff46;
-  animation: v2PulseDot 2s ease infinite;
-}
+.v2-live-dot { width: 5px; height: 5px; border-radius: 50%; background: #d4ff00; flex-shrink: 0; }
 
 /* ── Shell ── */
-.v2-shell {
-  display: flex; min-height: calc(100vh - 54px); background: #0b0c0d;
-}
+.v2-shell { display: flex; min-height: calc(100vh - 56px); background: #0a0a0a; }
 
 /* ── Sidebar ── */
 .v2-sidebar {
-  width: 224px; flex-shrink: 0;
-  background: #0e0f10;
-  border-right: 1px solid rgba(240,242,245,0.07);
+  width: 220px; flex-shrink: 0;
+  background: #0d0d0d;
+  border-right: 1px solid rgba(255,255,255,0.07);
   display: flex; flex-direction: column;
-  position: sticky; top: 54px;
-  height: calc(100vh - 54px);
+  position: sticky; top: 56px;
+  height: calc(100vh - 56px);
   overflow-y: auto; padding: 20px 0 24px;
 }
 .v2-sidebar-block {
-  padding: 0 12px 20px; margin-bottom: 4px;
-  border-bottom: 1px solid rgba(240,242,245,0.05);
+  padding: 0 14px 20px; margin-bottom: 4px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
 }
 .v2-sidebar-block:last-of-type { border-bottom: none; }
 .v2-sidebar-label {
   font-size: 9px; font-family: 'DM Mono', monospace;
-  color: rgba(240,242,245,0.28); text-transform: uppercase;
-  letter-spacing: 0.14em; padding: 0 4px; margin-bottom: 10px;
+  color: rgba(255,255,255,0.22); text-transform: uppercase;
+  letter-spacing: 0.14em; margin-bottom: 10px;
 }
 
-/* Nav */
-.v2-nav { display: flex; flex-direction: column; gap: 2px; }
+.v2-nav { display: flex; flex-direction: column; gap: 1px; }
 .v2-nav-item {
   display: flex; align-items: center; gap: 9px;
-  width: 100%; padding: 8px 10px; border-radius: 8px;
-  font-size: 12px; font-weight: 500; color: rgba(240,242,245,0.40);
-  background: none; border: 1px solid transparent;
-  cursor: pointer; text-align: left; letter-spacing: -0.01em;
-  transition: all 0.15s cubic-bezier(0.16,1,0.3,1);
+  width: 100%; padding: 8px 10px; border-radius: 4px;
+  font-size: 12px; font-weight: 500; color: rgba(255,255,255,0.35);
+  background: none; border: none; cursor: pointer; text-align: left;
   font-family: 'DM Sans', sans-serif;
 }
-.v2-nav-item:hover { color: #f0f2f5; background: rgba(240,242,245,0.05); }
-.v2-nav-item--active {
-  color: #f0f2f5; background: rgba(196,255,70,0.06);
-  border-color: rgba(196,255,70,0.15);
-}
-.v2-nav-icon {
-  color: rgba(240,242,245,0.28); flex-shrink: 0; width: 16px;
-  display: flex; align-items: center; justify-content: center;
-  transition: color 0.15s;
-}
+.v2-nav-item:hover { color: #ffffff; background: rgba(255,255,255,0.05); }
+.v2-nav-item--active { color: #ffffff; background: rgba(255,255,255,0.06); }
+.v2-nav-icon { color: rgba(255,255,255,0.25); flex-shrink: 0; width: 16px; display: flex; align-items: center; justify-content: center; }
 .v2-nav-item--active .v2-nav-icon,
-.v2-nav-item:hover .v2-nav-icon { color: #c4ff46; }
+.v2-nav-item:hover .v2-nav-icon { color: #d4ff00; }
 
-/* Ring */
 .v2-ring-block {
   display: flex; flex-direction: column; align-items: center; gap: 8px;
-  padding: 16px 12px 20px;
-  border-bottom: 1px solid rgba(240,242,245,0.05);
+  padding: 16px 14px 20px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
 }
 .v2-ring-label {
   font-size: 9px; font-family: 'DM Mono', monospace;
-  color: rgba(240,242,245,0.28); text-align: center;
+  color: rgba(255,255,255,0.25); text-align: center;
   letter-spacing: 0.10em; text-transform: uppercase;
 }
 
-/* Meta */
-.v2-meta-list { display: flex; flex-direction: column; gap: 10px; padding: 0 4px; }
+.v2-meta-list { display: flex; flex-direction: column; gap: 10px; }
 .v2-meta-row  { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.v2-meta-key  { font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(240,242,245,0.30); }
-.v2-meta-val  { font-size: 11px; font-family: 'DM Mono', monospace; color: rgba(240,242,245,0.75); font-weight: 600; }
+.v2-meta-key  { font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.25); }
+.v2-meta-val  { font-size: 11px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.70); font-weight: 600; }
 
-/* State tags */
 .v2-state-tag {
   font-size: 9px; font-family: 'DM Mono', monospace; font-weight: 700;
   text-transform: uppercase; letter-spacing: 0.07em;
-  border-radius: 5px; padding: 2px 8px; border: 1px solid;
+  border-radius: 3px; padding: 2px 7px; border: 1px solid;
 }
-.v2-state-tag--active   { color: #c4ff46; background: rgba(196,255,70,0.08);  border-color: rgba(196,255,70,0.22); }
-.v2-state-tag--complete { color: #4ade80; background: rgba(74,222,128,0.08);  border-color: rgba(74,222,128,0.22); }
+.v2-state-tag--active   { color: #d4ff00; border-color: rgba(212,255,0,0.30); }
+.v2-state-tag--complete { color: #4ade80; border-color: rgba(74,222,128,0.30); }
 
-/* Milestone mini */
-.v2-ms-mini-list { display: flex; flex-direction: column; gap: 8px; padding: 0 4px; }
+.v2-ms-mini-list { display: flex; flex-direction: column; gap: 8px; }
 .v2-ms-mini { display: flex; align-items: center; gap: 9px; }
 .v2-ms-mini-dot {
-  width: 20px; height: 20px; border-radius: 5px; flex-shrink: 0;
+  width: 18px; height: 18px; border-radius: 3px; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
   font-size: 9px; font-family: 'DM Mono', monospace; font-weight: 700;
 }
 .v2-ms-mini-body { flex: 1; min-width: 0; }
 .v2-ms-mini-title {
-  font-size: 10px; color: rgba(240,242,245,0.60); font-weight: 500;
+  font-size: 10px; color: rgba(255,255,255,0.50); font-weight: 500;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 5px;
 }
-.v2-ms-mini-track { height: 2px; background: rgba(240,242,245,0.06); border-radius: 1px; overflow: hidden; }
-.v2-ms-mini-fill  { height: 100%; border-radius: 1px; transition: width 0.6s cubic-bezier(0.16,1,0.3,1); }
-.v2-ms-mini-pct   { font-size: 9px; font-family: 'DM Mono', monospace; color: rgba(240,242,245,0.28); flex-shrink: 0; }
+.v2-ms-mini-track { height: 1px; background: rgba(255,255,255,0.06); overflow: hidden; }
+.v2-ms-mini-fill  { height: 100%; }
+.v2-ms-mini-pct   { font-size: 9px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.22); flex-shrink: 0; }
 
-/* Sidebar footer */
-.v2-sidebar-footer { padding: 0 12px; margin-top: auto; padding-top: 16px; }
+.v2-sidebar-footer { padding: 0 14px; margin-top: auto; padding-top: 16px; }
 .v2-btn-ghost-sm {
   display: flex; align-items: center; justify-content: center; gap: 6px;
-  width: 100%; padding: 8px 12px; border-radius: 8px;
-  background: none; border: 1px solid rgba(240,242,245,0.10);
-  color: rgba(240,242,245,0.40); font-size: 11px;
-  font-family: 'DM Sans', sans-serif; font-weight: 500;
-  cursor: pointer; transition: all 0.15s;
+  width: 100%; padding: 8px 12px; border-radius: 4px;
+  background: none; border: 1px solid rgba(255,255,255,0.10);
+  color: rgba(255,255,255,0.35); font-size: 11px;
+  font-family: 'DM Sans', sans-serif; font-weight: 500; cursor: pointer;
 }
-.v2-btn-ghost-sm:hover { background: rgba(240,242,245,0.05); color: rgba(240,242,245,0.80); border-color: rgba(240,242,245,0.18); }
+.v2-btn-ghost-sm:hover { border-color: rgba(255,255,255,0.20); color: rgba(255,255,255,0.70); }
 
 /* ── Main ── */
 .v2-main {
   flex: 1; min-width: 0;
-  padding: 36px 44px 72px;
-  display: flex; flex-direction: column; gap: 24px;
+  padding: 40px 48px 72px;
+  display: flex; flex-direction: column; gap: 28px;
 }
 
-/* Page header */
 .v2-page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.v2-page-header-left {}
 .v2-eyebrow {
-  font-size: 10px; font-family: 'DM Mono', monospace; color: #c4ff46;
-  text-transform: uppercase; letter-spacing: 0.12em; margin-bottom: 6px;
+  font-size: 10px; font-family: 'DM Mono', monospace; color: #d4ff00;
+  text-transform: uppercase; letter-spacing: 0.12em; margin-bottom: 8px;
 }
 .v2-page-title {
-  font-family: 'Syne', sans-serif; font-size: clamp(24px, 2.5vw, 32px);
-  font-weight: 800; color: #f0f2f5; letter-spacing: -0.04em; line-height: 1.05; margin: 0;
+  font-family: 'Syne', sans-serif; font-size: clamp(26px, 3vw, 36px);
+  font-weight: 800; color: #ffffff; letter-spacing: -0.04em; line-height: 1; margin: 0;
 }
 .v2-agreement-id-chip {
   display: flex; align-items: center; gap: 8px;
-  background: rgba(240,242,245,0.04); border: 1px solid rgba(240,242,245,0.10);
-  border-radius: 10px; padding: 8px 14px; margin-top: 4px;
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 4px; padding: 8px 14px; margin-top: 4px;
 }
 .v2-agreement-id-label {
-  font-size: 9px; font-family: 'DM Mono', monospace; color: rgba(240,242,245,0.28);
+  font-size: 9px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.22);
   text-transform: uppercase; letter-spacing: 0.12em;
 }
-.v2-agreement-id-val { font-size: 12px; font-family: 'DM Mono', monospace; color: rgba(240,242,245,0.65); font-weight: 600; }
+.v2-agreement-id-val { font-size: 12px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.60); font-weight: 600; }
 
 /* Stats grid */
 .v2-stats-grid {
-  display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px;
-  background: rgba(240,242,245,0.06); border-radius: 14px;
-  border: 1px solid rgba(240,242,245,0.06); overflow: hidden;
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  border: 1px solid rgba(255,255,255,0.07);
 }
 @media (max-width: 780px) { .v2-stats-grid { grid-template-columns: 1fr 1fr; } }
 
 .v2-stat-card {
-  background: #111214; padding: 20px 18px 16px;
-  display: flex; flex-direction: column; gap: 0;
-  transition: background 0.15s;
+  padding: 24px 20px 20px;
+  display: flex; flex-direction: column;
+  border-right: 1px solid rgba(255,255,255,0.07);
 }
-.v2-stat-card:hover { background: #141618; }
-.v2-stat-icon-wrap {
-  width: 32px; height: 32px; border-radius: 9px; margin-bottom: 14px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 14px;
-}
+.v2-stat-card:last-child { border-right: none; }
+.v2-stat-icon { font-size: 18px; margin-bottom: 20px; opacity: 0.6; }
 .v2-stat-label {
-  font-size: 9px; font-family: 'DM Mono', monospace; color: rgba(240,242,245,0.30);
-  text-transform: uppercase; letter-spacing: 0.11em; margin-bottom: 7px;
+  font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.30);
+  text-transform: uppercase; letter-spacing: 0.10em; margin-bottom: 8px;
 }
 .v2-stat-value {
-  font-family: 'Syne', sans-serif; font-size: 15px; font-weight: 700;
-  color: #f0f2f5; letter-spacing: -0.03em; line-height: 1.2;
-  word-break: break-all; margin-bottom: 4px;
+  font-family: 'Syne', sans-serif; font-size: 16px; font-weight: 700;
+  color: #ffffff; letter-spacing: -0.03em; line-height: 1.2;
+  word-break: break-all; margin-bottom: 5px;
 }
-.v2-stat-sub { font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(240,242,245,0.28); }
+.v2-stat-sub { font-size: 11px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.25); }
 
 /* Progress card */
 .v2-progress-card {
-  background: #111214; border: 1px solid rgba(240,242,245,0.08);
-  border-radius: 14px; padding: 18px 20px; display: flex; flex-direction: column; gap: 14px;
+  border: 1px solid rgba(255,255,255,0.07);
+  padding: 20px; display: flex; flex-direction: column; gap: 14px;
 }
 .v2-progress-top  { display: flex; align-items: center; justify-content: space-between; }
 .v2-progress-title {
-  display: flex; align-items: center; gap: 7px;
-  font-size: 11px; font-family: 'DM Mono', monospace; color: rgba(240,242,245,0.40);
+  font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.30);
   text-transform: uppercase; letter-spacing: 0.09em;
 }
 .v2-progress-stat { display: flex; align-items: baseline; gap: 8px; }
-.v2-progress-pct  { font-size: 18px; font-family: 'DM Mono', monospace; font-weight: 800; letter-spacing: -0.03em; }
-.v2-progress-frac { font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(240,242,245,0.28); }
-.v2-progress-track {
-  height: 5px; background: rgba(240,242,245,0.06); border-radius: 3px; overflow: hidden;
-}
-.v2-progress-fill { height: 100%; border-radius: 3px; transition: width 1s cubic-bezier(0.16,1,0.3,1); }
-.v2-progress-segments {
-  display: flex; gap: 3px; align-items: center;
-}
-.v2-progress-seg { display: flex; justify-content: center; }
-.v2-progress-seg-dot {
-  width: 5px; height: 5px; border-radius: 50%;
-  transition: background 0.4s;
-}
+.v2-progress-pct  { font-size: 20px; font-family: 'DM Mono', monospace; font-weight: 800; letter-spacing: -0.03em; }
+.v2-progress-frac { font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.25); }
+.v2-progress-track { height: 3px; background: rgba(255,255,255,0.06); overflow: hidden; }
+.v2-progress-fill  { height: 100%; transition: width 0.8s ease; }
 
 /* Section head */
 .v2-section-head {
@@ -1698,222 +1532,175 @@ const css = `
   margin-bottom: 12px;
 }
 .v2-section-title {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(240,242,245,0.35);
+  font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.30);
   text-transform: uppercase; letter-spacing: 0.10em;
 }
-.v2-section-count { font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(240,242,245,0.25); }
+.v2-section-count { font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.20); }
 
 /* Milestone list */
-.v2-ms-list {
-  display: flex; flex-direction: column; gap: 2px;
-}
+.v2-ms-list { display: flex; flex-direction: column; border: 1px solid rgba(255,255,255,0.07); }
 
 .v2-ms-block {
-  background: #111214; border: 1px solid rgba(240,242,245,0.07);
-  border-radius: 14px; overflow: hidden;
-  transition: border-color 0.15s;
+  background: #0d0d0d;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
 }
-.v2-ms-block:hover { border-color: rgba(240,242,245,0.12); }
-.v2-ms-block--done     { opacity: 0.65; }
-.v2-ms-block--disputed { border-color: rgba(251,191,36,0.22) !important; background: rgba(251,191,36,0.02); }
-.v2-ms-block--pending  { border-color: rgba(196,255,70,0.15) !important; }
+.v2-ms-block:last-child { border-bottom: none; }
+.v2-ms-block--done     { opacity: 0.55; }
+.v2-ms-block--disputed { background: rgba(212,255,0,0.02); border-left: 2px solid rgba(212,255,0,0.35); }
+.v2-ms-block--pending  { background: rgba(255,255,255,0.01); }
 
-.v2-ms-row {
-  display: flex; align-items: flex-start; gap: 0;
-  padding: 0; position: relative;
-}
+.v2-ms-row { display: flex; align-items: flex-start; }
 
-.v2-ms-accent-bar {
-  width: 3px; flex-shrink: 0; align-self: stretch; min-height: 60px;
-  border-radius: 0; transition: background 0.3s;
-}
+.v2-ms-accent-bar { width: 2px; flex-shrink: 0; align-self: stretch; min-height: 60px; }
 
 .v2-ms-num {
-  width: 30px; height: 30px; border-radius: 9px; flex-shrink: 0;
-  border: 1px solid; margin: 18px 14px 18px 16px;
+  width: 28px; height: 28px; border-radius: 4px; flex-shrink: 0;
+  border: 1px solid; margin: 20px 16px 20px 18px;
   display: flex; align-items: center; justify-content: center;
   font-size: 10px; font-family: 'DM Mono', monospace; font-weight: 800;
-  transition: all 0.3s cubic-bezier(0.16,1,0.3,1);
 }
 
-.v2-ms-info { flex: 1; min-width: 0; padding: 18px 0 18px 2px; }
-.v2-ms-title-row { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; flex-wrap: wrap; }
-.v2-ms-title { font-size: 14px; font-weight: 600; color: #f0f2f5; letter-spacing: -0.02em; font-family: 'DM Sans', sans-serif; }
-.v2-ms-condition { font-size: 12px; color: rgba(240,242,245,0.45); line-height: 1.65; max-width: 440px; margin-bottom: 8px; }
+.v2-ms-info { flex: 1; min-width: 0; padding: 20px 0 20px 2px; }
+.v2-ms-title-row { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; flex-wrap: wrap; }
+.v2-ms-title { font-size: 14px; font-weight: 600; color: #ffffff; letter-spacing: -0.02em; font-family: 'DM Sans', sans-serif; }
+.v2-ms-condition { font-size: 12px; color: rgba(255,255,255,0.38); line-height: 1.65; max-width: 440px; margin-bottom: 8px; }
 .v2-ms-meta-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .v2-ms-deadline {
   display: flex; align-items: center; gap: 4px;
-  font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(240,242,245,0.28);
+  font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.22);
 }
 .v2-tx-link {
   display: flex; align-items: center; gap: 4px;
-  font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(240,242,245,0.35);
-  text-decoration: none; transition: color 0.15s;
+  font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.28);
+  text-decoration: none;
 }
-.v2-tx-link:hover { color: #c4ff46; }
+.v2-tx-link:hover { color: #d4ff00; }
 .v2-tx-error { font-size: 10px; font-family: 'DM Mono', monospace; color: #f87171; }
 
 .v2-ms-right {
   display: flex; flex-direction: column; align-items: flex-end;
-  gap: 10px; flex-shrink: 0; padding: 18px 20px 18px 20px;
+  gap: 10px; flex-shrink: 0; padding: 20px 22px;
 }
 .v2-ms-amount-block { text-align: right; }
-.v2-ms-amount {
-  font-family: 'DM Mono', monospace; font-size: 14px; font-weight: 600;
-  letter-spacing: -0.02em; line-height: 1; transition: color 0.3s;
-}
-.v2-ms-amount-sub { font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(240,242,245,0.28); margin-top: 4px; }
+.v2-ms-amount { font-family: 'DM Mono', monospace; font-size: 14px; font-weight: 600; letter-spacing: -0.02em; line-height: 1; }
+.v2-ms-amount-sub { font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.22); margin-top: 4px; }
 .v2-ms-actions { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; justify-content: flex-end; }
 
-/* Status pill */
 .v2-status-pill {
   display: inline-flex; align-items: center; gap: 5px;
   font-size: 9px; font-family: 'DM Mono', monospace; font-weight: 700;
-  letter-spacing: 0.05em; border: 1px solid; border-radius: 6px;
-  padding: 3px 9px; white-space: nowrap;
+  letter-spacing: 0.05em; border: 1px solid; border-radius: 3px;
+  padding: 3px 8px; white-space: nowrap;
 }
-.v2-spinner-dot {
-  width: 5px; height: 5px; border-radius: 50%;
-  background: currentColor; animation: v2PulseDot 1.4s ease infinite;
-}
+.v2-spinner-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; animation: v2Pulse 1.4s ease infinite; }
 
-/* Chips */
 .v2-chip {
   display: inline-flex; align-items: center; gap: 5px;
   font-size: 9px; font-family: 'DM Mono', monospace; font-weight: 700;
-  letter-spacing: 0.04em; border-radius: 5px; padding: 2px 8px; border: 1px solid;
+  letter-spacing: 0.04em; border-radius: 3px; padding: 2px 7px; border: 1px solid;
 }
-.v2-chip--dispute { color: #fbbf24; background: rgba(251,191,36,0.10); border-color: rgba(251,191,36,0.28); animation: v2DisputePulse 2.4s ease infinite; }
-.v2-chip--pending { color: #c4ff46; background: rgba(196,255,70,0.08); border-color: rgba(196,255,70,0.22); }
-.v2-chip--failed  { color: #f87171; background: rgba(248,113,113,0.10); border-color: rgba(248,113,113,0.28); }
+.v2-chip--dispute { color: #d4ff00; border-color: rgba(212,255,0,0.30); }
+.v2-chip--pending { color: rgba(255,255,255,0.55); border-color: rgba(255,255,255,0.12); }
+.v2-chip--failed  { color: #f87171; border-color: rgba(248,113,113,0.28); }
 
-/* Action buttons */
 .v2-btn {
   display: inline-flex; align-items: center; gap: 5px;
-  padding: 5px 12px; border-radius: 7px;
+  padding: 5px 12px; border-radius: 4px;
   font-size: 11px; font-family: 'DM Mono', monospace; font-weight: 600;
   cursor: pointer; border: 1px solid;
-  transition: all 0.15s cubic-bezier(0.16,1,0.3,1);
   white-space: nowrap; letter-spacing: 0.02em;
 }
 .v2-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 
 .v2-btn--release {
-  color: #c4ff46; background: rgba(196,255,70,0.08); border-color: rgba(196,255,70,0.25);
+  color: #0a0a0a; background: #d4ff00; border-color: #d4ff00;
 }
-.v2-btn--release:hover:not(:disabled) {
-  background: rgba(196,255,70,0.15); border-color: rgba(196,255,70,0.50);
-  box-shadow: 0 2px 14px rgba(196,255,70,0.18);
-  transform: translateY(-1px);
-}
+.v2-btn--release:hover:not(:disabled) { background: #e0ff33; border-color: #e0ff33; }
 
 .v2-btn--dispute {
-  color: #fbbf24; background: rgba(251,191,36,0.08); border-color: rgba(251,191,36,0.25);
+  color: rgba(255,255,255,0.70); background: transparent; border-color: rgba(255,255,255,0.15);
 }
-.v2-btn--dispute:hover:not(:disabled) {
-  background: rgba(251,191,36,0.14); border-color: rgba(251,191,36,0.45);
-  transform: translateY(-1px);
-}
+.v2-btn--dispute:hover:not(:disabled) { border-color: rgba(255,255,255,0.30); color: #ffffff; }
 
 .v2-btn--evidence {
-  color: #fbbf24; background: rgba(251,191,36,0.08); border-color: rgba(251,191,36,0.25);
+  color: #d4ff00; background: transparent; border-color: rgba(212,255,0,0.25);
 }
-.v2-btn--evidence:hover { background: rgba(251,191,36,0.14); border-color: rgba(251,191,36,0.45); }
+.v2-btn--evidence:hover { border-color: rgba(212,255,0,0.50); }
 
 .v2-btn--retry {
-  color: #f87171; background: rgba(248,113,113,0.08); border-color: rgba(248,113,113,0.25);
+  color: #f87171; background: transparent; border-color: rgba(248,113,113,0.25);
 }
-.v2-btn--retry:hover { background: rgba(248,113,113,0.14); }
+.v2-btn--retry:hover { border-color: rgba(248,113,113,0.45); }
 
 .v2-btn--timeout {
-  color: rgba(240,242,245,0.35); background: rgba(240,242,245,0.04); border-color: rgba(240,242,245,0.10);
+  color: rgba(255,255,255,0.28); background: transparent; border-color: rgba(255,255,255,0.10);
   padding: 5px 9px;
 }
-.v2-btn--timeout:hover { color: rgba(240,242,245,0.70); background: rgba(240,242,245,0.08); }
+.v2-btn--timeout:hover { color: rgba(255,255,255,0.60); border-color: rgba(255,255,255,0.20); }
 
 .v2-filed-badge {
   display: inline-flex; align-items: center; gap: 5px;
   font-size: 10px; font-family: 'DM Mono', monospace; font-weight: 700;
-  color: #4ade80; background: rgba(74,222,128,0.10);
-  border: 1px solid rgba(74,222,128,0.25); border-radius: 6px; padding: 3px 10px;
+  color: #4ade80; border: 1px solid rgba(74,222,128,0.25); border-radius: 3px; padding: 3px 9px;
 }
 
-/* Panels */
 .v2-dispute-panel {
-  border-top: 1px solid rgba(251,191,36,0.12);
-  padding: 20px 22px; background: rgba(251,191,36,0.01);
+  border-top: 1px solid rgba(212,255,0,0.10);
+  padding: 20px 22px;
 }
 
-/* Spinners */
 .v2-spinner-xs {
   display: inline-block; width: 7px; height: 7px; border-radius: 50%;
-  border: 1.5px solid rgba(196,255,70,0.25); border-top-color: #c4ff46;
+  border: 1.5px solid rgba(255,255,255,0.15); border-top-color: rgba(255,255,255,0.6);
   animation: v2Spin 0.65s linear infinite; flex-shrink: 0;
 }
 
-/* Info strip */
 .v2-info-strip {
-  display: flex; gap: 10px; align-items: flex-start;
-  background: #111214; border: 1px solid rgba(240,242,245,0.07);
-  border-radius: 10px; padding: 13px 16px;
+  border: 1px solid rgba(255,255,255,0.07);
+  padding: 14px 16px;
 }
-.v2-info-icon {
-  color: rgba(240,242,245,0.25); flex-shrink: 0; margin-top: 1px;
-}
-.v2-info-text {
-  font-size: 12px; color: rgba(240,242,245,0.35); line-height: 1.7; margin: 0;
-}
-.v2-info-text strong { color: rgba(240,242,245,0.65); font-weight: 500; }
+.v2-info-text { font-size: 12px; color: rgba(255,255,255,0.28); line-height: 1.7; margin: 0; }
+.v2-info-text strong { color: rgba(255,255,255,0.55); font-weight: 500; }
 
-/* Complete banner */
 .v2-complete-banner {
   text-align: center;
-  background: linear-gradient(150deg, rgba(74,222,128,0.05) 0%, #111214 55%);
-  border: 1px solid rgba(74,222,128,0.18); border-radius: 16px; padding: 48px 28px;
+  border: 1px solid rgba(74,222,128,0.20);
+  padding: 48px 28px;
 }
 .v2-complete-icon {
-  width: 56px; height: 56px; border-radius: 50%;
-  background: rgba(74,222,128,0.10); border: 1px solid rgba(74,222,128,0.25);
+  width: 52px; height: 52px; border-radius: 50%;
+  background: #d4ff00;
   display: flex; align-items: center; justify-content: center;
   margin: 0 auto 18px;
 }
 .v2-complete-title {
   font-family: 'Syne', sans-serif; font-size: 22px; font-weight: 800;
-  letter-spacing: -0.04em; color: #f0f2f5; margin-bottom: 8px;
+  letter-spacing: -0.04em; color: #ffffff; margin-bottom: 8px;
 }
-.v2-complete-body { font-size: 13px; color: rgba(240,242,245,0.40); margin-bottom: 28px; }
+.v2-complete-body { font-size: 13px; color: rgba(255,255,255,0.35); margin-bottom: 28px; }
 .v2-complete-actions { display: flex; gap: 10px; justify-content: center; }
 
 .v2-btn-primary {
   display: inline-flex; align-items: center; justify-content: center; gap: 7px;
-  padding: 11px 24px; border-radius: 9px; cursor: pointer; border: none;
-  background: #c4ff46; color: #0b0c0d;
+  padding: 11px 24px; border-radius: 4px; cursor: pointer; border: none;
+  background: #d4ff00; color: #0a0a0a;
   font-family: 'Syne', sans-serif; font-size: 13px; font-weight: 700;
-  letter-spacing: -0.01em; transition: all 0.15s;
+  letter-spacing: -0.01em;
 }
-.v2-btn-primary:hover { background: #d4ff60; box-shadow: 0 4px 20px rgba(196,255,70,0.28); transform: translateY(-1px); }
+.v2-btn-primary:hover { background: #e0ff33; }
 
 .v2-btn-secondary {
   display: inline-flex; align-items: center; justify-content: center; gap: 7px;
-  padding: 11px 24px; border-radius: 9px; cursor: pointer;
-  background: transparent; color: rgba(240,242,245,0.60);
-  border: 1px solid rgba(240,242,245,0.12);
+  padding: 11px 24px; border-radius: 4px; cursor: pointer;
+  background: transparent; color: rgba(255,255,255,0.55);
+  border: 1px solid rgba(255,255,255,0.12);
   font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 500;
-  letter-spacing: -0.01em; transition: all 0.15s;
 }
-.v2-btn-secondary:hover { background: rgba(240,242,245,0.06); color: #f0f2f5; border-color: rgba(240,242,245,0.22); }
+.v2-btn-secondary:hover { border-color: rgba(255,255,255,0.22); color: #ffffff; }
 
 /* Animations */
-.v2-fade-up { animation: v2FadeUp 0.45s cubic-bezier(0.16,1,0.3,1) both; }
-.v2-d1 { animation-delay: 0.06s; }
-.v2-d2 { animation-delay: 0.12s; }
-.v2-d3 { animation-delay: 0.18s; }
-.v2-d4 { animation-delay: 0.24s; }
-@keyframes v2FadeUp   { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
-@keyframes v2Spin     { to { transform: rotate(360deg); } }
-@keyframes v2PulseDot { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.45; transform: scale(0.80); } }
-@keyframes v2DisputePulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+@keyframes v2Spin  { to { transform: rotate(360deg); } }
+@keyframes v2Pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 
 /* Responsive */
 @media (max-width: 900px) {
@@ -1926,180 +1713,131 @@ const css = `
   .v2-ms-right   { flex-direction: row; align-items: center; padding-top: 0; }
 }
 
-/* ══════════════════════════════════════════════
-   DISPUTE MODAL (confirmation flow)
-   ══════════════════════════════════════════════ */
-
+/* ── Modal ── */
 .v2-modal-backdrop {
   position: fixed; inset: 0; z-index: 999;
-  background: rgba(0,0,0,0.72);
-  backdrop-filter: blur(6px) saturate(1.2);
+  background: rgba(0,0,0,0.80);
   display: flex; align-items: center; justify-content: center;
   padding: 24px;
-  animation: v2ModalBgIn 0.2s ease both;
 }
-@keyframes v2ModalBgIn { from { opacity: 0; } to { opacity: 1; } }
 
 .v2-modal {
   width: 100%; max-width: 560px;
-  background: #111214;
-  border: 1px solid rgba(251,191,36,0.18);
-  border-radius: 18px; overflow: hidden;
-  box-shadow: 0 24px 80px rgba(0,0,0,0.65), 0 0 0 1px rgba(251,191,36,0.08);
-  animation: v2ModalIn 0.28s cubic-bezier(0.16,1,0.3,1) both;
+  background: #111111;
+  border: 1px solid rgba(255,255,255,0.10);
+  overflow: hidden;
   display: flex; flex-direction: column;
   max-height: 90vh;
 }
-/* Evidence modal is slightly wider */
-.v2-modal--evidence {
-  max-width: 640px;
-  border-color: rgba(251,191,36,0.22);
-}
-@keyframes v2ModalIn {
-  from { opacity: 0; transform: translateY(20px) scale(0.97); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
-}
+.v2-modal--evidence { max-width: 640px; }
 
-/* Header */
 .v2-modal-header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 18px 20px 16px;
-  border-bottom: 1px solid rgba(240,242,245,0.07);
+  padding: 18px 20px;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
   flex-shrink: 0;
 }
 .v2-modal-header-left { display: flex; align-items: center; gap: 12px; }
 .v2-modal-icon {
-  width: 36px; height: 36px; border-radius: 10px; flex-shrink: 0;
-  background: rgba(251,191,36,0.10); border: 1px solid rgba(251,191,36,0.22);
+  width: 34px; height: 34px; border-radius: 4px; flex-shrink: 0;
+  background: rgba(212,255,0,0.08); border: 1px solid rgba(212,255,0,0.20);
   display: flex; align-items: center; justify-content: center;
 }
 .v2-modal-eyebrow {
-  font-size: 10px; font-family: 'DM Mono', monospace; font-weight: 600;
-  color: #fbbf24; text-transform: uppercase; letter-spacing: 0.10em;
-  margin-bottom: 3px;
+  font-size: 9px; font-family: 'DM Mono', monospace; font-weight: 700;
+  color: #d4ff00; text-transform: uppercase; letter-spacing: 0.10em; margin-bottom: 3px;
 }
-.v2-modal-title {
-  font-family: 'Syne', sans-serif; font-size: 16px; font-weight: 800;
-  color: #f0f2f5; letter-spacing: -0.03em;
-}
-.v2-modal-subtitle {
-  font-size: 11px; font-family: 'DM Mono', monospace; color: rgba(240,242,245,0.35);
-  margin-top: 2px;
-}
+.v2-modal-title    { font-family: 'Syne', sans-serif; font-size: 15px; font-weight: 800; color: #ffffff; letter-spacing: -0.03em; }
+.v2-modal-subtitle { font-size: 11px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.28); margin-top: 2px; }
 .v2-modal-close {
-  width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0;
-  background: rgba(240,242,245,0.05); border: 1px solid rgba(240,242,245,0.10);
+  width: 28px; height: 28px; border-radius: 4px; flex-shrink: 0;
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.10);
   display: flex; align-items: center; justify-content: center;
-  color: rgba(240,242,245,0.40); cursor: pointer;
-  transition: all 0.15s;
+  color: rgba(255,255,255,0.35); cursor: pointer;
 }
-.v2-modal-close:hover { background: rgba(240,242,245,0.10); color: #f0f2f5; border-color: rgba(240,242,245,0.22); }
+.v2-modal-close:hover { background: rgba(255,255,255,0.10); color: #ffffff; }
 
-/* Step indicator */
 .v2-modal-steps {
-  display: flex; align-items: center; gap: 0;
+  display: flex; align-items: center;
   padding: 14px 20px;
-  border-bottom: 1px solid rgba(240,242,245,0.06);
-  background: rgba(240,242,245,0.01);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
   flex-shrink: 0;
 }
 .v2-modal-step {
   display: flex; align-items: center; gap: 8px;
-  font-size: 11px; font-family: 'DM Mono', monospace; color: rgba(240,242,245,0.30);
-  transition: color 0.2s;
+  font-size: 11px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.25);
 }
-.v2-modal-step--active { color: rgba(240,242,245,0.80); }
+.v2-modal-step--active { color: rgba(255,255,255,0.75); }
 .v2-modal-step--done   { color: #4ade80; }
-.v2-modal-step--idle   { color: rgba(240,242,245,0.22); }
+.v2-modal-step--idle   { color: rgba(255,255,255,0.18); }
 .v2-modal-step-dot {
-  width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
-  border: 1.5px solid currentColor;
+  width: 20px; height: 20px; border-radius: 50%; flex-shrink: 0;
+  border: 1px solid currentColor;
   display: flex; align-items: center; justify-content: center;
-  font-size: 9px; font-weight: 700; transition: all 0.2s;
+  font-size: 9px; font-weight: 700;
 }
-.v2-modal-step--active .v2-modal-step-dot { background: rgba(196,255,70,0.10); border-color: #c4ff46; color: #c4ff46; }
-.v2-modal-step--done   .v2-modal-step-dot { background: rgba(74,222,128,0.12); border-color: #4ade80; color: #4ade80; }
-.v2-modal-step-line {
-  flex: 1; height: 1px; margin: 0 12px;
-  transition: background 0.4s;
-}
+.v2-modal-step--active .v2-modal-step-dot { border-color: #d4ff00; color: #d4ff00; }
+.v2-modal-step--done   .v2-modal-step-dot { border-color: #4ade80; color: #4ade80; }
+.v2-modal-step-line { flex: 1; height: 1px; margin: 0 12px; }
 
-/* Body */
 .v2-modal-body {
-  padding: 20px;
-  display: flex; flex-direction: column; gap: 16px;
-  flex-shrink: 0;
+  padding: 20px; display: flex; flex-direction: column; gap: 16px; flex-shrink: 0;
 }
-.v2-modal-body--scroll {
-  overflow-y: auto; flex: 1;
-  padding: 0;
-}
+.v2-modal-body--scroll { overflow-y: auto; flex: 1; padding: 0; }
 
-/* Warn banner */
 .v2-modal-warn-banner {
   display: flex; align-items: flex-start; gap: 10px;
-  background: rgba(251,191,36,0.06); border: 1px solid rgba(251,191,36,0.18);
-  border-radius: 10px; padding: 13px 15px;
+  border: 1px solid rgba(212,255,0,0.18);
+  padding: 13px 14px;
 }
 .v2-modal-warn-banner svg { flex-shrink: 0; margin-top: 1px; }
-.v2-modal-warn-banner p {
-  font-size: 12px; color: rgba(240,242,245,0.55); line-height: 1.65; margin: 0;
-}
+.v2-modal-warn-banner p { font-size: 12px; color: rgba(255,255,255,0.45); line-height: 1.65; margin: 0; }
 
-/* Detail grid */
 .v2-modal-detail-grid {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 1px;
-  background: rgba(240,242,245,0.07);
-  border: 1px solid rgba(240,242,245,0.07);
-  border-radius: 11px; overflow: hidden;
+  display: grid; grid-template-columns: 1fr 1fr;
+  border: 1px solid rgba(255,255,255,0.07);
 }
 .v2-modal-detail {
-  background: #161719; padding: 13px 14px;
+  background: #161616; padding: 13px 14px;
   display: flex; flex-direction: column; gap: 5px;
+  border-right: 1px solid rgba(255,255,255,0.06);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
 }
-.v2-modal-detail--full { grid-column: 1 / -1; }
+.v2-modal-detail:nth-child(even) { border-right: none; }
+.v2-modal-detail--full { grid-column: 1 / -1; border-right: none; }
 .v2-modal-detail-label {
-  font-size: 9px; font-family: 'DM Mono', monospace; color: rgba(240,242,245,0.28);
+  font-size: 9px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.25);
   text-transform: uppercase; letter-spacing: 0.11em;
 }
 .v2-modal-detail-val {
-  font-size: 13px; font-family: 'DM Mono', monospace; color: rgba(240,242,245,0.80);
+  font-size: 13px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.75);
   font-weight: 600; letter-spacing: -0.01em;
 }
 
-/* Footer */
 .v2-modal-footer {
-  display: flex; align-items: center; justify-content: flex-end; gap: 10px;
-  padding-top: 4px;
+  display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding-top: 4px;
 }
 
-/* Dispute confirm button */
 .v2-btn-dispute-confirm {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-  padding: 11px 22px; border-radius: 9px; cursor: pointer;
-  background: rgba(251,191,36,0.12); color: #fbbf24;
-  border: 1px solid rgba(251,191,36,0.35);
+  padding: 10px 20px; border-radius: 4px; cursor: pointer;
+  background: #d4ff00; color: #0a0a0a;
+  border: none;
   font-family: 'Syne', sans-serif; font-size: 13px; font-weight: 700;
-  letter-spacing: -0.01em; transition: all 0.15s;
 }
-.v2-btn-dispute-confirm:hover {
-  background: rgba(251,191,36,0.20); border-color: rgba(251,191,36,0.55);
-  box-shadow: 0 4px 20px rgba(251,191,36,0.18);
-  transform: translateY(-1px);
-}
+.v2-btn-dispute-confirm:hover { background: #e0ff33; }
 
-/* TX notice in step 2 */
 .v2-modal-tx-notice {
   display: flex; align-items: center; gap: 10px;
-  background: rgba(196,255,70,0.05); border: 1px solid rgba(196,255,70,0.14);
-  border-radius: 9px; padding: 11px 14px; margin: 16px 20px 0;
-  font-size: 12px; color: rgba(240,242,245,0.50); font-family: 'DM Mono', monospace;
+  border: 1px solid rgba(212,255,0,0.14);
+  padding: 11px 14px; margin: 16px 20px 0;
+  font-size: 12px; color: rgba(255,255,255,0.40); font-family: 'DM Mono', monospace;
   flex-shrink: 0;
 }
 .v2-spinner-sm {
   display: inline-block; flex-shrink: 0;
   width: 12px; height: 12px; border-radius: 50%;
-  border: 1.5px solid rgba(196,255,70,0.15); border-top-color: #c4ff46;
+  border: 1.5px solid rgba(255,255,255,0.12); border-top-color: rgba(255,255,255,0.60);
   animation: v2Spin 0.65s linear infinite;
 }
 `;

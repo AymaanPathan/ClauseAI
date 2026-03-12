@@ -1,6 +1,6 @@
 "use client";
 // ============================================================
-// components/screens/Shared/DisputeDetailView.tsx — compact redesign
+// components/screens/Shared/DisputeDetailView.tsx — 2026 redesign
 // Collapsed by default → expand to see full details
 // ============================================================
 
@@ -72,11 +72,12 @@ export interface DisputeDetailViewProps {
   initialData?: DisputeData;
 }
 
+// ── Helpers aligned with globals-2026.css semantic palette ───
 function verdictColor(v?: string) {
-  if (v === "release_to_receiver") return "#4ade80";
-  if (v === "refund_to_payer") return "#f87171";
-  if (v === "split") return "#fbbf24";
-  return "rgba(240,242,245,0.4)";
+  if (v === "release_to_receiver") return "#4dcd8a"; // --green
+  if (v === "refund_to_payer") return "#e06c6c"; // --red
+  if (v === "split") return "#d4a23a"; // --amber
+  return "rgba(238,240,243,0.35)";
 }
 function verdictLabel(v?: string) {
   if (v === "release_to_receiver") return "Release to Receiver";
@@ -114,8 +115,8 @@ function truncateAddr(addr: string) {
 const TIMELINE_STEPS = [
   { key: "awaiting_statements", label: "Opened" },
   { key: "party_a_submitted", label: "Payer Filed" },
-  { key: "party_b_submitted", label: "Receiver Filed" },
-  { key: "ai_pending", label: "AI Analyzing" },
+  { key: "party_b_submitted", label: "Recv Filed" },
+  { key: "ai_pending", label: "AI Analysis" },
   { key: "ai_complete", label: "AI Ready" },
   { key: "resolved", label: "Resolved" },
 ];
@@ -228,15 +229,12 @@ export default function DisputeDetailView({
     <>
       <style>{css}</style>
       <div className={`ddv2-wrap${flash ? " ddv2-flash" : ""}`}>
-        {/* ── Compact strip (always visible) ── */}
+        {/* ── Compact strip ── */}
         <button className="ddv2-strip" onClick={() => setExpanded((e) => !e)}>
           <div className="ddv2-strip-left">
-            {/* Status dot */}
             <div
               className={`ddv2-dot${isResolved ? " ddv2-dot--resolved" : " ddv2-dot--active"}`}
             />
-
-            {/* Progress pips */}
             <div className="ddv2-pips">
               {TIMELINE_STEPS.map((_, i) => (
                 <div
@@ -245,22 +243,16 @@ export default function DisputeDetailView({
                 />
               ))}
             </div>
-
-            {/* Step label */}
             <span className="ddv2-step-label">
               {TIMELINE_STEPS[currentStep]?.label}
             </span>
-
             <span className="ddv2-sep">·</span>
-
-            {/* Summary text */}
             <span className="ddv2-summary">
               {statusSummary(dispute.status, viewerRole)}
             </span>
           </div>
 
           <div className="ddv2-strip-right">
-            {/* Party submission indicators */}
             <div className="ddv2-parties">
               <span
                 className={`ddv2-party-dot${dispute.party_a_submitted_at ? " ddv2-party-dot--filed" : ""}`}
@@ -275,7 +267,6 @@ export default function DisputeDetailView({
                 B
               </span>
             </div>
-
             {lastUpdate && (
               <span className="ddv2-ts">
                 {lastUpdate.toLocaleTimeString([], {
@@ -284,12 +275,10 @@ export default function DisputeDetailView({
                 })}
               </span>
             )}
-
-            {/* Chevron */}
             <svg
               className={`ddv2-chevron${expanded ? " ddv2-chevron--open" : ""}`}
-              width="12"
-              height="12"
+              width="11"
+              height="11"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -316,8 +305,8 @@ export default function DisputeDetailView({
                         className="ddv2-tl-line"
                         style={{
                           background: done
-                            ? "#4ade80"
-                            : "rgba(240,242,245,0.08)",
+                            ? "#4dcd8a"
+                            : "rgba(238,240,243,0.07)",
                         }}
                       />
                     )}
@@ -348,7 +337,11 @@ export default function DisputeDetailView({
                 },
                 {
                   k: "Milestone Value",
-                  v: `${dispute.contract_terms.milestone_percentage}% · ${((dispute.contract_terms.total_amount * dispute.contract_terms.milestone_percentage) / 100).toFixed(6)} sBTC`,
+                  v: `${dispute.contract_terms.milestone_percentage}% · ${(
+                    (dispute.contract_terms.total_amount *
+                      dispute.contract_terms.milestone_percentage) /
+                    100
+                  ).toFixed(6)} sBTC`,
                 },
                 { k: "Opened", v: formatDate(dispute.opened_at) },
               ].map(({ k, v }) => (
@@ -381,7 +374,7 @@ export default function DisputeDetailView({
               />
             </div>
 
-            {/* Redaction notice */}
+            {/* Blind-submission notice */}
             {!bothSubmitted && viewerRole !== "arbitrator" && (
               <div className="ddv2-notice">
                 <svg
@@ -389,7 +382,7 @@ export default function DisputeDetailView({
                   height="11"
                   viewBox="0 0 24 24"
                   fill="none"
-                  stroke="#fbbf24"
+                  stroke="#d4a23a"
                   strokeWidth="2"
                 >
                   <circle cx="12" cy="12" r="10" />
@@ -398,45 +391,44 @@ export default function DisputeDetailView({
                 </svg>
                 <span>
                   <strong
-                    style={{ color: "rgba(240,242,245,0.65)", fontWeight: 600 }}
+                    style={{ color: "rgba(238,240,243,0.62)", fontWeight: 600 }}
                   >
                     Blind submission system
                   </strong>{" "}
                   — the other party's statement is hidden until both sides have
-                  filed. This prevents either party from reading the other's
-                  position and strategically adjusting their response.
+                  filed.
                   {viewerRole === "B" && !dispute.party_b_submitted_at && (
                     <>
                       {" "}
                       Use the{" "}
-                      <strong style={{ color: "#fbbf24" }}>
+                      <strong style={{ color: "#d4a23a" }}>
                         Evidence
                       </strong>{" "}
-                      button above to file your statement and unlock theirs.
+                      button above to file yours and unlock theirs.
                     </>
                   )}
                   {viewerRole === "A" && !dispute.party_a_submitted_at && (
                     <>
                       {" "}
                       Use the{" "}
-                      <strong style={{ color: "#fbbf24" }}>
+                      <strong style={{ color: "#d4a23a" }}>
                         Evidence
                       </strong>{" "}
-                      button above to file your statement and unlock theirs.
+                      button above to file yours and unlock theirs.
                     </>
                   )}
                 </span>
               </div>
             )}
 
-            {/* Arbitrator-only */}
+            {/* Arbitrator-only section */}
             {viewerRole === "arbitrator" && (
               <>
                 {dispute.status === "ai_pending" && (
                   <div className="ddv2-ai-pending">
                     <span className="ddv2-spinner-amber" />
                     <span>AI is analyzing both statements…</span>
-                    <span className="ddv2-muted">Usually 5–15 seconds</span>
+                    <span className="ddv2-muted">Usually 5–15 s</span>
                   </div>
                 )}
                 {dispute.ai_verdict && (
@@ -463,7 +455,7 @@ export default function DisputeDetailView({
               </>
             )}
 
-            {/* Party: awaiting */}
+            {/* Party: awaiting arbitrator */}
             {viewerRole !== "arbitrator" && bothSubmitted && !isResolved && (
               <div className="ddv2-awaiting">
                 <div className="ddv2-awaiting-title">
@@ -483,7 +475,7 @@ export default function DisputeDetailView({
               dispute.arbitrator_decision && (
                 <div
                   className="ddv2-resolved"
-                  style={{ borderColor: vc + "35", background: vc + "06" }}
+                  style={{ borderColor: vc + "30", background: vc + "05" }}
                 >
                   <div className="ddv2-resolved-title">⚖️ Dispute Resolved</div>
                   <div className="ddv2-resolved-verdict" style={{ color: vc }}>
@@ -528,22 +520,24 @@ function StatementCard({
   visible: boolean;
 }) {
   const isA = party === "A";
-  const accentColor = isA ? "#60a5fa" : "#4ade80";
+  // --blue (#5b9cf6) for payer, --green (#4dcd8a) for receiver
+  const accentColor = isA ? "#5b9cf6" : "#4dcd8a";
+
   return (
-    <div className="ddv2-stmt" style={{ borderColor: accentColor + "25" }}>
+    <div className="ddv2-stmt" style={{ borderColor: accentColor + "20" }}>
       <div
         className="ddv2-stmt-head"
         style={{
-          background: accentColor + "08",
-          borderColor: accentColor + "18",
+          background: accentColor + "06",
+          borderColor: accentColor + "14",
         }}
       >
         <div className="ddv2-stmt-party">
           <div
             className="ddv2-stmt-avatar"
             style={{
-              background: accentColor + "18",
-              borderColor: accentColor + "35",
+              background: accentColor + "14",
+              borderColor: accentColor + "28",
               color: accentColor,
             }}
           >
@@ -557,6 +551,7 @@ function StatementCard({
           <span className="ddv2-badge-pending">Pending</span>
         )}
       </div>
+
       <div className="ddv2-stmt-body">
         {!submitted ? (
           <p className="ddv2-muted ddv2-italic">
@@ -570,8 +565,7 @@ function StatementCard({
               <div className="ddv2-locked-title">Blind Submission</div>
               <div className="ddv2-locked-body">
                 You'll see this statement after you file yours. Neither party
-                can read the other's position first — this prevents strategic
-                tailoring.
+                can read the other's position first.
               </div>
             </div>
           </div>
@@ -597,7 +591,7 @@ function StatementCard({
                     rel="noopener noreferrer"
                     className="ddv2-evidence-item"
                     style={{
-                      borderColor: accentColor + "25",
+                      borderColor: accentColor + "20",
                       color: accentColor,
                     }}
                   >
@@ -605,16 +599,13 @@ function StatementCard({
                     <span className="ddv2-evidence-name">
                       [{party}-{i + 1}] {url.split("/").pop() ?? url}
                     </span>
-                    <span style={{ opacity: 0.5 }}>↗</span>
+                    <span style={{ opacity: 0.45 }}>↗</span>
                   </a>
                 ))}
               </div>
             )}
             {submittedAt && (
-              <div
-                className="ddv2-muted"
-                style={{ fontSize: 10, marginTop: 8 }}
-              >
+              <div className="ddv2-muted" style={{ fontSize: 9, marginTop: 8 }}>
                 Submitted {formatDate(submittedAt)}
               </div>
             )}
@@ -628,22 +619,23 @@ function StatementCard({
 function AIVerdictCard({ verdict }: { verdict: AIVerdict }) {
   const vc = verdictColor(verdict.verdict);
   return (
-    <div className="ddv2-verdict" style={{ borderColor: vc + "30" }}>
+    <div className="ddv2-verdict" style={{ borderColor: vc + "28" }}>
       <div
         className="ddv2-verdict-head"
-        style={{ background: vc + "08", borderColor: vc + "20" }}
+        style={{ background: vc + "06", borderColor: vc + "18" }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span>🤖</span>
           <span className="ddv2-verdict-title">AI Arbitration Verdict</span>
         </div>
-        <span className="ddv2-muted" style={{ fontSize: 10 }}>
+        <span className="ddv2-muted" style={{ fontSize: 9 }}>
           {verdict.model ?? "AI"}
           {verdict.latency_ms
             ? ` · ${(verdict.latency_ms / 1000).toFixed(1)}s`
             : ""}
         </span>
       </div>
+
       <div className="ddv2-verdict-body">
         <div
           style={{
@@ -655,18 +647,18 @@ function AIVerdictCard({ verdict }: { verdict: AIVerdict }) {
         >
           <span
             className="ddv2-verdict-pill"
-            style={{ color: vc, background: vc + "12", borderColor: vc + "35" }}
+            style={{ color: vc, background: vc + "0f", borderColor: vc + "28" }}
           >
             {verdictLabel(verdict.verdict)}
           </span>
           {verdict.split_percentage !== undefined && (
-            <span className="ddv2-muted" style={{ fontSize: 11 }}>
+            <span className="ddv2-muted" style={{ fontSize: 10 }}>
               Receiver {verdict.split_percentage}% / Payer{" "}
               {100 - verdict.split_percentage}%
             </span>
           )}
           <div className="ddv2-conf-row">
-            <span className="ddv2-muted" style={{ fontSize: 10 }}>
+            <span className="ddv2-muted" style={{ fontSize: 9 }}>
               Confidence
             </span>
             <div className="ddv2-conf-bar">
@@ -676,22 +668,24 @@ function AIVerdictCard({ verdict }: { verdict: AIVerdict }) {
                   width: `${verdict.confidence}%`,
                   background:
                     verdict.confidence >= 70
-                      ? "#4ade80"
+                      ? "#4dcd8a"
                       : verdict.confidence >= 40
-                        ? "#fbbf24"
-                        : "#f87171",
+                        ? "#d4a23a"
+                        : "#e06c6c",
                 }}
               />
             </div>
-            <span className="ddv2-muted" style={{ fontSize: 10 }}>
+            <span className="ddv2-muted" style={{ fontSize: 9 }}>
               {verdict.confidence}%
             </span>
           </div>
         </div>
+
         <div>
           <div className="ddv2-section-label">Reasoning</div>
           <p className="ddv2-reasoning">{verdict.reasoning}</p>
         </div>
+
         {verdict.key_factors.length > 0 && (
           <div>
             <div className="ddv2-section-label">Key Factors</div>
@@ -699,16 +693,17 @@ function AIVerdictCard({ verdict }: { verdict: AIVerdict }) {
               <div
                 key={i}
                 className="ddv2-factor"
-                style={{ color: "rgba(240,242,245,0.55)" }}
+                style={{ color: "rgba(238,240,243,0.52)" }}
               >
                 <span style={{ color: vc }}>→</span> {f}
               </div>
             ))}
           </div>
         )}
+
         {verdict.warnings.length > 0 && (
           <div>
-            <div className="ddv2-section-label" style={{ color: "#fbbf24" }}>
+            <div className="ddv2-section-label" style={{ color: "#d4a23a" }}>
               ⚠ Warnings
             </div>
             {verdict.warnings.map((w, i) => (
@@ -718,6 +713,7 @@ function AIVerdictCard({ verdict }: { verdict: AIVerdict }) {
             ))}
           </div>
         )}
+
         <span className="ddv2-muted" style={{ fontSize: 9 }}>
           Generated {formatDate(verdict.generated_at)}
         </span>
@@ -733,10 +729,10 @@ function ArbitratorDecisionCard({
 }) {
   const dc = verdictColor(decision.outcome);
   return (
-    <div className="ddv2-decision" style={{ borderColor: dc + "40" }}>
+    <div className="ddv2-decision" style={{ borderColor: dc + "35" }}>
       <div
         className="ddv2-verdict-head"
-        style={{ background: dc + "08", borderColor: dc + "22" }}
+        style={{ background: dc + "06", borderColor: dc + "18" }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span>⚖️</span>
@@ -750,21 +746,24 @@ function ArbitratorDecisionCard({
           {decision.followed_ai ? "Confirmed AI" : "Overrode AI"}
         </span>
       </div>
+
       <div className="ddv2-verdict-body">
         <span
           className="ddv2-verdict-pill"
-          style={{ color: dc, background: dc + "10", borderColor: dc + "35" }}
+          style={{ color: dc, background: dc + "0d", borderColor: dc + "28" }}
         >
           {verdictLabel(decision.outcome)}
         </span>
+
         {decision.override_reason && (
           <div>
-            <div className="ddv2-section-label" style={{ color: "#fbbf24" }}>
+            <div className="ddv2-section-label" style={{ color: "#d4a23a" }}>
               Override Reason
             </div>
             <div className="ddv2-override">{decision.override_reason}</div>
           </div>
         )}
+
         <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
           <div>
             <div className="ddv2-section-label">Arbitrator</div>
@@ -784,244 +783,321 @@ function ArbitratorDecisionCard({
   );
 }
 
-// ── Styles ────────────────────────────────────────────────────
-
+// ── Inline styles (loading state only — rest uses CSS class) ──
 const styles = {
   loadingRow: {
     display: "flex",
     alignItems: "center",
     gap: 8,
-    padding: "12px 16px",
+    padding: "11px 16px",
   } as React.CSSProperties,
   spinnerSm: {
     display: "inline-block",
-    width: 10,
-    height: 10,
+    width: 9,
+    height: 9,
     borderRadius: "50%",
-    border: "1.5px solid rgba(196,255,70,0.2)",
-    borderTopColor: "#c4ff46",
+    border: "1.5px solid rgba(200,255,62,0.15)",
+    borderTopColor: "#c8ff3e",
     animation: "ddv2Spin 0.65s linear infinite",
   } as React.CSSProperties,
   loadingText: {
-    fontSize: 11,
+    fontSize: 10,
     fontFamily: "var(--mono, monospace)",
-    color: "rgba(240,242,245,0.35)",
+    color: "rgba(238,240,243,0.30)",
   } as React.CSSProperties,
 };
 
+// ── Scoped CSS — tokens match globals-2026.css ────────────────
 const css = `
 /* ── Wrap ── */
 .ddv2-wrap {
-  border-top: 1px solid rgba(251,191,36,0.12);
-  transition: background 0.3s;
+  border-top: 1px solid rgba(212,162,58,0.10);
+  transition: background 0.28s;
 }
-.ddv2-flash { background: rgba(251,191,36,0.04); }
+.ddv2-flash { background: rgba(212,162,58,0.03); }
 
 /* ── Compact strip ── */
 .ddv2-strip {
   width: 100%; display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 18px; gap: 12px; cursor: pointer;
+  padding: 9px 18px; gap: 12px; cursor: pointer;
   background: none; border: none; text-align: left;
   transition: background 0.14s;
 }
-.ddv2-strip:hover { background: rgba(240,242,245,0.03); }
+.ddv2-strip:hover { background: rgba(238,240,243,0.02); }
 
-.ddv2-strip-left  { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }
-.ddv2-strip-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.ddv2-strip-left  { display: flex; align-items: center; gap: 9px; min-width: 0; flex: 1; }
+.ddv2-strip-right { display: flex; align-items: center; gap: 9px; flex-shrink: 0; }
 
 /* Status dot */
-.ddv2-dot {
-  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
-}
-.ddv2-dot--active   { background: #fbbf24; box-shadow: 0 0 6px rgba(251,191,36,0.5); animation: ddv2Pulse 2s ease infinite; }
-.ddv2-dot--resolved { background: #4ade80; }
+.ddv2-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.ddv2-dot--active   { background: #d4a23a; box-shadow: 0 0 5px rgba(212,162,58,0.40); animation: ddv2Pulse 2s ease infinite; }
+.ddv2-dot--resolved { background: #4dcd8a; }
 
 /* Progress pips */
 .ddv2-pips { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
-.ddv2-pip {
-  width: 14px; height: 2px; border-radius: 1px;
-  background: rgba(240,242,245,0.10); transition: background 0.3s;
+.ddv2-pip  {
+  width: 13px; height: 2px; border-radius: 1px;
+  background: rgba(238,240,243,0.08); transition: background 0.3s;
 }
-.ddv2-pip--done    { background: #4ade8060; }
-.ddv2-pip--current { background: #fbbf24; }
+.ddv2-pip--done    { background: rgba(77,205,138,0.45); }
+.ddv2-pip--current { background: #d4a23a; }
 
-/* Step + summary labels */
+/* Step + summary */
 .ddv2-step-label {
-  font-size: 10px; font-family: 'DM Mono', monospace; font-weight: 700;
-  color: #fbbf24; text-transform: uppercase; letter-spacing: 0.07em;
+  font-size: 9px; font-family: 'DM Mono', monospace; font-weight: 700;
+  color: #d4a23a; text-transform: uppercase; letter-spacing: 0.08em;
   flex-shrink: 0; white-space: nowrap;
 }
-.ddv2-sep { font-size: 10px; color: rgba(240,242,245,0.18); flex-shrink: 0; }
+.ddv2-sep     { font-size: 9px; color: rgba(238,240,243,0.15); flex-shrink: 0; }
 .ddv2-summary {
-  font-size: 11px; color: rgba(240,242,245,0.45);
+  font-size: 10px; color: rgba(238,240,243,0.40);
   font-family: 'DM Sans', sans-serif;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
-/* Party dots */
-.ddv2-parties { display: flex; align-items: center; gap: 4px; }
+/* Party indicators */
+.ddv2-parties { display: flex; align-items: center; gap: 3px; }
 .ddv2-party-dot {
-  width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0;
+  width: 17px; height: 17px; border-radius: 50%; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
-  font-size: 8px; font-family: 'DM Mono', monospace; font-weight: 700;
-  background: rgba(240,242,245,0.05); border: 1px solid rgba(240,242,245,0.12);
-  color: rgba(240,242,245,0.30); transition: all 0.2s;
+  font-size: 7px; font-family: 'DM Mono', monospace; font-weight: 700;
+  background: rgba(238,240,243,0.04); border: 1px solid rgba(238,240,243,0.10);
+  color: rgba(238,240,243,0.25); transition: all 0.2s;
 }
-.ddv2-party-dot--filed { background: rgba(74,222,128,0.12); border-color: rgba(74,222,128,0.30); color: #4ade80; }
+.ddv2-party-dot--filed {
+  background: rgba(77,205,138,0.10); border-color: rgba(77,205,138,0.26); color: #4dcd8a;
+}
 
-.ddv2-ts { font-size: 9px; font-family: 'DM Mono', monospace; color: rgba(240,242,245,0.25); flex-shrink: 0; }
+.ddv2-ts {
+  font-size: 8px; font-family: 'DM Mono', monospace;
+  color: rgba(238,240,243,0.22); flex-shrink: 0;
+}
 
 /* Chevron */
-.ddv2-chevron { color: rgba(240,242,245,0.28); flex-shrink: 0; transition: transform 0.22s cubic-bezier(0.16,1,0.3,1); }
+.ddv2-chevron {
+  color: rgba(238,240,243,0.24); flex-shrink: 0;
+  transition: transform 0.22s cubic-bezier(0.16,1,0.3,1);
+}
 .ddv2-chevron--open { transform: rotate(180deg); }
 
 /* ── Expanded panel ── */
 .ddv2-panel {
-  padding: 16px 18px 18px;
-  border-top: 1px solid rgba(240,242,245,0.06);
-  display: flex; flex-direction: column; gap: 14px;
-  animation: ddv2SlideDown 0.22s cubic-bezier(0.16,1,0.3,1) both;
+  padding: 14px 18px 16px;
+  border-top: 1px solid rgba(238,240,243,0.06);
+  display: flex; flex-direction: column; gap: 12px;
+  animation: ddv2SlideDown 0.20s cubic-bezier(0.16,1,0.3,1) both;
 }
 @keyframes ddv2SlideDown {
-  from { opacity: 0; transform: translateY(-6px); }
+  from { opacity: 0; transform: translateY(-5px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
 /* ── Timeline ── */
-.ddv2-timeline {
-  display: flex; align-items: flex-start; gap: 0;
-}
-.ddv2-tl-step {
-  display: flex; flex-direction: column; align-items: center; flex: 1; position: relative;
+.ddv2-timeline { display: flex; align-items: flex-start; }
+.ddv2-tl-step  {
+  display: flex; flex-direction: column; align-items: center;
+  flex: 1; position: relative;
 }
 .ddv2-tl-line {
-  position: absolute; top: 5px; left: 50%; right: -50%;
+  position: absolute; top: 4px; left: 50%; right: -50%;
   height: 1px; transition: background 0.3s; z-index: 0;
 }
 .ddv2-tl-dot {
-  width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; z-index: 1;
-  border: 1.5px solid rgba(240,242,245,0.18); background: #111214;
+  width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; z-index: 1;
+  border: 1.5px solid rgba(238,240,243,0.14); background: #0f1011;
   transition: all 0.25s;
 }
-.ddv2-tl-dot--done   { background: #4ade8060; border-color: #4ade80; }
-.ddv2-tl-dot--active { background: #fbbf24; border-color: #fbbf24; box-shadow: 0 0 8px rgba(251,191,36,0.4); animation: ddv2Pulse 2s ease infinite; }
+.ddv2-tl-dot--done   { background: rgba(77,205,138,0.5); border-color: #4dcd8a; }
+.ddv2-tl-dot--active {
+  background: #d4a23a; border-color: #d4a23a;
+  box-shadow: 0 0 7px rgba(212,162,58,0.35);
+  animation: ddv2Pulse 2s ease infinite;
+}
 .ddv2-tl-label {
-  font-size: 9px; font-family: 'DM Mono', monospace; color: rgba(240,242,245,0.28);
+  font-size: 8px; font-family: 'DM Mono', monospace; color: rgba(238,240,243,0.25);
   text-align: center; margin-top: 5px; line-height: 1.3;
 }
-.ddv2-tl-label--active { color: #fbbf24; font-weight: 700; }
+.ddv2-tl-label--active { color: #d4a23a; font-weight: 700; }
 
 /* ── Meta pills ── */
-.ddv2-meta-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.ddv2-meta-row  { display: flex; flex-wrap: wrap; gap: 5px; }
 .ddv2-meta-pill {
-  padding: 6px 10px; border-radius: 7px;
-  background: rgba(240,242,245,0.04); border: 1px solid rgba(240,242,245,0.08);
+  padding: 5px 9px; border-radius: 6px;
+  background: rgba(238,240,243,0.03); border: 1px solid rgba(238,240,243,0.07);
 }
-.ddv2-meta-pill-label { font-size: 8px; font-family: 'DM Mono', monospace; color: rgba(240,242,245,0.28); text-transform: uppercase; letter-spacing: 0.10em; margin-bottom: 3px; }
-.ddv2-meta-pill-val   { font-size: 11px; font-family: 'DM Mono', monospace; color: rgba(240,242,245,0.75); font-weight: 600; }
+.ddv2-meta-pill-label {
+  font-size: 7px; font-family: 'DM Mono', monospace;
+  color: rgba(238,240,243,0.25); text-transform: uppercase;
+  letter-spacing: 0.10em; margin-bottom: 2px;
+}
+.ddv2-meta-pill-val {
+  font-size: 10px; font-family: 'DM Mono', monospace;
+  color: rgba(238,240,243,0.70); font-weight: 600;
+}
 
-/* ── Statements ── */
-.ddv2-stmts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+/* ── Statement grid ── */
+.ddv2-stmts { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
 @media (max-width: 640px) { .ddv2-stmts { grid-template-columns: 1fr; } }
 
 .ddv2-stmt {
-  border-radius: 10px; border: 1px solid; overflow: hidden;
-  background: rgba(240,242,245,0.02);
+  border-radius: 9px; border: 1px solid; overflow: hidden;
+  background: rgba(238,240,243,0.015);
 }
 .ddv2-stmt-head {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 12px; border-bottom: 1px solid;
+  padding: 9px 11px; border-bottom: 1px solid;
 }
-.ddv2-stmt-party { display: flex; align-items: center; gap: 8px; }
+.ddv2-stmt-party  { display: flex; align-items: center; gap: 7px; }
 .ddv2-stmt-avatar {
-  width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0; border: 1px solid;
+  width: 20px; height: 20px; border-radius: 50%; flex-shrink: 0; border: 1px solid;
   display: flex; align-items: center; justify-content: center;
-  font-size: 9px; font-family: 'DM Mono', monospace; font-weight: 800;
+  font-size: 8px; font-family: 'DM Mono', monospace; font-weight: 800;
 }
-.ddv2-stmt-name { font-size: 12px; font-weight: 600; color: rgba(240,242,245,0.80); font-family: 'DM Sans', sans-serif; }
-.ddv2-stmt-body { padding: 12px; }
-.ddv2-stmt-text { font-size: 12px; color: rgba(240,242,245,0.65); line-height: 1.6; margin: 0 0 8px; }
+.ddv2-stmt-name {
+  font-size: 11px; font-weight: 600;
+  color: rgba(238,240,243,0.78); font-family: 'DM Sans', sans-serif;
+}
+.ddv2-stmt-body { padding: 11px; }
+.ddv2-stmt-text { font-size: 11px; color: rgba(238,240,243,0.60); line-height: 1.65; margin: 0 0 7px; }
 
-.ddv2-badge-submitted { font-size: 9px; font-family: 'DM Mono', monospace; font-weight: 700; color: #4ade80; background: rgba(74,222,128,0.10); border: 1px solid rgba(74,222,128,0.25); border-radius: 5px; padding: 2px 7px; }
-.ddv2-badge-pending   { font-size: 9px; font-family: 'DM Mono', monospace; font-weight: 700; color: rgba(240,242,245,0.35); background: rgba(240,242,245,0.05); border: 1px solid rgba(240,242,245,0.10); border-radius: 5px; padding: 2px 7px; }
-.ddv2-locked { display: flex; align-items: flex-start; gap: 10px; padding: 4px 0; }
-.ddv2-locked-icon  { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
-.ddv2-locked-title { font-size: 12px; font-weight: 600; color: rgba(240,242,245,0.55); margin-bottom: 3px; font-family: 'DM Sans', sans-serif; }
-.ddv2-locked-body  { font-size: 11px; color: rgba(240,242,245,0.35); line-height: 1.6; }
+/* Badges */
+.ddv2-badge-submitted {
+  font-size: 8px; font-family: 'DM Mono', monospace; font-weight: 700;
+  color: #4dcd8a; background: rgba(77,205,138,0.08);
+  border: 1px solid rgba(77,205,138,0.20); border-radius: 4px; padding: 2px 6px;
+}
+.ddv2-badge-pending {
+  font-size: 8px; font-family: 'DM Mono', monospace; font-weight: 700;
+  color: rgba(238,240,243,0.30); background: rgba(238,240,243,0.04);
+  border: 1px solid rgba(238,240,243,0.08); border-radius: 4px; padding: 2px 6px;
+}
+
+/* Locked state */
+.ddv2-locked       { display: flex; align-items: flex-start; gap: 9px; padding: 3px 0; }
+.ddv2-locked-icon  { font-size: 14px; flex-shrink: 0; margin-top: 1px; }
+.ddv2-locked-title { font-size: 11px; font-weight: 600; color: rgba(238,240,243,0.50); margin-bottom: 2px; font-family: 'DM Sans', sans-serif; }
+.ddv2-locked-body  { font-size: 10px; color: rgba(238,240,243,0.30); line-height: 1.6; }
 
 /* ── Evidence ── */
-.ddv2-evidence { margin-top: 8px; }
-.ddv2-evidence-label { font-size: 9px; font-family: 'DM Mono', monospace; color: rgba(240,242,245,0.30); text-transform: uppercase; letter-spacing: 0.10em; margin-bottom: 5px; }
+.ddv2-evidence       { margin-top: 7px; }
+.ddv2-evidence-label {
+  font-size: 8px; font-family: 'DM Mono', monospace;
+  color: rgba(238,240,243,0.26); text-transform: uppercase;
+  letter-spacing: 0.10em; margin-bottom: 4px;
+}
 .ddv2-evidence-item {
-  display: flex; align-items: center; gap: 6px;
-  padding: 6px 9px; border-radius: 6px; border: 1px solid;
-  background: rgba(240,242,245,0.03); text-decoration: none;
+  display: flex; align-items: center; gap: 5px;
+  padding: 5px 8px; border-radius: 5px; border: 1px solid;
+  background: rgba(238,240,243,0.02); text-decoration: none;
   margin-bottom: 3px; transition: background 0.14s;
 }
-.ddv2-evidence-item:hover { background: rgba(240,242,245,0.06); }
-.ddv2-evidence-name { font-size: 10px; font-family: 'DM Mono', monospace; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ddv2-evidence-item:hover { background: rgba(238,240,243,0.05); }
+.ddv2-evidence-name {
+  font-size: 9px; font-family: 'DM Mono', monospace;
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 /* ── Notice ── */
 .ddv2-notice {
-  display: flex; align-items: flex-start; gap: 8px;
-  background: rgba(251,191,36,0.04); border: 1px solid rgba(251,191,36,0.14);
-  border-radius: 8px; padding: 10px 12px;
-  font-size: 11px; color: rgba(240,242,245,0.45); line-height: 1.6;
+  display: flex; align-items: flex-start; gap: 7px;
+  background: rgba(212,162,58,0.03); border: 1px solid rgba(212,162,58,0.12);
+  border-radius: 7px; padding: 9px 11px;
+  font-size: 10px; color: rgba(238,240,243,0.40); line-height: 1.65;
 }
 .ddv2-notice svg { flex-shrink: 0; margin-top: 1px; }
 
-/* ── Awaiting / Resolved ── */
+/* ── Awaiting ── */
 .ddv2-awaiting {
-  background: rgba(240,242,245,0.03); border: 1px solid rgba(240,242,245,0.08);
-  border-radius: 10px; padding: 14px 16px;
+  background: rgba(212,162,58,0.02); border: 1px solid rgba(212,162,58,0.12);
+  border-radius: 9px; padding: 12px 14px;
 }
-.ddv2-awaiting-title { font-size: 13px; font-weight: 600; color: rgba(240,242,245,0.75); margin-bottom: 6px; font-family: 'DM Sans', sans-serif; }
-.ddv2-awaiting-body  { font-size: 11px; color: rgba(240,242,245,0.40); line-height: 1.65; }
-
-.ddv2-resolved { border-radius: 10px; border: 1px solid; padding: 14px 16px; }
-.ddv2-resolved-title   { font-size: 12px; font-weight: 700; color: rgba(240,242,245,0.60); margin-bottom: 6px; }
-.ddv2-resolved-verdict { font-size: 15px; font-weight: 700; font-family: 'DM Mono', monospace; margin-bottom: 6px; }
-
-/* ── AI Verdict / Decision cards ── */
-.ddv2-verdict, .ddv2-decision {
-  border-radius: 10px; border: 1px solid; overflow: hidden;
+.ddv2-awaiting-title {
+  font-size: 12px; font-weight: 600; color: rgba(238,240,243,0.72);
+  margin-bottom: 5px; font-family: 'DM Sans', sans-serif;
 }
+.ddv2-awaiting-body { font-size: 10px; color: rgba(238,240,243,0.38); line-height: 1.65; }
+
+/* ── Resolved ── */
+.ddv2-resolved { border-radius: 9px; border: 1px solid; padding: 12px 14px; }
+.ddv2-resolved-title   { font-size: 11px; font-weight: 700; color: rgba(238,240,243,0.55); margin-bottom: 5px; }
+.ddv2-resolved-verdict { font-size: 14px; font-weight: 700; font-family: 'DM Mono', monospace; margin-bottom: 5px; }
+
+/* ── Verdict / Decision cards ── */
+.ddv2-verdict, .ddv2-decision { border-radius: 9px; border: 1px solid; overflow: hidden; }
 .ddv2-verdict-head {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 14px; border-bottom: 1px solid;
+  padding: 9px 13px; border-bottom: 1px solid;
 }
-.ddv2-verdict-title { font-size: 12px; font-weight: 600; color: rgba(240,242,245,0.75); font-family: 'DM Sans', sans-serif; }
-.ddv2-verdict-body { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
-.ddv2-verdict-pill {
-  display: inline-flex; align-items: center; font-size: 11px;
-  font-family: 'DM Mono', monospace; font-weight: 700;
-  border: 1px solid; border-radius: 6px; padding: 3px 10px;
+.ddv2-verdict-title { font-size: 11px; font-weight: 600; color: rgba(238,240,243,0.72); font-family: 'DM Sans', sans-serif; }
+.ddv2-verdict-body  { padding: 13px; display: flex; flex-direction: column; gap: 11px; }
+.ddv2-verdict-pill  {
+  display: inline-flex; align-items: center;
+  font-size: 10px; font-family: 'DM Mono', monospace; font-weight: 700;
+  border: 1px solid; border-radius: 5px; padding: 3px 9px;
 }
-.ddv2-conf-row   { display: flex; align-items: center; gap: 7px; }
-.ddv2-conf-bar   { width: 60px; height: 3px; background: rgba(240,242,245,0.08); border-radius: 2px; overflow: hidden; }
-.ddv2-conf-fill  { height: 100%; border-radius: 2px; transition: width 0.8s cubic-bezier(0.16,1,0.3,1); }
-.ddv2-reasoning  { font-size: 12px; color: rgba(240,242,245,0.55); line-height: 1.65; margin: 4px 0 0; }
-.ddv2-section-label { font-size: 9px; font-family: 'DM Mono', monospace; color: rgba(240,242,245,0.30); text-transform: uppercase; letter-spacing: 0.10em; margin-bottom: 5px; }
-.ddv2-factor { font-size: 11px; line-height: 1.6; display: flex; gap: 6px; margin-bottom: 3px; }
-.ddv2-warning { color: rgba(251,191,36,0.65); }
-.ddv2-override { font-size: 12px; color: rgba(240,242,245,0.55); background: rgba(251,191,36,0.06); border: 1px solid rgba(251,191,36,0.16); border-radius: 7px; padding: 10px 12px; line-height: 1.6; }
 
-.ddv2-ai-pending { display: flex; align-items: center; gap: 10px; font-size: 12px; color: rgba(240,242,245,0.50); padding: 12px 14px; background: rgba(251,191,36,0.04); border: 1px solid rgba(251,191,36,0.12); border-radius: 8px; }
-.ddv2-badge-ai       { font-size: 9px; font-family: 'DM Mono', monospace; color: #4ade80; background: rgba(74,222,128,0.10); border: 1px solid rgba(74,222,128,0.25); border-radius: 5px; padding: 2px 7px; }
-.ddv2-badge-override { font-size: 9px; font-family: 'DM Mono', monospace; color: #fbbf24; background: rgba(251,191,36,0.10); border: 1px solid rgba(251,191,36,0.25); border-radius: 5px; padding: 2px 7px; }
+/* Confidence bar */
+.ddv2-conf-row  { display: flex; align-items: center; gap: 6px; }
+.ddv2-conf-bar  { width: 56px; height: 2px; background: rgba(238,240,243,0.07); border-radius: 1px; overflow: hidden; }
+.ddv2-conf-fill { height: 100%; border-radius: 1px; transition: width 0.8s cubic-bezier(0.16,1,0.3,1); }
 
-.ddv2-footer { font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(240,242,245,0.25); text-align: right; padding-top: 4px; }
+/* Text / labels */
+.ddv2-reasoning    { font-size: 11px; color: rgba(238,240,243,0.52); line-height: 1.68; margin: 3px 0 0; }
+.ddv2-section-label {
+  font-size: 8px; font-family: 'DM Mono', monospace;
+  color: rgba(238,240,243,0.26); text-transform: uppercase;
+  letter-spacing: 0.10em; margin-bottom: 4px;
+}
+.ddv2-factor  { font-size: 10px; line-height: 1.6; display: flex; gap: 5px; margin-bottom: 2px; }
+.ddv2-warning { color: rgba(212,162,58,0.70); }
+.ddv2-override {
+  font-size: 11px; color: rgba(238,240,243,0.52);
+  background: rgba(212,162,58,0.05); border: 1px solid rgba(212,162,58,0.14);
+  border-radius: 6px; padding: 9px 11px; line-height: 1.6;
+}
+
+/* AI pending */
+.ddv2-ai-pending {
+  display: flex; align-items: center; gap: 9px;
+  font-size: 11px; color: rgba(238,240,243,0.46);
+  padding: 11px 13px;
+  background: rgba(212,162,58,0.03); border: 1px solid rgba(212,162,58,0.10);
+  border-radius: 7px;
+}
+
+/* Badges — AI / override */
+.ddv2-badge-ai {
+  font-size: 8px; font-family: 'DM Mono', monospace;
+  color: #4dcd8a; background: rgba(77,205,138,0.08);
+  border: 1px solid rgba(77,205,138,0.20); border-radius: 4px; padding: 2px 6px;
+}
+.ddv2-badge-override {
+  font-size: 8px; font-family: 'DM Mono', monospace;
+  color: #d4a23a; background: rgba(212,162,58,0.08);
+  border: 1px solid rgba(212,162,58,0.20); border-radius: 4px; padding: 2px 6px;
+}
+
+/* Footer timestamp */
+.ddv2-footer {
+  font-size: 9px; font-family: 'DM Mono', monospace;
+  color: rgba(238,240,243,0.22); text-align: right; padding-top: 3px;
+}
 
 /* ── Utilities ── */
-.ddv2-muted   { color: rgba(240,242,245,0.35); font-family: 'DM Mono', monospace; }
-.ddv2-italic  { font-style: italic; }
-.ddv2-mono    { font-size: 11px; font-family: 'DM Mono', monospace; color: rgba(240,242,245,0.65); }
+.ddv2-muted  { color: rgba(238,240,243,0.30); font-family: 'DM Mono', monospace; }
+.ddv2-italic { font-style: italic; }
+.ddv2-mono   { font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(238,240,243,0.60); }
+
+/* Amber spinner */
 .ddv2-spinner-amber {
-  display: inline-block; width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0;
-  border: 1.5px solid rgba(251,191,36,0.2); border-top-color: #fbbf24;
+  display: inline-block; width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+  border: 1.5px solid rgba(212,162,58,0.18); border-top-color: #d4a23a;
   animation: ddv2Spin 0.65s linear infinite;
 }
 
 @keyframes ddv2Spin  { to { transform: rotate(360deg); } }
-@keyframes ddv2Pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(0.85); } }
+@keyframes ddv2Pulse {
+  0%, 100% { opacity: 1; transform: scale(1);    }
+  50%       { opacity: 0.5; transform: scale(0.84); }
+}
 `;

@@ -27,6 +27,7 @@ import {
 import { explorerTxUrl } from "@/lib/stacksConfig";
 import { getPartyBAgreementIds } from "@/store/slices/partyBSlice";
 import DisputeSubmitScreen from "@/components/screens/Shared/DisputeSubmitScreen";
+import DisputeDetailView from "../Shared/Disputedetailview";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -1157,9 +1158,33 @@ export default function PartyBDashboard() {
                           </div>
                         </div>
 
-                        {/* ── Dispute Submit Screen (inline below card) ── */}
+                        {/* ── Dispute Detail View — live dispute info for Party B ── */}
+                        {isDisputed && agreementId && (
+                          <div
+                            style={{
+                              border: "1px solid rgba(245,158,11,0.3)",
+                              borderTop: "none",
+                              borderRadius: showSubmitForm
+                                ? "0"
+                                : "0 0 var(--r) var(--r)",
+                              background: "rgba(245,158,11,0.02)",
+                              padding: "12px",
+                            }}
+                          >
+                            <DisputeDetailView
+                              agreementId={agreementId}
+                              milestoneIndex={ms.index}
+                              viewerRole="B"
+                            />
+                          </div>
+                        )}
+
+                        {/* ── Dispute Submit Screen (inline below detail view) ── */}
                         {isDisputed && showSubmitForm && agreementId && (
-                          <div className="dispute-form-wrap fade-in">
+                          <div
+                            className="dispute-form-wrap fade-in"
+                            style={{ borderRadius: "0 0 var(--r) var(--r)" }}
+                          >
                             <DisputeSubmitScreen
                               agreementId={agreementId}
                               milestoneIndex={ms.index}

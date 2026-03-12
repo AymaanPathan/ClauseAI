@@ -23,6 +23,7 @@ import { usdToSatsPreview } from "@/lib/contractCalls";
 import { formatSats, explorerTxUrl } from "@/lib/stacksConfig";
 import { getAllMilestones, MILESTONE_STATUS } from "@/lib/contractReads";
 import DisputeSubmitScreen from "@/components/screens/Shared/DisputeSubmitScreen";
+import DisputeDetailView from "../Shared/Disputedetailview";
 
 // ── Types ──────────────────────────────────────────────────────
 type MilestoneUIStatus =
@@ -588,6 +589,17 @@ export default function ScreenDashboard() {
                       </div>
                     )}
                   </div>
+
+                  {isDisputed && agreementId && (
+                    <div style={{ marginTop: 2 }}>
+                      {/* Live dispute status for Party A */}
+                      <DisputeDetailView
+                        agreementId={agreementId}
+                        milestoneIndex={ms.index}
+                        viewerRole="A"
+                      />
+                    </div>
+                  )}
 
                   {/* ── Dispute submit form (inline below card) ── */}
                   {showSubmitForm && agreementId && (

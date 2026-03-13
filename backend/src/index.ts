@@ -20,7 +20,7 @@ const app = express();
 const httpServer = createServer(app);
 const PORT = process.env.PORT || 8000;
 
-const io = new SocketIOServer(httpServer, {
+export const io = new SocketIOServer(httpServer, {
   cors: {
     origin: process.env.FRONTEND_URL || "*",
     methods: ["GET", "POST"],

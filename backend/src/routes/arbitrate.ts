@@ -7,9 +7,70 @@ import { isMongoAvailable } from "../lib/db";
 import { getGroqClient } from "../lib/groq-client";
 import { AI_CONFIG } from "../lib/ai-config";
 import cloudinary from "../lib/cloudinary";
+import { io } from "..";
+import Agreement from "../models/Agreement";
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
+
+
+// ── GET /api/arbitrate/by-arbitrator/:address ────────────────
+// Returns all disputes where contract_terms.arbitrator === address
+router.get("/by-arbitrator/:address", async (req, res) => {
+  try {
+    const { address } = req.params;
+    let disputes: IDispute[];
+    if (useDb) {
+      disputes = await Dispute.find({ "contract_terms.arbitrator": address });
+    } else {
+      disputes = DisputeMemStore.findByArbitrator(address);
+    }
+    res.json({ disputes });
+  } catch (err) {
+    res.status(500).json({ error: "Internal error", details: String(err) });
+  }
+});
+
+
+// ── GET /api/arbitrate/dashboard/:address ────────────────────
+router.get("/dashboard/:address", async (req: Request, res: Response) => {
+  const { address } = req.params;
+  if (!address)
+    return res.status(400).json({ error: "arbitrator address is required" });
+
+  try {
+    let disputes: IDispute[];
+    if (isMongoAvailable()) {
+      disputes = await Dispute.find({
+        "contract_terms.arbitrator": address,
+      }).sort({ updated_at: -1 });
+    } else {
+      disputes = DisputeMemStore.findByArbitrator(address);
+    }
+
+    const summary = {
+      total: disputes.length,
+      needs_decision: disputes.filter((d) => d.status === "ai_complete").length,
+      pending: disputes.filter((d) =>
+        [
+          "awaiting_statements",
+          "party_a_submitted",
+          "party_b_submitted",
+          "ai_pending",
+        ].includes(d.status),
+      ).length,
+      resolved: disputes.filter((d) =>
+        ["resolved", "auto_refunded"].includes(d.status),
+      ).length,
+    };
+
+    res.json({ success: true, summary, disputes });
+  } catch (err) {
+    console.error("[dashboard GET]", err);
+    res.status(500).json({ error: "Failed to fetch disputes" });
+  }
+});
+
 
 // ── Socket.io injection ───────────────────────────────────────
 let _io: SocketIOServer | null = null;
@@ -134,45 +195,6 @@ router.get("/:id/:index/events", async (req: Request, res: Response) => {
   });
 });
 
-// ── GET /api/arbitrate/dashboard/:address ────────────────────
-router.get("/dashboard/:address", async (req: Request, res: Response) => {
-  const { address } = req.params;
-  if (!address)
-    return res.status(400).json({ error: "arbitrator address is required" });
-
-  try {
-    let disputes: IDispute[];
-    if (isMongoAvailable()) {
-      disputes = await Dispute.find({
-        "contract_terms.arbitrator": address,
-      }).sort({ updated_at: -1 });
-    } else {
-      disputes = DisputeMemStore.findByArbitrator(address);
-    }
-
-    const summary = {
-      total: disputes.length,
-      needs_decision: disputes.filter((d) => d.status === "ai_complete").length,
-      pending: disputes.filter((d) =>
-        [
-          "awaiting_statements",
-          "party_a_submitted",
-          "party_b_submitted",
-          "ai_pending",
-        ].includes(d.status),
-      ).length,
-      resolved: disputes.filter((d) =>
-        ["resolved", "auto_refunded"].includes(d.status),
-      ).length,
-    };
-
-    res.json({ success: true, summary, disputes });
-  } catch (err) {
-    console.error("[dashboard GET]", err);
-    res.status(500).json({ error: "Failed to fetch disputes" });
-  }
-});
-
 // ── GET /api/arbitrate/:id/:index ────────────────────────────
 router.get("/:id/:index", async (req: Request, res: Response) => {
   const { id, index } = req.params;
@@ -199,11 +221,9 @@ router.post("/open", async (req: Request, res: Response) => {
   };
 
   if (!agreement_id || milestone_index === undefined || !contract_terms) {
-    return res
-      .status(400)
-      .json({
-        error: "agreement_id, milestone_index, and contract_terms are required",
-      });
+    return res.status(400).json({
+      error: "agreement_id, milestone_index, and contract_terms are required",
+    });
   }
   if (
     !contract_terms.payer ||
@@ -211,12 +231,10 @@ router.post("/open", async (req: Request, res: Response) => {
     !contract_terms.arbitrator ||
     !contract_terms.milestone_description
   ) {
-    return res
-      .status(400)
-      .json({
-        error:
-          "contract_terms must include: payer, receiver, arbitrator, milestone_description",
-      });
+    return res.status(400).json({
+      error:
+        "contract_terms must include: payer, receiver, arbitrator, milestone_description",
+    });
   }
 
   try {
@@ -295,12 +313,10 @@ router.post(
       res.json({ success: true, urls });
     } catch (err: any) {
       console.error("[Cloudinary upload]", err);
-      res
-        .status(500)
-        .json({
-          error: "Evidence upload failed",
-          details: err?.message || err,
-        });
+      res.status(500).json({
+        error: "Evidence upload failed",
+        details: err?.message || err,
+      });
     }
   },
 );
@@ -324,12 +340,10 @@ router.post("/submit", async (req: Request, res: Response) => {
   };
 
   if (!agreement_id || milestone_index === undefined || !party || !statement) {
-    return res
-      .status(400)
-      .json({
-        error:
-          "agreement_id, milestone_index, party (A|B), and statement are required",
-      });
+    return res.status(400).json({
+      error:
+        "agreement_id, milestone_index, party (A|B), and statement are required",
+    });
   }
   if (!["A", "B"].includes(party))
     return res.status(400).json({ error: 'party must be "A" or "B"' });
@@ -355,12 +369,10 @@ router.post("/submit", async (req: Request, res: Response) => {
         !contract_terms.arbitrator ||
         !contract_terms.milestone_description
       ) {
-        return res
-          .status(400)
-          .json({
-            error:
-              "contract_terms must include: payer, receiver, arbitrator, milestone_description",
-          });
+        return res.status(400).json({
+          error:
+            "contract_terms must include: payer, receiver, arbitrator, milestone_description",
+        });
       }
       dispute = await saveAndBroadcast(agreement_id, milestone_index, {
         agreement_id,
@@ -445,12 +457,10 @@ router.post("/verdict", async (req: Request, res: Response) => {
     const dispute = await findDispute(agreement_id, milestone_index);
     if (!dispute) return res.status(404).json({ error: "Dispute not found" });
     if (!dispute.party_a_submitted_at || !dispute.party_b_submitted_at) {
-      return res
-        .status(400)
-        .json({
-          error:
-            "Both parties must submit statements before AI arbitration can run",
-        });
+      return res.status(400).json({
+        error:
+          "Both parties must submit statements before AI arbitration can run",
+      });
     }
     if (dispute.ai_verdict)
       return res.json({ success: true, dispute, cached: true });
@@ -485,12 +495,10 @@ router.post("/resolve", async (req: Request, res: Response) => {
     !arbitrator_address ||
     !action
   ) {
-    return res
-      .status(400)
-      .json({
-        error:
-          "agreement_id, milestone_index, arbitrator_address, and action are required",
-      });
+    return res.status(400).json({
+      error:
+        "agreement_id, milestone_index, arbitrator_address, and action are required",
+    });
   }
 
   const validActions = ["confirm", "override_release", "override_refund"];
@@ -506,23 +514,18 @@ router.post("/resolve", async (req: Request, res: Response) => {
     if (dispute.status === "resolved")
       return res.status(409).json({ error: "Dispute already resolved" });
     if (!dispute.ai_verdict)
-      return res
-        .status(400)
-        .json({
-          error: "AI verdict must be generated before arbitrator can decide",
-        });
+      return res.status(400).json({
+        error: "AI verdict must be generated before arbitrator can decide",
+      });
 
     if (
       dispute.contract_terms.arbitrator &&
       dispute.contract_terms.arbitrator !== arbitrator_address &&
       dispute.contract_terms.arbitrator !== "TBD"
     ) {
-      return res
-        .status(403)
-        .json({
-          error:
-            "This wallet is not the designated arbitrator for this dispute",
-        });
+      return res.status(403).json({
+        error: "This wallet is not the designated arbitrator for this dispute",
+      });
     }
 
     let outcome: VerdictOutcome;
@@ -691,5 +694,153 @@ Determine: release_to_receiver | refund_to_payer | split`;
 
   return updated;
 }
+
+const useDb = !!process.env.MONGODB_URI;
+async function getDispute(
+  agreementId: string,
+  milestoneIndex: number,
+): Promise<IDispute | null> {
+  if (useDb) {
+    return Dispute.findOne({
+      agreement_id: agreementId,
+      milestone_index: milestoneIndex,
+    });
+  }
+  return DisputeMemStore.find(agreementId, milestoneIndex);
+}
+
+router.get("/:agreementId/:milestoneIndex", async (req, res) => {
+  try {
+    const { agreementId, milestoneIndex } = req.params;
+    const idx = parseInt(milestoneIndex, 10);
+    const dispute = await getDispute(agreementId, idx);
+    res.json({ dispute: dispute ?? null });
+  } catch (err) {
+    res.status(500).json({ error: "Internal error", details: String(err) });
+  }
+});
+
+
+router.post("/:agreementId/:milestoneIndex/decide", async (req, res) => {
+  try {
+    const { agreementId, milestoneIndex } = req.params;
+    const idx = parseInt(milestoneIndex, 10);
+
+    const { outcome, followed_ai, override_reason, arbitrator_address, tx_id } =
+      req.body as {
+        outcome: "release_to_receiver" | "refund_to_payer" | "split";
+        followed_ai: boolean;
+        override_reason?: string;
+        arbitrator_address: string;
+        tx_id: string;
+      };
+
+    if (!outcome || !arbitrator_address) {
+      return res
+        .status(400)
+        .json({ error: "outcome and arbitrator_address required" });
+    }
+
+    const dispute = await getDispute(agreementId, idx);
+    if (!dispute) {
+      return res.status(404).json({ error: "Dispute not found" });
+    }
+
+    // Verify the caller is actually the designated arbitrator
+    if (
+      dispute.contract_terms.arbitrator &&
+      dispute.contract_terms.arbitrator !== arbitrator_address
+    ) {
+      return res.status(403).json({ error: "Not the designated arbitrator" });
+    }
+
+    const now = new Date();
+    const arbitratorDecision = {
+      outcome,
+      followed_ai: !!followed_ai,
+      override_reason: override_reason || undefined,
+      decided_at: now.toISOString(),
+      arbitrator_address,
+    };
+
+    const updated = await saveDispute(agreementId, idx, {
+      status: "resolved",
+      arbitrator_decision: arbitratorDecision as any,
+      resolved_at: now,
+    });
+
+    // ── Update Agreement milestone status in MongoDB ──
+    // Reflect that the milestone is now complete or refunded
+    try {
+      const milestoneStatus =
+        outcome === "release_to_receiver" ? "complete" : "refunded";
+
+      await Agreement.updateOne(
+        { agreementId },
+        {
+          $set: {
+            [`milestones.${idx}.status`]: milestoneStatus,
+            [`milestones.${idx}.txId`]: tx_id,
+            [`milestones.${idx}.completedAt`]: now,
+          },
+        },
+      );
+
+      // Check if all milestones are resolved
+      const agreement = await Agreement.findOne({ agreementId });
+      if (agreement) {
+        const allResolved = agreement.milestones.every((m: any) =>
+          ["complete", "refunded"].includes(m.status),
+        );
+        if (allResolved) {
+          await Agreement.updateOne(
+            { agreementId },
+            { $set: { fundState: "released" } },
+          );
+        }
+      }
+    } catch (dbErr) {
+      // Agreement update failing is non-fatal — dispute record saved above
+      console.warn("[decide] Agreement update failed (non-fatal):", dbErr);
+    }
+
+    // ── Broadcast via Socket.io ──
+    // Both party dashboards listen for "dispute:updated" on their room
+    const room = `dispute:${agreementId}:${idx}`;
+    if (io) {
+      io.to(room).emit("dispute:updated", {
+        ...(updated.toObject?.() ?? updated),
+        arbitrator_decision: arbitratorDecision,
+        status: "resolved",
+      });
+
+      // Also emit milestone:updated to the agreement room so
+      // Party A / Party B main dashboards reflect the resolved status
+      io.to(`agreement:${agreementId}`).emit("milestone:updated", {
+        agreementId,
+        milestoneIndex: idx,
+        action: outcome === "release_to_receiver" ? "complete" : "timeout",
+        txId: tx_id,
+        status: outcome === "release_to_receiver" ? "complete" : "refunded",
+        txVerified: "success",
+        allComplete: false, // will be recalculated by client from DB
+        milestones: [],
+      });
+    }
+
+    return res.json({
+      success: true,
+      dispute: updated,
+      on_chain_tx: tx_id,
+      message:
+        "Decision recorded. sBTC transfer was already confirmed on-chain.",
+    });
+  } catch (err) {
+    console.error("[decide]", err);
+    return res
+      .status(500)
+      .json({ error: "Internal error", details: String(err) });
+  }
+});
 
 export default router;

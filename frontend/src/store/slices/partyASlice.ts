@@ -1019,7 +1019,15 @@ const partyASlice = createSlice({
         "parsed-terms",
         "set-arbitrator",
         "share-link",
+        "connect-wallet",
+        "approve-agreement",
+        "lock-funds",
+        "dashboard",
+        "complete",
+        "timeout",
+        "dispute",
       ];
+      if (screen && safeScreens.includes(screen)) state.screen = screen;
       if (screen && safeScreens.includes(screen)) state.screen = screen;
     });
   },

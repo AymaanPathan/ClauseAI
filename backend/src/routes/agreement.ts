@@ -4,7 +4,7 @@ import { getRedisClient, isRedisAvailable } from "../lib/redis";
 import Agreement from "../models/Agreement";
 
 const router = Router();
-const PRESENCE_TTL_SECONDS = 60 * 60 * 24; // 24h
+const PRESENCE_TTL_SECONDS = 60 * 60 * 24;
 
 // ── Socket.io injection ───────────────────────────────────────
 let _io: SocketIOServer | null = null;

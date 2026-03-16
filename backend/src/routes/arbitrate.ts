@@ -813,14 +813,21 @@ router.post("/:agreementId/:milestoneIndex/decide", async (req, res) => {
     // Both party dashboards listen for "dispute:updated" on their room
     const room = `dispute:${agreementId}:${idx}`;
     if (io) {
-      io.to(room).emit("dispute:updated", {
-        ...(updated.toObject?.() ?? updated),
-        arbitrator_decision: arbitratorDecision,
-        status: "resolved",
-      });
+      const freshAgreement = await Agreement.findOne({ agreementId });
 
-      // Also emit milestone:updated to the agreement room so
-      // Party A / Party B main dashboards reflect the resolved status
+      const disputePayload = {
+        agreement_id: agreementId,
+        milestone_index: idx,
+        status: "resolved",
+        arbitrator_decision: arbitratorDecision,
+      };
+
+      // Emit to dispute room (arbitrator detail view)
+      io.to(room).emit("dispute:updated", disputePayload);
+      // Emit to agreement room (both party dashboards)
+      io.to(`agreement:${agreementId}`).emit("dispute:updated", disputePayload);
+
+      // Send full milestone array so dashboards update without a REST call
       io.to(`agreement:${agreementId}`).emit("milestone:updated", {
         agreementId,
         milestoneIndex: idx,
@@ -828,8 +835,11 @@ router.post("/:agreementId/:milestoneIndex/decide", async (req, res) => {
         txId: tx_id,
         status: outcome === "release_to_receiver" ? "complete" : "refunded",
         txVerified: "success",
-        allComplete: false, // will be recalculated by client from DB
-        milestones: [],
+        allComplete:
+          freshAgreement?.milestones.every((m: any) =>
+            ["complete", "refunded"].includes(m.status),
+          ) ?? false,
+        milestones: freshAgreement?.milestones ?? [],
       });
     }
 

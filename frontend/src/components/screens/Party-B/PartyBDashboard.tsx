@@ -1,70 +1,29 @@
 "use client";
+// ============================================================
+// components/partyB/ScreenDashboard.tsx
+// Refactored to use useSyncedAgreement for real-time sync
+// ============================================================
+
 import { disputeMilestoneAsPartyBThunk } from "@/store/slices/partyBSlice";
 import { useDispatch } from "react-redux";
 import type { AppDispatch } from "@/store";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef } from "react";
 import { useSelector } from "react-redux";
 import { RootState } from "@/store";
-import {
-  getSocket,
-  joinAgreementRoom,
-  joinDisputeRoom,
-  leaveDisputeRoom,
-} from "@/lib/socket";
 import { explorerTxUrl } from "@/lib/stacksConfig";
 import { getPartyBAgreementIds } from "@/store/slices/partyBSlice";
 import DisputeSubmitScreen from "@/components/screens/Shared/DisputeSubmitScreen";
+import {
+  useSyncedAgreement,
+  type SyncedMilestone,
+} from "@/hook/useSyncedAgreement";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-type MsStatus =
-  | "locked"
-  | "pending"
-  | "complete"
-  | "disputed"
-  | "refunded"
-  | "failed";
+// ── Helpers ───────────────────────────────────────────────────
 
-interface DbMilestone {
-  index: number;
-  title: string;
-  percentage: number;
-  condition: string;
-  deadline?: string;
-  amountUsd: string;
-  amountSats: number;
-  status: MsStatus;
-  txId?: string;
-  txUrl?: string;
-  completedAt?: string;
-  disputedAt?: string;
-}
-
-interface ArbitratorDecision {
-  outcome: "release_to_receiver" | "refund_to_payer" | "split";
-  followed_ai: boolean;
-  override_reason?: string;
-  decided_at: string;
-  arbitrator_address: string;
-}
-
-// Per-milestone arbitrator decision cache
-type ArbDecisionMap = Record<number, ArbitratorDecision | null>;
-
-interface AgreementData {
-  agreementId: string;
-  milestones: DbMilestone[];
-  fundState: string;
-  totalAmountUsd: number;
-  totalAmountSats: number;
-  partyA: string | null;
-  partyB: string | null;
-  arbitrator: string | null;
-  amountLocked?: string | null;
-  terms?: Record<string, unknown>;
-  createdAt?: string;
-}
+type MsStatus = SyncedMilestone["status"];
 
 function statusColor(s: MsStatus) {
   if (s === "complete") return "var(--green)";
@@ -114,16 +73,15 @@ function fmtDate(iso?: string): string {
   });
 }
 
-const OPEN_DISPUTE_STATUSES = new Set([
-  "awaiting_statements",
-  "party_a_submitted",
-  "party_b_submitted",
-  "ai_pending",
-  "ai_complete",
-]);
-
 // ── Arbitrator Decision Banner ────────────────────────────────
-// Shown inline under a milestone when it was resolved by arbitration
+
+interface ArbitratorDecision {
+  outcome: "release_to_receiver" | "refund_to_payer" | "split";
+  followed_ai: boolean;
+  override_reason?: string;
+  decided_at: string;
+  arbitrator_address: string;
+}
 
 function ArbitratorDecisionBanner({
   decision,
@@ -156,7 +114,6 @@ function ArbitratorDecisionBanner({
         background: `color-mix(in srgb, ${outcomeColor} 5%, transparent)`,
       }}
     >
-      {/* Header */}
       <div
         style={{
           display: "flex",
@@ -193,7 +150,6 @@ function ArbitratorDecisionBanner({
             {outcomeLabel}
           </div>
         </div>
-        {/* "You" badge for the beneficiary */}
         {((viewerRole === "B" && isRelease) ||
           (viewerRole === "A" && !isRelease)) && (
           <span
@@ -214,8 +170,6 @@ function ArbitratorDecisionBanner({
           </span>
         )}
       </div>
-
-      {/* Body */}
       <div
         style={{
           padding: "10px 12px",
@@ -224,7 +178,6 @@ function ArbitratorDecisionBanner({
           gap: 8,
         }}
       >
-        {/* Personal message */}
         <p
           style={{
             fontSize: 12,
@@ -235,8 +188,6 @@ function ArbitratorDecisionBanner({
         >
           {personalMsg}
         </p>
-
-        {/* Arbitrator's note — always shown */}
         {decision.override_reason && (
           <div
             style={{
@@ -272,8 +223,6 @@ function ArbitratorDecisionBanner({
             </p>
           </div>
         )}
-
-        {/* Meta row */}
         <div
           style={{
             display: "flex",
@@ -326,179 +275,20 @@ function ArbitratorDecisionBanner({
   );
 }
 
-// ── Dispute Modal ─────────────────────────────────────────────
-
-interface DisputeModalProps {
-  ms: DbMilestone;
-  agreementId: string;
-  data: AgreementData;
-  walletAddress: string;
-  onClose: () => void;
-  onSubmitted: () => void;
-}
-
-function DisputeModal({
-  ms,
-  agreementId,
-  data,
-  walletAddress,
-  onClose,
-  onSubmitted,
-}: DisputeModalProps) {
-  const overlayRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.body.style.overflow = prev;
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [onClose]);
-
-  const contractTerms = {
-    payer: data.partyA ?? "",
-    receiver: data.partyB ?? walletAddress ?? "",
-    arbitrator: data.arbitrator ?? (data.terms?.arbitrator as string) ?? "TBD",
-    total_amount: data.totalAmountUsd ?? 0,
-    milestone_description: ms.condition || ms.title,
-    milestone_percentage: ms.percentage,
-    milestone_deadline: ms.deadline || undefined,
-    agreement_type: (data.terms?.agreement_type as string) ?? "freelance",
-  };
-
-  return (
-    <>
-      <style>{`
-        .pbd-overlay { position:fixed;inset:0;z-index:1000;background:rgba(5,5,7,0.82);backdrop-filter:blur(20px) saturate(1.4);display:flex;align-items:center;justify-content:center;padding:24px;animation:pbdFadeIn 0.18s ease both; }
-        @keyframes pbdFadeIn { from{opacity:0} to{opacity:1} }
-        .pbd-sheet { width:100%;max-width:640px;max-height:90vh;background:var(--bg-1);border:1px solid var(--border-hi);border-radius:20px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 48px 96px rgba(0,0,0,0.72),inset 0 0 0 1px rgba(255,255,255,0.04);animation:pbdSlideUp 0.28s cubic-bezier(0.16,1,0.3,1) both; }
-        @keyframes pbdSlideUp { from{opacity:0;transform:translateY(28px) scale(0.97)} to{opacity:1;transform:translateY(0) scale(1)} }
-        .pbd-header { display:flex;align-items:center;justify-content:space-between;padding:20px 24px;flex-shrink:0;background:var(--bg-2);border-bottom:1px solid var(--border); }
-        .pbd-close-btn { width:32px;height:32px;border-radius:8px;flex-shrink:0;background:var(--bg-3);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--text-4);font-family:var(--font); }
-        .pbd-body { flex:1;overflow-y:auto;padding:24px; }
-      `}</style>
-      <div
-        ref={overlayRef}
-        className="pbd-overlay"
-        onClick={(e) => {
-          if (e.target === overlayRef.current) onClose();
-        }}
-      >
-        <div className="pbd-sheet" role="dialog" aria-modal="true">
-          <div className="pbd-header">
-            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-              <div
-                style={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: 11,
-                  background: "rgba(212,162,58,0.10)",
-                  border: "1px solid rgba(212,162,58,0.26)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="var(--amber)"
-                  strokeWidth="1.8"
-                  strokeLinecap="round"
-                >
-                  <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-                  <line x1="12" y1="9" x2="12" y2="13" />
-                  <line x1="12" y1="17" x2="12.01" y2="17" />
-                </svg>
-              </div>
-              <div>
-                <div
-                  style={{
-                    fontSize: 10,
-                    fontFamily: "var(--mono)",
-                    fontWeight: 600,
-                    color: "var(--amber)",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.10em",
-                    marginBottom: 3,
-                  }}
-                >
-                  File Evidence · Dispute
-                </div>
-                <div
-                  style={{
-                    fontFamily: "var(--font-display)",
-                    fontSize: 16,
-                    fontWeight: 700,
-                    color: "var(--text-1)",
-                    letterSpacing: "-0.03em",
-                  }}
-                >
-                  {ms.title}
-                </div>
-              </div>
-            </div>
-            <button
-              className="pbd-close-btn"
-              onClick={onClose}
-              aria-label="Close"
-            >
-              <svg
-                width="12"
-                height="12"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.5"
-                strokeLinecap="round"
-              >
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </button>
-          </div>
-          <div className="pbd-body">
-            <DisputeSubmitScreen
-              agreementId={agreementId}
-              milestoneIndex={ms.index}
-              party="B"
-              milestoneDescription={ms.condition || ms.title}
-              contractTerms={contractTerms}
-              onSubmitted={() => {
-                onSubmitted();
-                onClose();
-              }}
-            />
-          </div>
-        </div>
-      </div>
-    </>
-  );
-}
-
 // ── History Card ──────────────────────────────────────────────
 
 function HistoryCard({ agreementId }: { agreementId: string }) {
-  const [data, setData] = useState<AgreementData | null>(null);
-  const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(false);
-
-  useEffect(() => {
-    fetch(`${API_BASE}/api/agreement/${agreementId}/milestones`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (d) setData(d);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
-  }, [agreementId]);
+  // HistoryCard uses its own small sync instance since it's not the active agreement
+  const {
+    milestones,
+    fundState,
+    amountLocked,
+    totalAmountUsd,
+    terms,
+    partyA,
+    loading,
+  } = useSyncedAgreement({ agreementId });
 
   if (loading)
     return (
@@ -507,7 +297,8 @@ function HistoryCard({ agreementId }: { agreementId: string }) {
         <span className="db-hist-id">#{agreementId}</span>
       </div>
     );
-  if (!data)
+
+  if (!milestones.length)
     return (
       <div className="db-hist-row" style={{ opacity: 0.4 }}>
         <span className="db-hist-id">#{agreementId}</span>
@@ -517,16 +308,16 @@ function HistoryCard({ agreementId }: { agreementId: string }) {
       </div>
     );
 
-  const completedMs = data.milestones.filter((m) => isSettled(m.status)).length;
+  const completedMs = milestones.filter((m) => isSettled(m.status)).length;
   const pct =
-    data.milestones.length > 0
-      ? Math.round((completedMs / data.milestones.length) * 100)
+    milestones.length > 0
+      ? Math.round((completedMs / milestones.length) * 100)
       : 0;
-  const payerName = (data.terms?.payer ??
-    data.terms?.partyA ??
-    data.partyA ??
+  const payerName = ((terms as any)?.payer ??
+    (terms as any)?.partyA ??
+    partyA ??
     "Payer") as string;
-  const displayAmt = data.amountLocked ?? String(data.totalAmountUsd);
+  const displayAmt = amountLocked ?? String(totalAmountUsd);
 
   return (
     <div
@@ -558,7 +349,7 @@ function HistoryCard({ agreementId }: { agreementId: string }) {
       >
         <div className="db-hist-bar-wrap">
           <div className="db-hist-bar-label">
-            {completedMs}/{data.milestones.length}
+            {completedMs}/{milestones.length}
           </div>
           <div className="db-hist-bar">
             <div
@@ -570,8 +361,8 @@ function HistoryCard({ agreementId }: { agreementId: string }) {
             />
           </div>
         </div>
-        <span className={`state-tag state-tag--${data.fundState}`}>
-          {fundStateLabel(data.fundState)}
+        <span className={`state-tag state-tag--${fundState}`}>
+          {fundStateLabel(fundState)}
         </span>
         <svg
           className={`db-hist-chevron${expanded ? " db-hist-chevron--open" : ""}`}
@@ -587,7 +378,7 @@ function HistoryCard({ agreementId }: { agreementId: string }) {
       </div>
       {expanded && (
         <div className="db-hist-expanded" onClick={(e) => e.stopPropagation()}>
-          {data.milestones.map((ms) => (
+          {milestones.map((ms) => (
             <div key={ms.index} className="db-hist-ms">
               <div
                 className="db-hist-ms-dot"
@@ -641,9 +432,9 @@ function HistoryCard({ agreementId }: { agreementId: string }) {
               </div>
             </div>
           ))}
-          {data.fundState !== "released" && (
+          {fundState !== "released" && (
             <a href={`/agreement/${agreementId}`} className="db-hist-open-link">
-              {data.fundState === "locked"
+              {fundState === "locked"
                 ? "Open Live Dashboard →"
                 : "Resume Agreement →"}
             </a>
@@ -657,104 +448,60 @@ function HistoryCard({ agreementId }: { agreementId: string }) {
 // ── Main Dashboard ────────────────────────────────────────────
 
 export default function PartyBDashboard() {
-  const { terms, amountLocked, walletAddress, agreementId } = useSelector(
-    (s: RootState) => s.partyB,
-  );
-  const t = terms as any;
+  const {
+    terms: reduxTerms,
+    amountLocked: reduxAmountLocked,
+    walletAddress,
+    agreementId,
+  } = useSelector((s: RootState) => s.partyB);
+  const t = reduxTerms as any;
   const receiverName = t?.receiver ?? t?.partyB ?? "You";
-  const payerName = t?.payer ?? t?.partyA ?? "Payer";
-  const reduxAmount = amountLocked ?? t?.total_usd ?? t?.amount_usd;
+  const payerNameFallback = t?.payer ?? t?.partyA ?? "Payer";
   const dispatch = useDispatch<AppDispatch>();
 
-  const [disputeConfirmMs, setDisputeConfirmMs] = useState<DbMilestone | null>(
-    null,
-  );
+  // ── All real-time state from the sync hook ────────────────
+  const {
+    milestones,
+    fundState,
+    fundsLocked,
+    amountLocked,
+    partyA,
+    partyAApproved,
+    partyBApproved,
+    totalAmountUsd,
+    totalAmountSats,
+    terms,
+    arbDecisions,
+    connected,
+    loading,
+    lastUpdate,
+    flashIndex,
+    refetch,
+  } = useSyncedAgreement({ agreementId, walletAddress });
+
+  const [disputeConfirmMs, setDisputeConfirmMs] =
+    useState<SyncedMilestone | null>(null);
   const [disputingIndex, setDisputingIndex] = useState<number | null>(null);
-  const [data, setData] = useState<AgreementData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
-  const [flashIndex, setFlashIndex] = useState<number | null>(null);
-  const [connected, setConnected] = useState(false);
   const [activeTab, setActiveTab] = useState<"current" | "history">("current");
-  const [historyIds, setHistoryIds] = useState<string[]>([]);
-  const [disputeModalMs, setDisputeModalMs] = useState<DbMilestone | null>(
+  const [historyIds] = useState<string[]>(() => getPartyBAgreementIds());
+  const [disputeModalMs, setDisputeModalMs] = useState<SyncedMilestone | null>(
     null,
   );
   const [disputeSubmitted, setDisputeSubmitted] = useState<
     Record<number, boolean>
   >({});
-  const joinedDisputeRooms = useState<Set<number>>(() => new Set())[0];
-  // ── NEW: per-milestone arbitrator decision cache ──
-  const [arbDecisions, setArbDecisions] = useState<ArbDecisionMap>({});
 
-  useEffect(() => {
-    setHistoryIds(getPartyBAgreementIds());
-  }, []);
+  const displayAmount =
+    amountLocked ??
+    reduxAmountLocked ??
+    t?.total_usd ??
+    t?.amount_usd ??
+    String(totalAmountUsd || "—");
+  const displayPayer = partyA
+    ? `${partyA.slice(0, 8)}…${partyA.slice(-4)}`
+    : payerNameFallback;
 
-  // ── Fetch arbitrator decision for a specific milestone ──
-  const fetchArbDecision = useCallback(
-    async (milestoneIndex: number) => {
-      if (!agreementId) return;
-      try {
-        const res = await fetch(
-          `${API_BASE}/api/arbitrate/${agreementId}/${milestoneIndex}`,
-        );
-        if (!res.ok) return;
-        const json = await res.json();
-        if (
-          json.dispute?.status === "resolved" &&
-          json.dispute?.arbitrator_decision
-        ) {
-          setArbDecisions((prev) => ({
-            ...prev,
-            [milestoneIndex]: json.dispute.arbitrator_decision,
-          }));
-        }
-      } catch {
-        /* ignore */
-      }
-    },
-    [agreementId],
-  );
-
-  const markMilestoneDisputed = useCallback((milestoneIndex: number) => {
-    setData((prev) => {
-      if (!prev) return prev;
-      const already = prev.milestones.find((m) => m.index === milestoneIndex);
-      if (!already || already.status === "disputed") return prev;
-      return {
-        ...prev,
-        milestones: prev.milestones.map((ms) =>
-          ms.index === milestoneIndex
-            ? { ...ms, status: "disputed" as MsStatus }
-            : ms,
-        ),
-      };
-    });
-  }, []);
-
-  // ── NEW: update milestone status when arbitrator resolves ──
-  const applyArbitratorResolution = useCallback(
-    (milestoneIndex: number, outcome: string, decision: ArbitratorDecision) => {
-      const newStatus: MsStatus =
-        outcome === "release_to_receiver" ? "complete" : "refunded";
-      setData((prev) => {
-        if (!prev) return prev;
-        return {
-          ...prev,
-          milestones: prev.milestones.map((ms) =>
-            ms.index === milestoneIndex
-              ? { ...ms, status: newStatus, completedAt: decision.decided_at }
-              : ms,
-          ),
-        };
-      });
-      setArbDecisions((prev) => ({ ...prev, [milestoneIndex]: decision }));
-    },
-    [],
-  );
-
-  async function handlePartyBDispute(ms: DbMilestone) {
+  async function handlePartyBDispute(ms: SyncedMilestone) {
     if (!agreementId || !walletAddress) return;
     setDisputingIndex(ms.index);
     try {
@@ -780,6 +527,8 @@ export default function PartyBDashboard() {
         }).catch(console.warn);
         setDisputeConfirmMs(null);
         setDisputeModalMs(ms);
+        // refetch after a short delay to get updated state
+        setTimeout(refetch, 2000);
       }
     } catch (err) {
       console.error("Dispute failed", err);
@@ -788,240 +537,22 @@ export default function PartyBDashboard() {
     }
   }
 
-  const checkArbitrateDisputes = useCallback(
-    async (milestones: DbMilestone[]) => {
-      if (!agreementId) return;
-      await Promise.all(
-        milestones.map(async (ms) => {
-          try {
-            const res = await fetch(
-              `${API_BASE}/api/arbitrate/${agreementId}/${ms.index}`,
-            );
-            if (!res.ok) return;
-            const json = await res.json();
-            if (!json.dispute) return;
-            if (OPEN_DISPUTE_STATUSES.has(json.dispute.status)) {
-              markMilestoneDisputed(ms.index);
-            }
-            // ── NEW: if already resolved by arbitrator, apply it immediately ──
-            if (
-              json.dispute.status === "resolved" &&
-              json.dispute.arbitrator_decision
-            ) {
-              applyArbitratorResolution(
-                ms.index,
-                json.dispute.arbitrator_decision.outcome,
-                json.dispute.arbitrator_decision,
-              );
-            }
-          } catch {
-            /* ignore */
-          }
-        }),
-      );
-    },
-    [agreementId, markMilestoneDisputed, applyArbitratorResolution],
-  );
-
-  const fetchData = useCallback(async () => {
-    if (!agreementId) return;
-    try {
-      const res = await fetch(
-        `${API_BASE}/api/agreement/${agreementId}/milestones`,
-      );
-      if (res.ok) {
-        const json = await res.json();
-        if (json.milestones?.length > 0) {
-          setData(json);
-          setLoading(false);
-          // Check arbitrator decisions for ALL milestones (not just disputed ones)
-          checkArbitrateDisputes(json.milestones);
-          json.milestones.forEach((ms: DbMilestone) => {
-            if (
-              ms.status === "disputed" &&
-              agreementId &&
-              !joinedDisputeRooms.has(ms.index)
-            ) {
-              joinDisputeRoom(agreementId, ms.index);
-              joinedDisputeRooms.add(ms.index);
-            }
-          });
-          return;
-        }
-      }
-    } catch {
-      /* fall through */
-    }
-    try {
-      const res = await fetch(`${API_BASE}/api/agreement/${agreementId}`);
-      if (res.ok) {
-        const json = await res.json();
-        let milestones: DbMilestone[] = [];
-        if (t?.milestones && Array.isArray(t.milestones)) {
-          milestones = t.milestones.map((ms: any, i: number) => ({
-            index: i,
-            title: ms.title ?? `Milestone ${i + 1}`,
-            percentage: ms.percentage ?? 0,
-            condition: ms.condition ?? "",
-            deadline: ms.deadline,
-            amountUsd: ms.amountUsd ?? "0",
-            amountSats: ms.amountSats ?? 0,
-            status: "locked" as MsStatus,
-          }));
-        }
-        setData({
-          agreementId,
-          milestones,
-          fundState: json.fundState ?? "locked",
-          totalAmountUsd: parseFloat(json.amountLocked ?? reduxAmount ?? "0"),
-          totalAmountSats: 0,
-          partyA: json.partyA ?? null,
-          partyB: json.partyB ?? null,
-          arbitrator: null,
-          amountLocked: json.amountLocked ?? reduxAmount,
-        });
-        if (milestones.length > 0) checkArbitrateDisputes(milestones);
-      }
-    } catch {
-      /* nothing */
-    }
-    setLoading(false);
-  }, [agreementId, reduxAmount, t, checkArbitrateDisputes]);
-
-  useEffect(() => {
-    fetchData();
-    const q = setTimeout(fetchData, 2000);
-    const iv = setInterval(fetchData, 10_000);
-    return () => {
-      clearTimeout(q);
-      clearInterval(iv);
-    };
-  }, [fetchData]);
-
-  useEffect(() => {
-    if (!agreementId) return;
-    const socket = getSocket();
-    joinAgreementRoom(agreementId);
-    if (socket.connected) setConnected(true);
-    socket.on("connect", () => setConnected(true));
-    socket.on("disconnect", () => setConnected(false));
-
-    function onMilestoneUpdated(payload: any) {
-      if (payload.milestones?.length > 0) {
-        setData((prev) =>
-          prev
-            ? {
-                ...prev,
-                milestones: payload.milestones,
-                fundState: payload.allComplete ? "released" : prev.fundState,
-              }
-            : prev,
-        );
-      } else {
-        setData((prev) => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            milestones: prev.milestones.map((ms) =>
-              ms.index === payload.milestoneIndex
-                ? {
-                    ...ms,
-                    status: payload.status as MsStatus,
-                    txId: payload.txId,
-                    txUrl: payload.txUrl,
-                    completedAt:
-                      payload.status === "complete"
-                        ? new Date().toISOString()
-                        : ms.completedAt,
-                  }
-                : ms,
-            ),
-            fundState: payload.allComplete ? "released" : prev.fundState,
-          };
-        });
-      }
-      setLastUpdate(new Date());
-      setFlashIndex(payload.milestoneIndex);
-      setTimeout(() => setFlashIndex(null), 2500);
-    }
-
-    function onDisputeUpdated(payload: any) {
-      if (payload.agreement_id && payload.agreement_id !== agreementId) return;
-      const idx: number = payload.milestone_index;
-      if (idx === undefined || idx === null) return;
-
-      // ── KEY FIX: if dispute is resolved, update milestone status + store decision ──
-      if (payload.status === "resolved" && payload.arbitrator_decision) {
-        applyArbitratorResolution(
-          idx,
-          payload.arbitrator_decision.outcome,
-          payload.arbitrator_decision,
-        );
-      } else if (OPEN_DISPUTE_STATUSES.has(payload.status)) {
-        markMilestoneDisputed(idx);
-      }
-
-      setLastUpdate(new Date());
-      setFlashIndex(idx);
-      setTimeout(() => setFlashIndex(null), 2500);
-
-      if (!joinedDisputeRooms.has(idx)) {
-        joinDisputeRoom(agreementId!, idx);
-        joinedDisputeRooms.add(idx);
-      }
-
-      // Also fetch fresh arbitrator decision
-      fetchArbDecision(idx);
-    }
-
-    socket.on("milestone:updated", onMilestoneUpdated);
-    socket.on("dispute:updated", onDisputeUpdated);
-    socket.on("funds:locked", () => setTimeout(fetchData, 1000));
-    socket.on("presence:updated", fetchData);
-
-    return () => {
-      socket.off("connect");
-      socket.off("disconnect");
-      socket.off("milestone:updated", onMilestoneUpdated);
-      socket.off("dispute:updated", onDisputeUpdated);
-      socket.off("funds:locked");
-      socket.off("presence:updated");
-      joinedDisputeRooms.forEach((idx) => leaveDisputeRoom(agreementId, idx));
-    };
-  }, [
-    agreementId,
-    fetchData,
-    markMilestoneDisputed,
-    applyArbitratorResolution,
-    fetchArbDecision,
-    joinedDisputeRooms,
-  ]);
-
-  const milestones = data?.milestones ?? [];
   const completedCount = milestones.filter((m) => isSettled(m.status)).length;
   const progressPct =
     milestones.length > 0
       ? Math.round((completedCount / milestones.length) * 100)
       : 0;
-  const totalSats = data?.totalAmountSats ?? 0;
   const earnedSats = milestones
     .filter((m) => m.status === "complete")
     .reduce((s, m) => s + m.amountSats, 0);
   const earnedCount = milestones.filter((m) => m.status === "complete").length;
-  const displayAmount =
-    data?.amountLocked ??
-    reduxAmount ??
-    data?.totalAmountUsd?.toString() ??
-    "—";
-  const displayPayer = data?.partyA
-    ? `${data.partyA.slice(0, 8)}…${data.partyA.slice(-4)}`
-    : payerName;
 
   const statsCards = [
     {
       label: "Total Locked",
-      value: totalSats > 0 ? formatSats(totalSats) : `$${displayAmount}`,
-      sub: totalSats > 0 ? `≈ $${displayAmount} USD` : "USD in escrow",
+      value:
+        totalAmountSats > 0 ? formatSats(totalAmountSats) : `$${displayAmount}`,
+      sub: totalAmountSats > 0 ? `≈ $${displayAmount} USD` : "USD in escrow",
       icon: "◈",
     },
     {
@@ -1059,8 +590,6 @@ export default function PartyBDashboard() {
                 localStorage.removeItem(`pB_wallet_${id}`);
               }
               localStorage.removeItem("pB_agreementId");
-              localStorage.removeItem("pA_screen");
-              localStorage.removeItem("pA_agreementId");
               window.location.href = "/";
             }}
           >
@@ -1122,10 +651,8 @@ export default function PartyBDashboard() {
             <div className="db-meta-list">
               <div className="db-meta-row">
                 <span className="db-meta-key">Status</span>
-                <span
-                  className={`state-tag state-tag--${data?.fundState ?? "idle"}`}
-                >
-                  {fundStateLabel(data?.fundState ?? "idle")}
+                <span className={`state-tag state-tag--${fundState}`}>
+                  {fundStateLabel(fundState)}
                 </span>
               </div>
               <div className="db-meta-row">
@@ -1138,14 +665,6 @@ export default function PartyBDashboard() {
                 <span className="db-meta-key">Progress</span>
                 <span className="db-meta-val">{progressPct}%</span>
               </div>
-              {data?.arbitrator && (
-                <div className="db-meta-row">
-                  <span className="db-meta-key">Arbitrator</span>
-                  <span className="db-meta-val">
-                    {data.arbitrator.slice(0, 8)}…
-                  </span>
-                </div>
-              )}
             </div>
           </div>
           <div className="db-ring-wrap">
@@ -1192,7 +711,6 @@ export default function PartyBDashboard() {
 
         {/* ── Main ── */}
         <main className="db-main">
-          {/* History Tab */}
           {activeTab === "history" && (
             <div className="fade-up">
               <div className="db-page-header" style={{ marginBottom: 0 }}>
@@ -1214,7 +732,6 @@ export default function PartyBDashboard() {
             </div>
           )}
 
-          {/* Current Tab */}
           {activeTab === "current" && (
             <>
               <div className="db-page-header fade-up">
@@ -1316,7 +833,6 @@ export default function PartyBDashboard() {
                       const isFlashing = flashIndex === ms.index;
                       const alreadySub = disputeSubmitted[ms.index];
                       const arbDecision = arbDecisions[ms.index] ?? null;
-                      // Show arb banner when: milestone is complete/refunded AND we have an arb decision
                       const showArbBanner = isDone && arbDecision !== null;
 
                       return (
@@ -1343,7 +859,6 @@ export default function PartyBDashboard() {
                             >
                               {isDone ? "✓" : ms.index + 1}
                             </div>
-
                             <div className="db-ms-info">
                               <div className="db-ms-title-row">
                                 <span className="db-ms-title">{ms.title}</span>
@@ -1352,7 +867,6 @@ export default function PartyBDashboard() {
                                     ⚑ Dispute
                                   </span>
                                 )}
-                                {/* ── NEW: show "Arbitrated" chip when resolved by arbitrator ── */}
                                 {isDone && arbDecision && (
                                   <span
                                     style={{
@@ -1413,7 +927,6 @@ export default function PartyBDashboard() {
                                 </div>
                               )}
                             </div>
-
                             <div className="db-ms-right">
                               <div>
                                 <div
@@ -1472,7 +985,6 @@ export default function PartyBDashboard() {
                             </div>
                           </div>
 
-                          {/* ── NEW: Arbitrator Decision Banner — replaces dispute panel when resolved ── */}
                           {showArbBanner && arbDecision && (
                             <div style={{ padding: "0 16px 16px" }}>
                               <ArbitratorDecisionBanner
@@ -1482,8 +994,7 @@ export default function PartyBDashboard() {
                             </div>
                           )}
 
-                          {/* Dispute panel — only show while still in dispute (not resolved) */}
-                          {isDisputed && agreementId && (
+                          {isDisputed && !showArbBanner && (
                             <div className="db-dispute-panel">
                               <div
                                 style={{
@@ -1560,21 +1071,165 @@ export default function PartyBDashboard() {
       </div>
 
       {/* Dispute Modal */}
-      {disputeModalMs && agreementId && data && (
-        <DisputeModal
-          ms={disputeModalMs}
-          agreementId={agreementId}
-          data={data}
-          walletAddress={walletAddress ?? ""}
-          onClose={() => setDisputeModalMs(null)}
-          onSubmitted={() => {
-            setDisputeSubmitted((p) => ({
-              ...p,
-              [disputeModalMs.index]: true,
-            }));
-            setDisputeModalMs(null);
+      {disputeModalMs && agreementId && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 1000,
+            background: "rgba(5,5,7,0.82)",
+            backdropFilter: "blur(20px) saturate(1.4)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 24,
           }}
-        />
+          onClick={(e) => {
+            if (e.currentTarget === e.target) setDisputeModalMs(null);
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              maxWidth: 640,
+              maxHeight: "90vh",
+              background: "var(--bg-1)",
+              border: "1px solid var(--border-hi)",
+              borderRadius: 20,
+              overflow: "hidden",
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "20px 24px",
+                background: "var(--bg-2)",
+                borderBottom: "1px solid var(--border)",
+                flexShrink: 0,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                <div
+                  style={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: 11,
+                    background: "rgba(212,162,58,0.10)",
+                    border: "1px solid rgba(212,162,58,0.26)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="var(--amber)"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                  >
+                    <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                    <line x1="12" y1="9" x2="12" y2="13" />
+                    <line x1="12" y1="17" x2="12.01" y2="17" />
+                  </svg>
+                </div>
+                <div>
+                  <div
+                    style={{
+                      fontSize: 10,
+                      fontFamily: "var(--mono)",
+                      fontWeight: 600,
+                      color: "var(--amber)",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.10em",
+                      marginBottom: 3,
+                    }}
+                  >
+                    File Evidence · Dispute
+                  </div>
+                  <div
+                    style={{
+                      fontFamily: "var(--font-display)",
+                      fontSize: 16,
+                      fontWeight: 700,
+                      color: "var(--text-1)",
+                      letterSpacing: "-0.03em",
+                    }}
+                  >
+                    {disputeModalMs.title}
+                  </div>
+                </div>
+              </div>
+              <button
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: 8,
+                  background: "var(--bg-3)",
+                  border: "1px solid var(--border)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
+                  color: "var(--text-4)",
+                  fontFamily: "var(--font)",
+                }}
+                onClick={() => setDisputeModalMs(null)}
+              >
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                >
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+            <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
+              <DisputeSubmitScreen
+                agreementId={agreementId}
+                milestoneIndex={disputeModalMs.index}
+                party="B"
+                milestoneDescription={
+                  disputeModalMs.condition || disputeModalMs.title
+                }
+                contractTerms={{
+                  payer: partyA ?? t?.payer ?? "",
+                  receiver: walletAddress ?? t?.receiver ?? t?.partyB ?? "",
+                  arbitrator:
+                    (terms as any)?.arbitrator ?? t?.arbitrator ?? "TBD",
+                  total_amount: totalAmountUsd ?? 0,
+                  milestone_description:
+                    disputeModalMs.condition || disputeModalMs.title,
+                  milestone_percentage: disputeModalMs.percentage,
+                  milestone_deadline: disputeModalMs.deadline || undefined,
+                  agreement_type:
+                    (terms as any)?.agreement_type ??
+                    t?.agreement_type ??
+                    "freelance",
+                }}
+                onSubmitted={() => {
+                  setDisputeSubmitted((p) => ({
+                    ...p,
+                    [disputeModalMs.index]: true,
+                  }));
+                  setDisputeModalMs(null);
+                }}
+              />
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Dispute Confirm */}
@@ -1671,8 +1326,7 @@ export default function PartyBDashboard() {
               }}
             >
               This will flag the milestone on-chain and lock funds until the
-              arbitrator resolves it. You will then file your evidence
-              statement.
+              arbitrator resolves it.
             </div>
             <div style={{ display: "flex", gap: 8 }}>
               <button

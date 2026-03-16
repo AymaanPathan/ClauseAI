@@ -13,6 +13,7 @@ import agreementRouter, { setSocketIO } from "./routes/agreement";
 import arbitrateRouter, { setArbitrateSocketIO } from "./routes/arbitrate";
 import { initRedis } from "./lib/redis";
 import { connectMongoDB } from "./lib/db";
+import Agreement from "./models/Agreement";
 
 dotenv.config();
 
@@ -28,33 +29,98 @@ export const io = new SocketIOServer(httpServer, {
 });
 
 setSocketIO(io);
-setArbitrateSocketIO(io); // ← wire socket into arbitrate router
+setArbitrateSocketIO(io);
+
+const API_BASE = process.env.API_BASE_URL ?? `http://localhost:${PORT}`;
 
 io.on("connection", (socket) => {
   console.log(`[socket.io] client connected: ${socket.id}`);
 
-  // Existing: agreement milestone updates
-  socket.on("join:agreement", (agreementId: string) => {
+  // ── join:agreement ──────────────────────────────────────────
+  // Supports optional ack callback — server sends full current state
+  // immediately. Fires on initial connect AND every reconnect.
+  socket.on("join:agreement", async (agreementId: string, ack?: Function) => {
+    if (!agreementId || typeof agreementId !== "string") return;
+
     socket.join(`agreement:${agreementId}`);
     console.log(`[socket.io] ${socket.id} joined agreement:${agreementId}`);
+
+    if (typeof ack !== "function") return;
+
+    try {
+      const agreement = await Agreement.findOne({ agreementId }).lean();
+      if (agreement) {
+        ack({
+          agreementId,
+          milestones: agreement.milestones ?? [],
+          fundState: agreement.fundState ?? "idle",
+          fundsLocked:
+            agreement.fundState === "locked" || (agreement as any).fundsLocked,
+          amountLocked: (agreement as any).amountLocked ?? null,
+          partyA: agreement.partyA ?? null,
+          partyB: (agreement as any).partyBWallet ?? agreement.partyB ?? null,
+          partyAApproved: (agreement as any).partyAApproved ?? false,
+          partyBApproved: (agreement as any).partyBApproved ?? false,
+          totalAmountUsd: (agreement as any).totalAmountUsd ?? 0,
+          totalAmountSats: (agreement as any).totalAmountSats ?? 0,
+          arbitrator: (agreement as any).arbitrator ?? null,
+          terms: (agreement as any).terms ?? null,
+        });
+      } else {
+        // Not in DB yet (agreement still being created)
+        ack(null);
+      }
+    } catch (err) {
+      console.error("[socket.io] join:agreement ack error:", err);
+      ack(null);
+    }
   });
 
-  // New: dispute statement/evidence/verdict updates
+  // ── join:dispute ────────────────────────────────────────────
+  // Supports optional ack callback — server sends current dispute state.
   socket.on(
     "join:dispute",
-    ({
-      agreementId,
-      milestoneIndex,
-    }: {
-      agreementId: string;
-      milestoneIndex: number;
-    }) => {
-      const room = `dispute:${agreementId}:${milestoneIndex}`;
+    async (
+      payload: { agreementId: string; milestoneIndex: number },
+      ack?: Function,
+    ) => {
+      if (!payload?.agreementId) return;
+
+      const room = `dispute:${payload.agreementId}:${payload.milestoneIndex}`;
       socket.join(room);
       console.log(`[socket.io] ${socket.id} joined ${room}`);
+
+      if (typeof ack !== "function") return;
+
+      try {
+        const res = await fetch(
+          `${API_BASE}/api/arbitrate/${payload.agreementId}/${payload.milestoneIndex}`,
+        );
+        if (res.ok) {
+          const data = (await res.json()) as {
+            dispute?: { status: string; arbitrator_decision?: unknown } | null;
+          };
+          ack(
+            data.dispute
+              ? {
+                  agreement_id: payload.agreementId,
+                  milestone_index: payload.milestoneIndex,
+                  status: data.dispute.status,
+                  arbitrator_decision: data.dispute.arbitrator_decision ?? null,
+                }
+              : null,
+          );
+        } else {
+          ack(null);
+        }
+      } catch (err) {
+        console.error("[socket.io] join:dispute ack error:", err);
+        ack(null);
+      }
     },
   );
 
+  // ── leave:dispute ───────────────────────────────────────────
   socket.on(
     "leave:dispute",
     ({
@@ -89,7 +155,7 @@ async function start() {
   await connectMongoDB();
   httpServer.listen(PORT, () => {
     console.log(`✅ ClauseAI backend on http://localhost:${PORT}`);
-    console.log(`   Socket.io: agreement rooms + dispute rooms`);
+    console.log(`   Socket.io: agreement rooms + dispute rooms (ack sync)`);
   });
 }
 

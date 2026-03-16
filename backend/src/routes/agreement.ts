@@ -441,6 +441,16 @@ router.post("/:id/milestone", async (req: Request, res: Response) => {
     const ms = agreement.milestones.find(
       (m: { index: number }) => m.index === milestoneIndex,
     );
+
+    if (
+      action === "dispute" &&
+      (ms.status === "complete" || ms.status === "refunded")
+    ) {
+      return res.status(409).json({
+        error: "Cannot dispute an already settled milestone",
+      });
+    }
+
     if (!ms) {
       return res
         .status(404)

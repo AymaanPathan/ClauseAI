@@ -1123,6 +1123,27 @@ export default function ScreenLanding() {
             >
               Join Agreement
             </button>
+
+            <button
+              style={{
+                fontSize: 13,
+                padding: "7px 18px",
+                background: "rgba(196,255,70,0.10)",
+                border: "1px solid rgba(196,255,70,0.40)",
+                borderRadius: 8,
+                cursor: "pointer",
+                color: "#c4ff46",
+                fontFamily: "var(--mono)",
+                fontWeight: 600,
+                letterSpacing: "0.02em",
+              }}
+              onClick={() => {
+                window.location.href = "/arbitrate";
+              }}
+            >
+              Arbitrator Login
+            </button>
+            {/* ── END ADD ── */}
             <button
               className="btn btn-primary"
               style={{ fontSize: 13, padding: "7px 18px" }}
@@ -1460,6 +1481,24 @@ export default function ScreenLanding() {
           </span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button
+            style={{
+              fontSize: 11,
+              padding: "5px 12px",
+              background: "rgba(196,255,70,0.10)",
+              border: "1px solid rgba(196,255,70,0.40)",
+              borderRadius: 8,
+              cursor: "pointer",
+              color: "#c4ff46",
+              fontFamily: "var(--mono)",
+              fontWeight: 600,
+            }}
+            onClick={() => {
+              window.location.href = "/arbitrate";
+            }}
+          >
+            Arbitrate
+          </button>
           <div
             style={{
               display: "flex",

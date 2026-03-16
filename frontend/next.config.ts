@@ -1,12 +1,13 @@
-import type { NextConfig } from "next";
-
-const nextConfig: NextConfig = {
+const nextConfig = {
   eslint: {
     ignoreDuringBuilds: true,
   },
+
   reactStrictMode: true,
-  webpack: (config) => {
-    // Silence pino-pretty missing module warning from @walletconnect deps
+
+  turbopack: {},
+
+  webpack: (config:any) => {
     config.resolve.fallback = {
       ...config.resolve.fallback,
       fs: false,
@@ -15,6 +16,7 @@ const nextConfig: NextConfig = {
       crypto: false,
       "pino-pretty": false,
     };
+
     return config;
   },
 };

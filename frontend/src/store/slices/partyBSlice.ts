@@ -120,6 +120,10 @@ export const initPartyBThunk = createAsyncThunk(
           data.partyB === storedAddress,
         storedAddress,
         partyBWallet: data.partyB ?? null,
+        storedFundsLocked:
+          localStorage.getItem(`pB_fundsLocked_${agreementId}`) === "true",
+        storedAmountLocked:
+          localStorage.getItem(`pB_amountLocked_${agreementId}`) ?? null,
       };
     } catch (err: unknown) {
       return rejectWithValue(
@@ -220,6 +224,9 @@ const partyBSlice = createSlice({
   reducers: {
     setScreen(state, action: PayloadAction<PartyBScreen>) {
       state.screen = action.payload;
+      if (typeof window !== "undefined" && state.agreementId) {
+        localStorage.setItem(`pB_screen_${state.agreementId}`, action.payload);
+      }
     },
     applyApprovalUpdate(
       state,
@@ -239,6 +246,14 @@ const partyBSlice = createSlice({
       state.fundsLocked = true;
       state.amountLocked = action.payload.amountLocked;
       state.screen = "dashboard";
+      if (typeof window !== "undefined" && state.agreementId) {
+        localStorage.setItem(`pB_screen_${state.agreementId}`, "dashboard");
+        localStorage.setItem(`pB_fundsLocked_${state.agreementId}`, "true");
+        localStorage.setItem(
+          `pB_amountLocked_${state.agreementId}`,
+          action.payload.amountLocked,
+        );
+      }
     },
     reset() {
       return initialState;
@@ -267,7 +282,23 @@ const partyBSlice = createSlice({
         // on this device, also add it to their history list
         if (p.partyBApproved && p.storedAddress) {
           savePartyBAgreementId(p.agreementId);
-          state.screen = "waiting-funds";
+
+          // restore fundsLocked
+          if (p.storedFundsLocked) {
+            state.fundsLocked = true;
+            state.amountLocked = p.storedAmountLocked;
+          }
+
+          // restore screen
+          const savedScreen =
+            typeof window !== "undefined"
+              ? localStorage.getItem(`pB_screen_${p.agreementId}`)
+              : null;
+          const safeScreens: PartyBScreen[] = ["waiting-funds", "dashboard"];
+          state.screen =
+            savedScreen && safeScreens.includes(savedScreen as PartyBScreen)
+              ? (savedScreen as PartyBScreen)
+              : "waiting-funds";
         } else {
           state.screen = "review";
         }

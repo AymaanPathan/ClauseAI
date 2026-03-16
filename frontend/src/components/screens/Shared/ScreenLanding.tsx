@@ -37,6 +37,7 @@ interface Agreement {
   agreementId: string;
   partyA: string | null;
   partyB: string | null;
+  partyBWallet: string | null;
   arbitrator: string | null;
   totalAmountUsd: number;
   totalAmountSats: number;
@@ -318,6 +319,10 @@ function AgreementCard({
   const [expanded, setExpanded] = useState(false);
   const isPartyA =
     agreement.partyA?.toLowerCase() === walletAddress.toLowerCase();
+
+  const isPartyB =
+    agreement.partyBWallet?.toLowerCase() === walletAddress.toLowerCase();
+
   const completedMs = agreement.milestones.filter((m) =>
     ["complete", "refunded"].includes(m.status),
   ).length;
@@ -740,24 +745,29 @@ function AgreementCard({
             </div>
           )}
 
-          {agreement.fundState === "locked" && isPartyA && (
+          {agreement.fundState === "locked" && (isPartyA || isPartyB) && (
             <div style={{ marginTop: 4 }}>
               <button
                 className="btn btn-ghost"
                 style={{ fontSize: 12, padding: "7px 16px" }}
                 onClick={() => {
                   if (typeof window !== "undefined") {
-                    localStorage.setItem(
-                      "pA_agreementId",
-                      agreement.agreementId,
-                    );
-                    localStorage.setItem("pA_screen", "dashboard");
-                    if (agreement.terms)
+                    if (isPartyA) {
                       localStorage.setItem(
-                        "pA_terms",
-                        JSON.stringify(agreement.terms),
+                        "pA_agreementId",
+                        agreement.agreementId,
                       );
-                    window.location.reload();
+                      localStorage.setItem("pA_screen", "dashboard");
+                      if (agreement.terms)
+                        localStorage.setItem(
+                          "pA_terms",
+                          JSON.stringify(agreement.terms),
+                        );
+                      window.location.reload();
+                    } else {
+                      // Party B → their /agreement/:id page handles the dashboard
+                      window.location.href = `/agreement/${agreement.agreementId}`;
+                    }
                   }
                 }}
               >

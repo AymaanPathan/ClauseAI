@@ -444,9 +444,11 @@ function HistoryCard({ agreementId }: { agreementId: string }) {
               </div>
             </div>
           ))}
-          {data.fundState === "locked" && (
+          {data.fundState !== "released" && (
             <a href={`/agreement/${agreementId}`} className="db-hist-open-link">
-              Open Live Dashboard →
+              {data.fundState === "locked"
+                ? "Open Live Dashboard →"
+                : "Resume Agreement →"}
             </a>
           )}
         </div>

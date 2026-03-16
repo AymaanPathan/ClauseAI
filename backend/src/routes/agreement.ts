@@ -186,56 +186,6 @@ router.post("/:id/partyb-wallet", async (req: Request, res: Response) => {
   }
 });
 
-// ── 2. REPLACE the existing GET "/" handler with this ─────────
-// GET /api/agreement?partyA=ST…   → Party A's agreements
-// GET /api/agreement?partyB=ST…   → Party B's agreements (by wallet)
-router.get("/", async (req: Request, res: Response) => {
-  const { partyA, partyB } = req.query as { partyA?: string; partyB?: string };
-
-  if (!partyA && !partyB) {
-    return res
-      .status(400)
-      .json({ error: "partyA or partyB query param required" });
-  }
-
-  try {
-    let agreements;
-
-    if (partyA) {
-      // Party A query — match wallet address (case-insensitive)
-      agreements = await Agreement.find({
-        partyA: { $regex: new RegExp(`^${escapeRegex(partyA)}$`, "i") },
-      })
-        .sort({ createdAt: -1 })
-        .limit(50)
-        .lean();
-    } else {
-      // Party B query — match partyBWallet field (actual wallet address)
-      // Falls back to partyB name match for legacy records (won't have wallet)
-      agreements = await Agreement.find({
-        $or: [
-          {
-            partyBWallet: {
-              $regex: new RegExp(`^${escapeRegex(partyB!)}$`, "i"),
-            },
-          },
-        ],
-      })
-        .sort({ createdAt: -1 })
-        .limit(50)
-        .lean();
-    }
-
-    console.log(
-      `[GET /api/agreement] partyA=${partyA} partyB=${partyB} → ${agreements.length} results`,
-    );
-    res.json(agreements);
-  } catch (err) {
-    console.error("[GET /api/agreement]", err);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
 // Helper — escape regex special chars in wallet addresses
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -364,8 +314,11 @@ router.get("/:id/milestones", async (req: Request, res: Response) => {
       totalAmountSats: agreement.totalAmountSats,
       partyA: agreement.partyA,
       partyB: agreement.partyB,
+      partyBWallet: agreement.partyBWallet,
       arbitrator: agreement.arbitrator,
       amountLocked: agreement.amountLocked,
+      terms: agreement.terms,
+      createdAt: agreement.createdAt,
     });
   } catch (err) {
     console.error("[agreement GET /milestones]", err);

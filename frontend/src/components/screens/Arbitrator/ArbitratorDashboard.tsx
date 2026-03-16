@@ -1090,7 +1090,6 @@ const css = `
 /* ── Main ── */
 .a-main{
   flex:1;min-width:0;overflow-y:auto;
-  display:flex;justify-content:center;
 }
 
 /* Empty state */
@@ -1103,10 +1102,10 @@ const css = `
 .a-empty-title{font-family:var(--display);font-size:20px;font-weight:800;color:rgba(240,240,240,0.22);letter-spacing:-0.04em;}
 .a-empty-body{font-size:13px;color:rgba(240,240,240,0.16);max-width:300px;line-height:1.75;margin:0;}
 
-/* ── Panel — centered ── */
+/* ── Panel — full width ── */
 .a-panel{
-  width:100%;max-width:820px;
-  padding:44px 52px 88px;
+  width:100%;
+  padding:40px 44px 80px;
   display:flex;flex-direction:column;gap:22px;
 }
 
@@ -1305,6 +1304,6 @@ const css = `
 @keyframes aSpin{to{transform:rotate(360deg);}}
 @keyframes aPulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:0.40;transform:scale(0.78);}}
 
-@media(max-width:960px){.a-sidebar{display:none;}.a-panel{padding:28px 20px 60px;}}
+@media(max-width:960px){.a-sidebar{display:none;}.a-panel{padding:24px 20px 60px;}}
 @media(max-width:640px){.a-terms{grid-template-columns:1fr 1fr;}.a-outcomes{grid-template-columns:1fr;}}
 `;

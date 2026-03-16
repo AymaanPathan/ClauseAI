@@ -15,7 +15,6 @@ import {
 import { explorerTxUrl } from "@/lib/stacksConfig";
 import { getPartyBAgreementIds } from "@/store/slices/partyBSlice";
 import DisputeSubmitScreen from "@/components/screens/Shared/DisputeSubmitScreen";
-import DisputeDetailView from "../Shared/Disputedetailview";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -41,6 +40,18 @@ interface DbMilestone {
   completedAt?: string;
   disputedAt?: string;
 }
+
+interface ArbitratorDecision {
+  outcome: "release_to_receiver" | "refund_to_payer" | "split";
+  followed_ai: boolean;
+  override_reason?: string;
+  decided_at: string;
+  arbitrator_address: string;
+}
+
+// Per-milestone arbitrator decision cache
+type ArbDecisionMap = Record<number, ArbitratorDecision | null>;
+
 interface AgreementData {
   agreementId: string;
   milestones: DbMilestone[];
@@ -62,6 +73,7 @@ function statusColor(s: MsStatus) {
   if (s === "pending") return "var(--text-3)";
   return "var(--text-4)";
 }
+
 function statusLabel(s: MsStatus) {
   if (s === "complete") return "Released";
   if (s === "disputed") return "In Dispute";
@@ -70,10 +82,12 @@ function statusLabel(s: MsStatus) {
   if (s === "pending") return "Confirming";
   return "Locked";
 }
+
 function formatSats(sats: number): string {
   if (!sats) return "—";
   return `${(sats / 100_000_000).toFixed(8)} sBTC`;
 }
+
 function fundStateLabel(s: string) {
   if (s === "locked") return "Active";
   if (s === "released") return "Complete";
@@ -81,9 +95,23 @@ function fundStateLabel(s: string) {
   return "Pending";
 }
 
-// ── FIX: count both "complete" AND "refunded" as settled/done ──
 function isSettled(s: MsStatus) {
   return s === "complete" || s === "refunded";
+}
+
+function truncateAddr(addr: string): string {
+  if (!addr) return "";
+  return `${addr.slice(0, 8)}…${addr.slice(-5)}`;
+}
+
+function fmtDate(iso?: string): string {
+  if (!iso) return "";
+  return new Date(iso).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 const OPEN_DISPUTE_STATUSES = new Set([
@@ -93,6 +121,210 @@ const OPEN_DISPUTE_STATUSES = new Set([
   "ai_pending",
   "ai_complete",
 ]);
+
+// ── Arbitrator Decision Banner ────────────────────────────────
+// Shown inline under a milestone when it was resolved by arbitration
+
+function ArbitratorDecisionBanner({
+  decision,
+  viewerRole,
+}: {
+  decision: ArbitratorDecision;
+  viewerRole: "A" | "B";
+}) {
+  const isRelease = decision.outcome === "release_to_receiver";
+  const outcomeColor = isRelease ? "var(--green)" : "var(--red)";
+  const outcomeLabel = isRelease
+    ? "Funds Released to Receiver"
+    : "Funds Refunded to Payer";
+
+  const personalMsg = isRelease
+    ? viewerRole === "B"
+      ? "The arbitrator ruled in your favour. Funds were released to your wallet."
+      : "The arbitrator ruled in favour of the Receiver."
+    : viewerRole === "A"
+      ? "The arbitrator ruled in your favour. Funds were returned to your wallet."
+      : "The arbitrator ruled in favour of the Payer. Funds were refunded.";
+
+  return (
+    <div
+      style={{
+        margin: "8px 0 4px",
+        border: `1px solid ${outcomeColor}28`,
+        borderRadius: 8,
+        overflow: "hidden",
+        background: `color-mix(in srgb, ${outcomeColor} 5%, transparent)`,
+      }}
+    >
+      {/* Header */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          padding: "9px 12px",
+          background: `color-mix(in srgb, ${outcomeColor} 8%, transparent)`,
+          borderBottom: `1px solid ${outcomeColor}18`,
+        }}
+      >
+        <span style={{ fontSize: 14 }}>⚖</span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            style={{
+              fontSize: 9,
+              fontFamily: "var(--mono)",
+              fontWeight: 700,
+              textTransform: "uppercase",
+              letterSpacing: "0.10em",
+              color: outcomeColor,
+              marginBottom: 2,
+            }}
+          >
+            Arbitrator Decision
+          </div>
+          <div
+            style={{
+              fontSize: 12,
+              fontWeight: 700,
+              color: outcomeColor,
+              letterSpacing: "-0.02em",
+            }}
+          >
+            {outcomeLabel}
+          </div>
+        </div>
+        {/* "You" badge for the beneficiary */}
+        {((viewerRole === "B" && isRelease) ||
+          (viewerRole === "A" && !isRelease)) && (
+          <span
+            style={{
+              fontSize: 9,
+              fontFamily: "var(--mono)",
+              fontWeight: 700,
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+              color: outcomeColor,
+              background: `color-mix(in srgb, ${outcomeColor} 15%, transparent)`,
+              border: `1px solid ${outcomeColor}30`,
+              borderRadius: 3,
+              padding: "2px 7px",
+            }}
+          >
+            You
+          </span>
+        )}
+      </div>
+
+      {/* Body */}
+      <div
+        style={{
+          padding: "10px 12px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+        }}
+      >
+        {/* Personal message */}
+        <p
+          style={{
+            fontSize: 12,
+            color: "var(--text-3)",
+            lineHeight: 1.6,
+            margin: 0,
+          }}
+        >
+          {personalMsg}
+        </p>
+
+        {/* Arbitrator's note — always shown */}
+        {decision.override_reason && (
+          <div
+            style={{
+              background: "rgba(255,255,255,0.03)",
+              border: "1px solid rgba(255,255,255,0.08)",
+              borderRadius: 6,
+              padding: "9px 11px",
+            }}
+          >
+            <div
+              style={{
+                fontSize: 9,
+                fontFamily: "var(--mono)",
+                fontWeight: 600,
+                textTransform: "uppercase",
+                letterSpacing: "0.10em",
+                color: "var(--text-4)",
+                marginBottom: 5,
+              }}
+            >
+              Arbitrator&apos;s Note
+            </div>
+            <p
+              style={{
+                fontSize: 12,
+                color: "var(--text-3)",
+                lineHeight: 1.65,
+                fontStyle: "italic",
+                margin: 0,
+              }}
+            >
+              &ldquo;{decision.override_reason}&rdquo;
+            </p>
+          </div>
+        )}
+
+        {/* Meta row */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            flexWrap: "wrap",
+          }}
+        >
+          <span
+            style={{
+              fontSize: 9,
+              fontFamily: "var(--mono)",
+              color: "var(--text-4)",
+            }}
+          >
+            By {truncateAddr(decision.arbitrator_address)}
+          </span>
+          <span style={{ color: "var(--text-4)", fontSize: 10 }}>·</span>
+          <span
+            style={{
+              fontSize: 9,
+              fontFamily: "var(--mono)",
+              color: "var(--text-4)",
+            }}
+          >
+            {fmtDate(decision.decided_at)}
+          </span>
+          <span style={{ color: "var(--text-4)", fontSize: 10 }}>·</span>
+          <span
+            style={{
+              fontSize: 8,
+              fontFamily: "var(--mono)",
+              fontWeight: 700,
+              textTransform: "uppercase",
+              letterSpacing: "0.08em",
+              color: decision.followed_ai ? "var(--green)" : "var(--amber)",
+              background: decision.followed_ai
+                ? "rgba(74,222,128,0.07)"
+                : "rgba(251,191,36,0.07)",
+              border: `1px solid ${decision.followed_ai ? "rgba(74,222,128,0.20)" : "rgba(251,191,36,0.20)"}`,
+              borderRadius: 3,
+              padding: "2px 6px",
+            }}
+          >
+            {decision.followed_ai ? "✓ Followed AI" : "↺ Overrode AI"}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // ── Dispute Modal ─────────────────────────────────────────────
 
@@ -142,62 +374,14 @@ function DisputeModal({
   return (
     <>
       <style>{`
-        .pbd-overlay {
-          position: fixed; inset: 0; z-index: 1000;
-          background: rgba(5,5,7,0.82);
-          backdrop-filter: blur(20px) saturate(1.4);
-          display: flex; align-items: center; justify-content: center;
-          padding: 24px;
-          animation: pbdFadeIn 0.18s ease both;
-        }
-        @keyframes pbdFadeIn { from { opacity: 0 } to { opacity: 1 } }
-        .pbd-sheet {
-          width: 100%; max-width: 640px; max-height: 90vh;
-          background: var(--bg-1); border: 1px solid var(--border-hi);
-          border-radius: 20px; overflow: hidden;
-          display: flex; flex-direction: column;
-          box-shadow: 0 48px 96px rgba(0,0,0,0.72),
-                      inset 0 0 0 1px rgba(255,255,255,0.04);
-          animation: pbdSlideUp 0.28s cubic-bezier(0.16,1,0.3,1) both;
-        }
-        @keyframes pbdSlideUp {
-          from { opacity: 0; transform: translateY(28px) scale(0.97) }
-          to   { opacity: 1; transform: translateY(0)    scale(1)    }
-        }
-        .pbd-header {
-          display: flex; align-items: center; justify-content: space-between;
-          padding: 20px 24px; flex-shrink: 0;
-          background: var(--bg-2); border-bottom: 1px solid var(--border);
-        }
-        .pbd-header-left { display: flex; align-items: center; gap: 14px; }
-        .pbd-header-icon {
-          width: 40px; height: 40px; border-radius: 11px; flex-shrink: 0;
-          background: rgba(212,162,58,0.10); border: 1px solid rgba(212,162,58,0.26);
-          display: flex; align-items: center; justify-content: center;
-        }
-        .pbd-header-eyebrow {
-          font-size: 10px; font-family: var(--mono); font-weight: 600;
-          color: var(--amber); text-transform: uppercase; letter-spacing: 0.10em;
-          margin-bottom: 3px;
-        }
-        .pbd-header-title {
-          font-family: var(--font-display); font-size: 16px; font-weight: 700;
-          color: var(--text-1); letter-spacing: -0.03em;
-        }
-        .pbd-close-btn {
-          width: 32px; height: 32px; border-radius: 8px; flex-shrink: 0;
-          background: var(--bg-3); border: 1px solid var(--border);
-          display: flex; align-items: center; justify-content: center;
-          cursor: pointer; color: var(--text-4);
-          transition: background 0.14s, border-color 0.14s, color 0.14s;
-          font-family: var(--font);
-        }
-        .pbd-close-btn:hover { background: var(--bg-4); border-color: var(--border-hi); color: var(--text-1); }
-        .pbd-body { flex: 1; overflow-y: auto; padding: 24px; }
-        .pbd-body::-webkit-scrollbar { width: 4px; }
-        .pbd-body::-webkit-scrollbar-thumb { background: var(--bg-5); border-radius: 2px; }
+        .pbd-overlay { position:fixed;inset:0;z-index:1000;background:rgba(5,5,7,0.82);backdrop-filter:blur(20px) saturate(1.4);display:flex;align-items:center;justify-content:center;padding:24px;animation:pbdFadeIn 0.18s ease both; }
+        @keyframes pbdFadeIn { from{opacity:0} to{opacity:1} }
+        .pbd-sheet { width:100%;max-width:640px;max-height:90vh;background:var(--bg-1);border:1px solid var(--border-hi);border-radius:20px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 48px 96px rgba(0,0,0,0.72),inset 0 0 0 1px rgba(255,255,255,0.04);animation:pbdSlideUp 0.28s cubic-bezier(0.16,1,0.3,1) both; }
+        @keyframes pbdSlideUp { from{opacity:0;transform:translateY(28px) scale(0.97)} to{opacity:1;transform:translateY(0) scale(1)} }
+        .pbd-header { display:flex;align-items:center;justify-content:space-between;padding:20px 24px;flex-shrink:0;background:var(--bg-2);border-bottom:1px solid var(--border); }
+        .pbd-close-btn { width:32px;height:32px;border-radius:8px;flex-shrink:0;background:var(--bg-3);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--text-4);font-family:var(--font); }
+        .pbd-body { flex:1;overflow-y:auto;padding:24px; }
       `}</style>
-
       <div
         ref={overlayRef}
         className="pbd-overlay"
@@ -207,8 +391,19 @@ function DisputeModal({
       >
         <div className="pbd-sheet" role="dialog" aria-modal="true">
           <div className="pbd-header">
-            <div className="pbd-header-left">
-              <div className="pbd-header-icon">
+            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+              <div
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: 11,
+                  background: "rgba(212,162,58,0.10)",
+                  border: "1px solid rgba(212,162,58,0.26)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
                 <svg
                   width="16"
                   height="16"
@@ -224,10 +419,30 @@ function DisputeModal({
                 </svg>
               </div>
               <div>
-                <div className="pbd-header-eyebrow">
+                <div
+                  style={{
+                    fontSize: 10,
+                    fontFamily: "var(--mono)",
+                    fontWeight: 600,
+                    color: "var(--amber)",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.10em",
+                    marginBottom: 3,
+                  }}
+                >
                   File Evidence · Dispute
                 </div>
-                <div className="pbd-header-title">{ms.title}</div>
+                <div
+                  style={{
+                    fontFamily: "var(--font-display)",
+                    fontSize: 16,
+                    fontWeight: 700,
+                    color: "var(--text-1)",
+                    letterSpacing: "-0.03em",
+                  }}
+                >
+                  {ms.title}
+                </div>
               </div>
             </div>
             <button
@@ -370,7 +585,6 @@ function HistoryCard({ agreementId }: { agreementId: string }) {
           <polyline points="6 9 12 15 18 9" />
         </svg>
       </div>
-
       {expanded && (
         <div className="db-hist-expanded" onClick={(e) => e.stopPropagation()}>
           {data.milestones.map((ms) => (
@@ -470,10 +684,38 @@ export default function PartyBDashboard() {
     Record<number, boolean>
   >({});
   const joinedDisputeRooms = useState<Set<number>>(() => new Set())[0];
+  // ── NEW: per-milestone arbitrator decision cache ──
+  const [arbDecisions, setArbDecisions] = useState<ArbDecisionMap>({});
 
   useEffect(() => {
     setHistoryIds(getPartyBAgreementIds());
   }, []);
+
+  // ── Fetch arbitrator decision for a specific milestone ──
+  const fetchArbDecision = useCallback(
+    async (milestoneIndex: number) => {
+      if (!agreementId) return;
+      try {
+        const res = await fetch(
+          `${API_BASE}/api/arbitrate/${agreementId}/${milestoneIndex}`,
+        );
+        if (!res.ok) return;
+        const json = await res.json();
+        if (
+          json.dispute?.status === "resolved" &&
+          json.dispute?.arbitrator_decision
+        ) {
+          setArbDecisions((prev) => ({
+            ...prev,
+            [milestoneIndex]: json.dispute.arbitrator_decision,
+          }));
+        }
+      } catch {
+        /* ignore */
+      }
+    },
+    [agreementId],
+  );
 
   const markMilestoneDisputed = useCallback((milestoneIndex: number) => {
     setData((prev) => {
@@ -490,6 +732,27 @@ export default function PartyBDashboard() {
       };
     });
   }, []);
+
+  // ── NEW: update milestone status when arbitrator resolves ──
+  const applyArbitratorResolution = useCallback(
+    (milestoneIndex: number, outcome: string, decision: ArbitratorDecision) => {
+      const newStatus: MsStatus =
+        outcome === "release_to_receiver" ? "complete" : "refunded";
+      setData((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          milestones: prev.milestones.map((ms) =>
+            ms.index === milestoneIndex
+              ? { ...ms, status: newStatus, completedAt: decision.decided_at }
+              : ms,
+          ),
+        };
+      });
+      setArbDecisions((prev) => ({ ...prev, [milestoneIndex]: decision }));
+    },
+    [],
+  );
 
   async function handlePartyBDispute(ms: DbMilestone) {
     if (!agreementId || !walletAddress) return;
@@ -536,15 +799,28 @@ export default function PartyBDashboard() {
             );
             if (!res.ok) return;
             const json = await res.json();
-            if (json.dispute && OPEN_DISPUTE_STATUSES.has(json.dispute.status))
+            if (!json.dispute) return;
+            if (OPEN_DISPUTE_STATUSES.has(json.dispute.status)) {
               markMilestoneDisputed(ms.index);
+            }
+            // ── NEW: if already resolved by arbitrator, apply it immediately ──
+            if (
+              json.dispute.status === "resolved" &&
+              json.dispute.arbitrator_decision
+            ) {
+              applyArbitratorResolution(
+                ms.index,
+                json.dispute.arbitrator_decision.outcome,
+                json.dispute.arbitrator_decision,
+              );
+            }
           } catch {
             /* ignore */
           }
         }),
       );
     },
-    [agreementId, markMilestoneDisputed],
+    [agreementId, markMilestoneDisputed, applyArbitratorResolution],
   );
 
   const fetchData = useCallback(async () => {
@@ -558,6 +834,7 @@ export default function PartyBDashboard() {
         if (json.milestones?.length > 0) {
           setData(json);
           setLoading(false);
+          // Check arbitrator decisions for ALL milestones (not just disputed ones)
           checkArbitrateDisputes(json.milestones);
           json.milestones.forEach((ms: DbMilestone) => {
             if (
@@ -672,14 +949,29 @@ export default function PartyBDashboard() {
       if (payload.agreement_id && payload.agreement_id !== agreementId) return;
       const idx: number = payload.milestone_index;
       if (idx === undefined || idx === null) return;
-      markMilestoneDisputed(idx);
+
+      // ── KEY FIX: if dispute is resolved, update milestone status + store decision ──
+      if (payload.status === "resolved" && payload.arbitrator_decision) {
+        applyArbitratorResolution(
+          idx,
+          payload.arbitrator_decision.outcome,
+          payload.arbitrator_decision,
+        );
+      } else if (OPEN_DISPUTE_STATUSES.has(payload.status)) {
+        markMilestoneDisputed(idx);
+      }
+
       setLastUpdate(new Date());
       setFlashIndex(idx);
       setTimeout(() => setFlashIndex(null), 2500);
+
       if (!joinedDisputeRooms.has(idx)) {
         joinDisputeRoom(agreementId!, idx);
         joinedDisputeRooms.add(idx);
       }
+
+      // Also fetch fresh arbitrator decision
+      fetchArbDecision(idx);
     }
 
     socket.on("milestone:updated", onMilestoneUpdated);
@@ -696,24 +988,26 @@ export default function PartyBDashboard() {
       socket.off("presence:updated");
       joinedDisputeRooms.forEach((idx) => leaveDisputeRoom(agreementId, idx));
     };
-  }, [agreementId, fetchData, markMilestoneDisputed, joinedDisputeRooms]);
+  }, [
+    agreementId,
+    fetchData,
+    markMilestoneDisputed,
+    applyArbitratorResolution,
+    fetchArbDecision,
+    joinedDisputeRooms,
+  ]);
 
   const milestones = data?.milestones ?? [];
-
-  // ── FIX: consistent settled count — complete OR refunded both count ──
   const completedCount = milestones.filter((m) => isSettled(m.status)).length;
   const progressPct =
     milestones.length > 0
       ? Math.round((completedCount / milestones.length) * 100)
       : 0;
-
   const totalSats = data?.totalAmountSats ?? 0;
-  // Earned = only "complete" milestones (actually paid out to receiver)
   const earnedSats = milestones
     .filter((m) => m.status === "complete")
     .reduce((s, m) => s + m.amountSats, 0);
   const earnedCount = milestones.filter((m) => m.status === "complete").length;
-
   const displayAmount =
     data?.amountLocked ??
     reduxAmount ??
@@ -738,7 +1032,6 @@ export default function PartyBDashboard() {
         : "Receiver",
       icon: "◉",
     },
-    // ── FIX: show earned count accurately ──
     {
       label: "Earned",
       value: earnedSats > 0 ? formatSats(earnedSats) : "—",
@@ -824,7 +1117,6 @@ export default function PartyBDashboard() {
               </button>
             </nav>
           </div>
-
           <div className="db-sidebar-section">
             <div className="db-sidebar-label">Agreement</div>
             <div className="db-meta-list">
@@ -856,8 +1148,6 @@ export default function PartyBDashboard() {
               )}
             </div>
           </div>
-
-          {/* Progress ring — FIX: use green when 100%, accent otherwise (matches Party A) */}
           <div className="db-ring-wrap">
             <svg width="72" height="72" viewBox="0 0 72 72">
               <circle
@@ -902,7 +1192,7 @@ export default function PartyBDashboard() {
 
         {/* ── Main ── */}
         <main className="db-main">
-          {/* ── HISTORY TAB ── */}
+          {/* History Tab */}
           {activeTab === "history" && (
             <div className="fade-up">
               <div className="db-page-header" style={{ marginBottom: 0 }}>
@@ -924,7 +1214,7 @@ export default function PartyBDashboard() {
             </div>
           )}
 
-          {/* ── CURRENT TAB ── */}
+          {/* Current Tab */}
           {activeTab === "current" && (
             <>
               <div className="db-page-header fade-up">
@@ -967,7 +1257,6 @@ export default function PartyBDashboard() {
                     className="db-progress-fill"
                     style={{
                       width: `${progressPct > 0 ? progressPct : 0.5}%`,
-                      // ── FIX: matches Party A color logic ──
                       background:
                         progressPct === 100 ? "var(--green)" : "var(--accent)",
                     }}
@@ -1026,6 +1315,9 @@ export default function PartyBDashboard() {
                       const isDisputed = ms.status === "disputed";
                       const isFlashing = flashIndex === ms.index;
                       const alreadySub = disputeSubmitted[ms.index];
+                      const arbDecision = arbDecisions[ms.index] ?? null;
+                      // Show arb banner when: milestone is complete/refunded AND we have an arb decision
+                      const showArbBanner = isDone && arbDecision !== null;
 
                       return (
                         <div key={ms.index} className="db-ms-block">
@@ -1060,7 +1352,26 @@ export default function PartyBDashboard() {
                                     ⚑ Dispute
                                   </span>
                                 )}
-                                {isFlashing && !isDisputed && (
+                                {/* ── NEW: show "Arbitrated" chip when resolved by arbitrator ── */}
+                                {isDone && arbDecision && (
+                                  <span
+                                    style={{
+                                      fontSize: 9,
+                                      fontFamily: "var(--mono)",
+                                      fontWeight: 700,
+                                      textTransform: "uppercase",
+                                      letterSpacing: "0.07em",
+                                      color: "#fbbf24",
+                                      background: "rgba(251,191,36,0.10)",
+                                      border: "1px solid rgba(251,191,36,0.25)",
+                                      borderRadius: 3,
+                                      padding: "2px 7px",
+                                    }}
+                                  >
+                                    ⚖ Arbitrated
+                                  </span>
+                                )}
+                                {isFlashing && !isDisputed && !isDone && (
                                   <span className="db-flash-chip">Updated</span>
                                 )}
                               </div>
@@ -1127,7 +1438,6 @@ export default function PartyBDashboard() {
                                 >
                                   {statusLabel(ms.status)}
                                 </span>
-
                                 {!isDone && !isPending && !isDisputed && (
                                   <button
                                     className="db-btn db-btn--dispute"
@@ -1145,7 +1455,6 @@ export default function PartyBDashboard() {
                                     Dispute
                                   </button>
                                 )}
-
                                 {isDisputed && !alreadySub && (
                                   <button
                                     className="db-btn db-btn--evidence"
@@ -1163,13 +1472,29 @@ export default function PartyBDashboard() {
                             </div>
                           </div>
 
-                          {isDisputed && agreementId && (
-                            <div className="db-dispute-panel">
-                              <DisputeDetailView
-                                agreementId={agreementId}
-                                milestoneIndex={ms.index}
+                          {/* ── NEW: Arbitrator Decision Banner — replaces dispute panel when resolved ── */}
+                          {showArbBanner && arbDecision && (
+                            <div style={{ padding: "0 16px 16px" }}>
+                              <ArbitratorDecisionBanner
+                                decision={arbDecision}
                                 viewerRole="B"
                               />
+                            </div>
+                          )}
+
+                          {/* Dispute panel — only show while still in dispute (not resolved) */}
+                          {isDisputed && agreementId && (
+                            <div className="db-dispute-panel">
+                              <div
+                                style={{
+                                  fontSize: 11,
+                                  fontFamily: "var(--mono)",
+                                  color: "var(--text-4)",
+                                  marginBottom: 8,
+                                }}
+                              >
+                                ⚑ Dispute is open — awaiting arbitrator decision
+                              </div>
                             </div>
                           )}
                         </div>
@@ -1191,7 +1516,7 @@ export default function PartyBDashboard() {
                       marginBottom: 4,
                     }}
                   >
-                    All milestones complete
+                    All milestones settled
                   </div>
                   <div
                     className="label"
@@ -1234,7 +1559,7 @@ export default function PartyBDashboard() {
         </main>
       </div>
 
-      {/* ── Dispute Modal ── */}
+      {/* Dispute Modal */}
       {disputeModalMs && agreementId && data && (
         <DisputeModal
           ms={disputeModalMs}
@@ -1252,7 +1577,7 @@ export default function PartyBDashboard() {
         />
       )}
 
-      {/* ── Dispute Confirm ── */}
+      {/* Dispute Confirm */}
       {disputeConfirmMs && (
         <div
           style={{

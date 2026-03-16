@@ -1,11 +1,3 @@
-// ============================================================
-// store/partyA/partyASlice.ts — PRODUCTION v2
-//
-// New additions over v1:
-//   • saveAgreementToDbThunk  — saves agreement + milestones to MongoDB
-//   • notifyMilestoneToDb     — after tx confirmed, PATCH DB + emit socket event
-// ============================================================
-
 import { createSlice, createAsyncThunk, PayloadAction } from "@reduxjs/toolkit";
 import {
   parseAgreement,

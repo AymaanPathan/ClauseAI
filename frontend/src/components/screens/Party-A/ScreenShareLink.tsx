@@ -1,17 +1,4 @@
 "use client";
-// ============================================================
-// components/partyA/ScreenShareLink.tsx
-//
-// Party A Step 5: Share link with Party B.
-//
-// FIX: Save agreement stub to MongoDB RIGHT HERE, as soon as Party A
-// registers presence. This means Party B's /milestones fetch will
-// always find the document — even before funds are locked.
-//
-// The ScreenLockFunds saveAgreementToDbThunk call still runs later
-// to update milestones + txId (backend uses findOneAndUpdate so
-// there's no conflict — last write wins on those fields).
-// ============================================================
 
 import { useState, useEffect, useRef } from "react";
 

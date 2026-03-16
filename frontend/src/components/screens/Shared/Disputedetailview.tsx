@@ -1,21 +1,20 @@
 "use client";
 // ============================================================
-// components/screens/Shared/DisputeDetailView.tsx
+// components/screens/Shared/Disputedetailview.tsx
+//
+// Used inside Party A and Party B dashboards, inline below
+// each disputed milestone row.
+//
+// Key change: when status === "resolved", shows a prominent
+// ArbitratorDecisionBanner so parties know the resolution
+// was made by the arbitrator AND can read the reason.
 // ============================================================
 
 import { useEffect, useState, useCallback } from "react";
 import { getSocket, joinDisputeRoom, leaveDisputeRoom } from "@/lib/socket";
+import ArbitratorDecisionBanner from "../Arbitrator/ArbitratorDecisionBanner";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-
-type DisputeStatus =
-  | "awaiting_statements"
-  | "party_a_submitted"
-  | "party_b_submitted"
-  | "ai_pending"
-  | "ai_complete"
-  | "resolved"
-  | "auto_refunded";
 
 interface AIVerdict {
   verdict: "release_to_receiver" | "refund_to_payer" | "split";
@@ -40,7 +39,7 @@ interface ArbitratorDecision {
 interface DisputeData {
   agreement_id: string;
   milestone_index: number;
-  status: DisputeStatus;
+  status: string;
   contract_terms: {
     payer: string;
     receiver: string;
@@ -49,7 +48,6 @@ interface DisputeData {
     milestone_description: string;
     milestone_percentage: number;
     milestone_deadline?: string;
-    agreement_type?: string;
   };
   party_a_statement: string;
   party_a_evidence: string[];
@@ -64,131 +62,76 @@ interface DisputeData {
   updated_at: string;
 }
 
-export interface DisputeDetailViewProps {
+interface Props {
   agreementId: string;
   milestoneIndex: number;
-  viewerRole: "A" | "B" | "arbitrator";
-  initialData?: DisputeData;
+  viewerRole: "A" | "B";
 }
 
-function verdictColor(v?: string) {
-  if (v === "release_to_receiver") return "#4dcd8a";
-  if (v === "refund_to_payer") return "#e06c6c";
-  if (v === "split") return "#d4a23a";
-  return "rgba(238,240,243,0.35)";
-}
-function verdictLabel(v?: string) {
-  if (v === "release_to_receiver") return "Release to Receiver";
-  if (v === "refund_to_payer") return "Refund to Payer";
-  if (v === "split") return "Split Payment";
-  return "—";
-}
-function statusStep(s: DisputeStatus): number {
-  const steps: DisputeStatus[] = [
-    "awaiting_statements",
-    "party_a_submitted",
-    "party_b_submitted",
-    "ai_pending",
-    "ai_complete",
-    "resolved",
-  ];
-  const idx = steps.indexOf(s);
-  return idx === -1 ? 5 : idx;
-}
-function formatDate(iso?: string) {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-function truncateAddr(addr: string) {
-  if (!addr || addr === "TBD") return addr;
-  if (addr.length <= 14) return addr;
-  return `${addr.slice(0, 8)}…${addr.slice(-4)}`;
-}
-
-const TIMELINE_STEPS = [
-  { key: "awaiting_statements", label: "Opened" },
-  { key: "party_a_submitted", label: "Payer Filed" },
-  { key: "party_b_submitted", label: "Recv Filed" },
-  { key: "ai_pending", label: "AI Analysis" },
-  { key: "ai_complete", label: "AI Ready" },
-  { key: "resolved", label: "Resolved" },
-];
-
-function statusSummary(status: DisputeStatus, viewerRole: string): string {
-  if (status === "awaiting_statements")
-    return "Awaiting statements from both parties";
-  if (status === "party_a_submitted")
-    return viewerRole === "A"
-      ? "Your statement filed · awaiting receiver"
-      : "Payer filed · your statement pending";
-  if (status === "party_b_submitted")
-    return viewerRole === "B"
-      ? "Your statement filed · awaiting review"
-      : "Both statements filed · awaiting AI";
-  if (status === "ai_pending") return "AI analyzing statements…";
-  if (status === "ai_complete") return "AI verdict ready · awaiting arbitrator";
-  if (status === "resolved" || status === "auto_refunded")
-    return "Dispute resolved";
-  return "In dispute";
-}
-
-// ── Resolved narrative — plain-English per role + outcome ──────────────────
-function resolvedNarrative(
-  outcome: string,
-  viewerRole: "A" | "B" | "arbitrator",
-  splitPct?: number,
-): string {
-  if (outcome === "release_to_receiver") {
-    return viewerRole === "B"
-      ? "The arbitrator reviewed both statements and decided to release the escrowed funds to you. The sBTC transfer will be reflected on-chain shortly."
-      : "The arbitrator reviewed both statements and ruled in favour of the receiver. The escrowed funds have been released to them.";
+function statusLabel(s: string): string {
+  switch (s) {
+    case "awaiting_statements":
+      return "Awaiting Statements";
+    case "party_a_submitted":
+      return "Payer Filed Statement";
+    case "party_b_submitted":
+      return "Receiver Filed Statement";
+    case "ai_pending":
+      return "AI Analyzing…";
+    case "ai_complete":
+      return "Awaiting Arbitrator";
+    case "resolved":
+      return "Resolved";
+    case "auto_refunded":
+      return "Auto-Refunded";
+    default:
+      return s;
   }
-  if (outcome === "refund_to_payer") {
-    return viewerRole === "A"
-      ? "The arbitrator reviewed both statements and decided to refund the escrowed funds back to you. The sBTC transfer will be reflected on-chain shortly."
-      : "The arbitrator reviewed both statements and ruled in favour of the payer. The escrowed funds have been returned to them.";
-  }
-  if (outcome === "split") {
-    const pct = splitPct ?? 50;
-    return viewerRole === "B"
-      ? `The arbitrator ordered a split: you receive ${pct}% of the escrowed amount, the payer receives ${100 - pct}%.`
-      : `The arbitrator ordered a split: the receiver gets ${pct}%, you get ${100 - pct}% of the escrowed amount back.`;
-  }
-  return "The arbitrator has issued a final decision. The on-chain transaction will reflect this outcome.";
+}
+
+function statusColor(s: string): string {
+  if (s === "resolved" || s === "auto_refunded") return "#4ade80";
+  if (s === "ai_complete") return "#fbbf24";
+  if (s === "ai_pending") return "#fbbf24";
+  return "rgba(255,255,255,0.35)";
+}
+
+function timeAgo(d?: string): string {
+  if (!d) return "—";
+  const diff = Date.now() - new Date(d).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
 }
 
 export default function DisputeDetailView({
   agreementId,
   milestoneIndex,
   viewerRole,
-  initialData,
-}: DisputeDetailViewProps) {
-  const [dispute, setDispute] = useState<DisputeData | null>(
-    initialData ?? null,
-  );
-  const [loading, setLoading] = useState(!initialData);
-  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
-  const [flash, setFlash] = useState(false);
-  const [expanded, setExpanded] = useState(false);
+}: Props) {
+  const [dispute, setDispute] = useState<DisputeData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchDispute = useCallback(async () => {
     try {
       const res = await fetch(
         `${API_BASE}/api/arbitrate/${agreementId}/${milestoneIndex}`,
       );
-      if (!res.ok) return;
-      const json = await res.json();
-      if (json.dispute) {
-        setDispute(json.dispute);
-        setLastUpdate(new Date());
+      if (!res.ok) {
+        if (res.status === 404) {
+          setLoading(false);
+          return;
+        }
+        throw new Error(`Server error ${res.status}`);
       }
-    } catch {
-      /* ignore */
+      const json = await res.json();
+      setDispute(json.dispute ?? null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load dispute");
     } finally {
       setLoading(false);
     }
@@ -199,18 +142,15 @@ export default function DisputeDetailView({
   }, [fetchDispute]);
 
   useEffect(() => {
-    const socket = getSocket();
     joinDisputeRoom(agreementId, milestoneIndex);
+    const socket = getSocket();
     function onDisputeUpdated(payload: any) {
       if (
-        payload.agreement_id !== agreementId ||
-        payload.milestone_index !== milestoneIndex
-      )
-        return;
-      setDispute(payload as DisputeData);
-      setLastUpdate(new Date());
-      setFlash(true);
-      setTimeout(() => setFlash(false), 1500);
+        payload.agreement_id === agreementId &&
+        payload.milestone_index === milestoneIndex
+      ) {
+        setDispute((prev) => ({ ...(prev ?? {}), ...payload }) as DisputeData);
+      }
     }
     socket.on("dispute:updated", onDisputeUpdated);
     return () => {
@@ -219,834 +159,488 @@ export default function DisputeDetailView({
     };
   }, [agreementId, milestoneIndex]);
 
-  const bothSubmitted =
-    !!dispute?.party_a_submitted_at && !!dispute?.party_b_submitted_at;
-  const canSeePartyA =
-    viewerRole === "A" || viewerRole === "arbitrator" || bothSubmitted;
-  const canSeePartyB =
-    viewerRole === "B" || viewerRole === "arbitrator" || bothSubmitted;
+  if (loading) {
+    return (
+      <div style={styles.loading}>
+        <span style={styles.spinner} />
+        <span
+          style={{
+            fontSize: 11,
+            color: "rgba(255,255,255,0.28)",
+            fontFamily: "DM Mono, monospace",
+          }}
+        >
+          Loading dispute…
+        </span>
+      </div>
+    );
+  }
+
+  if (error) {
+    return <div style={styles.errorBox}>⚠ {error}</div>;
+  }
+
+  if (!dispute) {
+    return <div style={styles.noDispute}>No dispute record found yet.</div>;
+  }
+
   const isResolved =
-    dispute?.status === "resolved" || dispute?.status === "auto_refunded";
-  const currentStep = dispute ? statusStep(dispute.status) : 0;
-
-  if (loading)
-    return (
-      <div style={styles.loadingRow}>
-        <span style={styles.spinnerSm} />
-        <span style={styles.loadingText}>Loading dispute…</span>
-      </div>
-    );
-
-  if (!dispute)
-    return (
-      <div style={styles.loadingRow}>
-        <span style={styles.loadingText}>No dispute record found.</span>
-      </div>
-    );
-
-  const vc = verdictColor(
-    dispute.arbitrator_decision?.outcome ?? dispute.ai_verdict?.verdict,
-  );
+    dispute.status === "resolved" || dispute.status === "auto_refunded";
+  const aiV = dispute.ai_verdict;
+  const sc = statusColor(dispute.status);
 
   return (
-    <>
-      <style>{css}</style>
-      <div className={`ddv2-wrap${flash ? " ddv2-flash" : ""}`}>
-        {/* ── Compact strip ── */}
-        <button className="ddv2-strip" onClick={() => setExpanded((e) => !e)}>
-          <div className="ddv2-strip-left">
-            <div
-              className={`ddv2-dot${isResolved ? " ddv2-dot--resolved" : " ddv2-dot--active"}`}
-            />
-            <div className="ddv2-pips">
-              {TIMELINE_STEPS.map((_, i) => (
-                <div
-                  key={i}
-                  className={`ddv2-pip${i <= currentStep ? " ddv2-pip--done" : ""}${i === currentStep ? " ddv2-pip--current" : ""}`}
-                />
-              ))}
-            </div>
-            <span className="ddv2-step-label">
-              {TIMELINE_STEPS[currentStep]?.label}
-            </span>
-            <span className="ddv2-sep">·</span>
-            <span className="ddv2-summary">
-              {statusSummary(dispute.status, viewerRole)}
-            </span>
-          </div>
-          <div className="ddv2-strip-right">
-            <div className="ddv2-parties">
-              <span
-                className={`ddv2-party-dot${dispute.party_a_submitted_at ? " ddv2-party-dot--filed" : ""}`}
-                title="Payer"
-              >
-                A
-              </span>
-              <span
-                className={`ddv2-party-dot${dispute.party_b_submitted_at ? " ddv2-party-dot--filed" : ""}`}
-                title="Receiver"
-              >
-                B
-              </span>
-            </div>
-            {lastUpdate && (
-              <span className="ddv2-ts">
-                {lastUpdate.toLocaleTimeString([], {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}
-              </span>
-            )}
-            <svg
-              className={`ddv2-chevron${expanded ? " ddv2-chevron--open" : ""}`}
-              width="11"
-              height="11"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-            >
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-          </div>
-        </button>
-
-        {/* ── Expanded panel ── */}
-        {expanded && (
-          <div className="ddv2-panel">
-            {/* Timeline */}
-            <div className="ddv2-timeline">
-              {TIMELINE_STEPS.map((step, i) => {
-                const done = i < currentStep;
-                const active = i === currentStep;
-                return (
-                  <div key={step.key} className="ddv2-tl-step">
-                    {i < TIMELINE_STEPS.length - 1 && (
-                      <div
-                        className="ddv2-tl-line"
-                        style={{
-                          background: done
-                            ? "#4dcd8a"
-                            : "rgba(238,240,243,0.07)",
-                        }}
-                      />
-                    )}
-                    <div
-                      className={`ddv2-tl-dot${done ? " ddv2-tl-dot--done" : ""}${active ? " ddv2-tl-dot--active" : ""}`}
-                    />
-                    <div
-                      className={`ddv2-tl-label${active ? " ddv2-tl-label--active" : ""}`}
-                    >
-                      {step.label}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Meta pills */}
-            <div className="ddv2-meta-row">
-              {[
-                { k: "Payer", v: truncateAddr(dispute.contract_terms.payer) },
-                {
-                  k: "Receiver",
-                  v: truncateAddr(dispute.contract_terms.receiver),
-                },
-                {
-                  k: "Arbitrator",
-                  v: truncateAddr(dispute.contract_terms.arbitrator),
-                },
-                {
-                  k: "Milestone Value",
-                  v: `${dispute.contract_terms.milestone_percentage}% · ${((dispute.contract_terms.total_amount * dispute.contract_terms.milestone_percentage) / 100).toFixed(6)} sBTC`,
-                },
-                { k: "Opened", v: formatDate(dispute.opened_at) },
-              ].map(({ k, v }) => (
-                <div key={k} className="ddv2-meta-pill">
-                  <div className="ddv2-meta-pill-label">{k}</div>
-                  <div className="ddv2-meta-pill-val">{v}</div>
-                </div>
-              ))}
-            </div>
-
-            {/* Statements */}
-            <div className="ddv2-stmts">
-              <StatementCard
-                party="A"
-                label={`Payer${viewerRole === "A" ? " (You)" : ""}`}
-                statement={dispute.party_a_statement}
-                evidence={dispute.party_a_evidence ?? []}
-                submittedAt={dispute.party_a_submitted_at}
-                submitted={!!dispute.party_a_submitted_at}
-                visible={canSeePartyA}
-              />
-              <StatementCard
-                party="B"
-                label={`Receiver${viewerRole === "B" ? " (You)" : ""}`}
-                statement={dispute.party_b_statement}
-                evidence={dispute.party_b_evidence ?? []}
-                submittedAt={dispute.party_b_submitted_at}
-                submitted={!!dispute.party_b_submitted_at}
-                visible={canSeePartyB}
-              />
-            </div>
-
-            {/* Blind-submission notice */}
-            {!bothSubmitted && viewerRole !== "arbitrator" && (
-              <div className="ddv2-notice">
-                <svg
-                  width="11"
-                  height="11"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="#d4a23a"
-                  strokeWidth="2"
-                >
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="12" y1="8" x2="12" y2="12" />
-                  <line x1="12" y1="16" x2="12.01" y2="16" />
-                </svg>
-                <span>
-                  <strong
-                    style={{ color: "rgba(238,240,243,0.62)", fontWeight: 600 }}
-                  >
-                    Blind submission system
-                  </strong>{" "}
-                  — the other party's statement is hidden until both sides have
-                  filed.
-                  {viewerRole === "B" && !dispute.party_b_submitted_at && (
-                    <>
-                      {" "}
-                      Use the{" "}
-                      <strong style={{ color: "#d4a23a" }}>
-                        Evidence
-                      </strong>{" "}
-                      button above to file yours and unlock theirs.
-                    </>
-                  )}
-                  {viewerRole === "A" && !dispute.party_a_submitted_at && (
-                    <>
-                      {" "}
-                      Use the{" "}
-                      <strong style={{ color: "#d4a23a" }}>
-                        Evidence
-                      </strong>{" "}
-                      button above to file yours and unlock theirs.
-                    </>
-                  )}
-                </span>
-              </div>
-            )}
-
-            {/* Arbitrator-only section */}
-            {viewerRole === "arbitrator" && (
-              <>
-                {dispute.status === "ai_pending" && (
-                  <div className="ddv2-ai-pending">
-                    <span className="ddv2-spinner-amber" />
-                    <span>AI is analyzing both statements…</span>
-                    <span className="ddv2-muted">Usually 5–15 s</span>
-                  </div>
-                )}
-                {dispute.ai_verdict && (
-                  <AIVerdictCard verdict={dispute.ai_verdict} />
-                )}
-                {dispute.status === "ai_complete" &&
-                  !dispute.arbitrator_decision && (
-                    <div className="ddv2-awaiting">
-                      <div className="ddv2-awaiting-title">
-                        ⚖️ Awaiting Arbitrator Decision
-                      </div>
-                      <div className="ddv2-awaiting-body">
-                        AI recommendation ready. The arbitrator (
-                        {truncateAddr(dispute.contract_terms.arbitrator)}) must
-                        now confirm or override.
-                      </div>
-                    </div>
-                  )}
-                {dispute.arbitrator_decision && (
-                  <ArbitratorDecisionCard
-                    decision={dispute.arbitrator_decision}
-                  />
-                )}
-              </>
-            )}
-
-            {/* Party: awaiting arbitrator */}
-            {viewerRole !== "arbitrator" && bothSubmitted && !isResolved && (
-              <div className="ddv2-awaiting">
-                <div className="ddv2-awaiting-title">
-                  ⚖️ Awaiting Arbitrator Review
-                </div>
-                <div className="ddv2-awaiting-body">
-                  Both statements received. The arbitrator (
-                  {truncateAddr(dispute.contract_terms.arbitrator)}) is
-                  reviewing the case.
-                </div>
-              </div>
-            )}
-
-            {/* ── Party: RESOLVED — rich detail ── */}
-            {viewerRole !== "arbitrator" &&
-              isResolved &&
-              dispute.arbitrator_decision && (
-                <div
-                  className="ddv2-resolved"
-                  style={{ borderColor: vc + "30", background: vc + "05" }}
-                >
-                  {/* Header */}
-                  <div className="ddv2-resolved-header">
-                    <div className="ddv2-resolved-icon">⚖️</div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div className="ddv2-resolved-eyebrow">
-                        Dispute Resolved
-                      </div>
-                      <div
-                        className="ddv2-resolved-verdict"
-                        style={{ color: vc }}
-                      >
-                        {verdictLabel(dispute.arbitrator_decision.outcome)}
-                      </div>
-                    </div>
-                    <span
-                      className={
-                        dispute.arbitrator_decision.followed_ai
-                          ? "ddv2-badge-ai"
-                          : "ddv2-badge-override"
-                      }
-                      style={{ alignSelf: "flex-start", flexShrink: 0 }}
-                    >
-                      {dispute.arbitrator_decision.followed_ai
-                        ? "AI Confirmed"
-                        : "AI Overridden"}
-                    </span>
-                  </div>
-
-                  {/* Plain-English explanation */}
-                  <div className="ddv2-resolved-narrative">
-                    {resolvedNarrative(
-                      dispute.arbitrator_decision.outcome,
-                      viewerRole,
-                      dispute.ai_verdict?.split_percentage,
-                    )}
-                  </div>
-
-                  {/* Override reason — only when arbitrator diverged from AI */}
-                  {!dispute.arbitrator_decision.followed_ai &&
-                    dispute.arbitrator_decision.override_reason && (
-                      <div className="ddv2-resolved-override">
-                        <div
-                          className="ddv2-section-label"
-                          style={{ color: "#d4a23a", marginBottom: 4 }}
-                        >
-                          Why the arbitrator overrode AI
-                        </div>
-                        <div className="ddv2-resolved-override-text">
-                          {dispute.arbitrator_decision.override_reason}
-                        </div>
-                      </div>
-                    )}
-
-                  {/* Meta — arbitrator address + timestamps */}
-                  <div className="ddv2-resolved-meta">
-                    <div className="ddv2-resolved-meta-item">
-                      <span className="ddv2-section-label">Arbitrator</span>
-                      <span className="ddv2-mono">
-                        {dispute.arbitrator_decision.arbitrator_address.length >
-                        18
-                          ? `${dispute.arbitrator_decision.arbitrator_address.slice(0, 10)}…${dispute.arbitrator_decision.arbitrator_address.slice(-6)}`
-                          : dispute.arbitrator_decision.arbitrator_address}
-                      </span>
-                    </div>
-                    <div className="ddv2-resolved-meta-item">
-                      <span className="ddv2-section-label">Decided</span>
-                      <span className="ddv2-mono">
-                        {formatDate(dispute.arbitrator_decision.decided_at)}
-                      </span>
-                    </div>
-                    {dispute.resolved_at && (
-                      <div className="ddv2-resolved-meta-item">
-                        <span className="ddv2-section-label">On-chain</span>
-                        <span className="ddv2-mono">
-                          {formatDate(dispute.resolved_at)}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-            {dispute.resolved_at && (
-              <div className="ddv2-footer">
-                Resolved: {formatDate(dispute.resolved_at)}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    </>
-  );
-}
-
-// ── Sub-components ────────────────────────────────────────────
-
-function StatementCard({
-  party,
-  label,
-  statement,
-  evidence,
-  submittedAt,
-  submitted,
-  visible,
-}: {
-  party: "A" | "B";
-  label: string;
-  statement: string;
-  evidence: string[];
-  submittedAt?: string;
-  submitted: boolean;
-  visible: boolean;
-}) {
-  const accentColor = party === "A" ? "#5b9cf6" : "#4dcd8a";
-  return (
-    <div className="ddv2-stmt" style={{ borderColor: accentColor + "20" }}>
-      <div
-        className="ddv2-stmt-head"
-        style={{
-          background: accentColor + "06",
-          borderColor: accentColor + "14",
-        }}
-      >
-        <div className="ddv2-stmt-party">
-          <div
-            className="ddv2-stmt-avatar"
+    <div style={styles.root}>
+      {/* ── Status bar ── */}
+      <div style={styles.statusBar}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {dispute.status === "ai_pending" && (
+            <span style={styles.spinnerAmber} />
+          )}
+          <span
             style={{
-              background: accentColor + "14",
-              borderColor: accentColor + "28",
-              color: accentColor,
+              ...styles.statusBadge,
+              color: sc,
+              borderColor: sc + "30",
+              background: sc + "0d",
             }}
           >
-            {party}
-          </div>
-          <span className="ddv2-stmt-name">{label}</span>
+            {statusLabel(dispute.status)}
+          </span>
         </div>
-        {submitted ? (
-          <span className="ddv2-badge-submitted">✓ Submitted</span>
-        ) : (
-          <span className="ddv2-badge-pending">Pending</span>
-        )}
+        <span style={styles.updatedAt}>
+          Updated {timeAgo(dispute.updated_at)}
+        </span>
       </div>
-      <div className="ddv2-stmt-body">
-        {!submitted ? (
-          <p className="ddv2-muted ddv2-italic">
-            Waiting for {label.split(" ")[0].toLowerCase()} to submit their
-            statement…
-          </p>
-        ) : !visible ? (
-          <div className="ddv2-locked">
-            <div className="ddv2-locked-icon">🔒</div>
-            <div>
-              <div className="ddv2-locked-title">Blind Submission</div>
-              <div className="ddv2-locked-body">
-                You'll see this statement after you file yours. Neither party
-                can read the other's position first.
-              </div>
-            </div>
+
+      {/* ── ARBITRATOR DECISION BANNER — shown prominently when resolved ── */}
+      {isResolved && dispute.arbitrator_decision && (
+        <ArbitratorDecisionBanner
+          agreementId={agreementId}
+          milestoneIndex={milestoneIndex}
+          viewerRole={viewerRole}
+        />
+      )}
+
+      {/* ── Statements summary ── */}
+      <div style={styles.stmtsRow}>
+        <StatementPill
+          party="A"
+          label={viewerRole === "A" ? "Your Statement" : "Payer Statement"}
+          submitted={!!dispute.party_a_submitted_at}
+          submittedAt={dispute.party_a_submitted_at}
+          statement={dispute.party_a_statement}
+          evidenceCount={dispute.party_a_evidence?.length ?? 0}
+        />
+        <StatementPill
+          party="B"
+          label={viewerRole === "B" ? "Your Statement" : "Receiver Statement"}
+          submitted={!!dispute.party_b_submitted_at}
+          submittedAt={dispute.party_b_submitted_at}
+          statement={dispute.party_b_statement}
+          evidenceCount={dispute.party_b_evidence?.length ?? 0}
+        />
+      </div>
+
+      {/* ── AI Verdict (collapsed summary) ── */}
+      {aiV && !isResolved && <AIVerdictSummary verdict={aiV} />}
+
+      {/* ── Awaiting AI message ── */}
+      {!aiV &&
+        !isResolved &&
+        dispute.party_a_submitted_at &&
+        dispute.party_b_submitted_at && (
+          <div style={styles.infoNotice}>
+            <span style={styles.spinnerAmber} />
+            <span>
+              AI is analyzing both statements… this usually takes 5–15 seconds.
+            </span>
           </div>
-        ) : (
-          <>
-            <p className="ddv2-stmt-text">
-              {statement || (
-                <span className="ddv2-muted ddv2-italic">
-                  No statement provided.
-                </span>
-              )}
-            </p>
-            {evidence.length > 0 && (
-              <div className="ddv2-evidence">
-                <div className="ddv2-evidence-label">
-                  Evidence ({evidence.length})
-                </div>
-                {evidence.map((url, i) => (
-                  <a
-                    key={i}
-                    href={url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="ddv2-evidence-item"
-                    style={{
-                      borderColor: accentColor + "20",
-                      color: accentColor,
-                    }}
-                  >
-                    <span>📎</span>
-                    <span className="ddv2-evidence-name">
-                      [{party}-{i + 1}] {url.split("/").pop() ?? url}
-                    </span>
-                    <span style={{ opacity: 0.45 }}>↗</span>
-                  </a>
-                ))}
-              </div>
-            )}
-            {submittedAt && (
-              <div className="ddv2-muted" style={{ fontSize: 9, marginTop: 8 }}>
-                Submitted {formatDate(submittedAt)}
-              </div>
-            )}
-          </>
         )}
-      </div>
+
+      {/* ── Awaiting statements message ── */}
+      {!isResolved &&
+        !(dispute.party_a_submitted_at && dispute.party_b_submitted_at) && (
+          <div style={styles.infoNotice}>
+            {!dispute.party_a_submitted_at && !dispute.party_b_submitted_at
+              ? "Neither party has filed a statement yet. File yours to start the dispute process."
+              : viewerRole === "A" && !dispute.party_a_submitted_at
+                ? "You haven't filed your statement yet. Use the Evidence button above to submit."
+                : viewerRole === "B" && !dispute.party_b_submitted_at
+                  ? "You haven't filed your statement yet. Use the Evidence button above to submit."
+                  : "Waiting for the other party to submit their statement."}
+          </div>
+        )}
+
+      {/* ── AI ready, awaiting arbitrator ── */}
+      {aiV && !isResolved && dispute.status === "ai_complete" && (
+        <div
+          style={{
+            ...styles.infoNotice,
+            borderColor: "rgba(251,191,36,0.20)",
+            color: "rgba(251,191,36,0.70)",
+          }}
+        >
+          ⚖ AI verdict is ready. Awaiting arbitrator's final decision.
+        </div>
+      )}
     </div>
   );
 }
 
-function AIVerdictCard({ verdict }: { verdict: AIVerdict }) {
-  const vc = verdictColor(verdict.verdict);
+// ── Statement Pill ────────────────────────────────────────────
+
+function StatementPill({
+  party,
+  label,
+  submitted,
+  submittedAt,
+  statement,
+  evidenceCount,
+}: {
+  party: "A" | "B";
+  label: string;
+  submitted: boolean;
+  submittedAt?: string;
+  statement: string;
+  evidenceCount: number;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const accent = party === "A" ? "#60a5fa" : "#f472b6";
+
   return (
-    <div className="ddv2-verdict" style={{ borderColor: vc + "28" }}>
-      <div
-        className="ddv2-verdict-head"
-        style={{ background: vc + "06", borderColor: vc + "18" }}
+    <div
+      style={{
+        flex: 1,
+        border: `1px solid ${submitted ? accent + "25" : "rgba(255,255,255,0.07)"}`,
+        borderRadius: 8,
+        overflow: "hidden",
+      }}
+    >
+      <button
+        style={{
+          width: "100%",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "9px 12px",
+          background: submitted ? accent + "08" : "rgba(255,255,255,0.02)",
+          border: "none",
+          cursor: submitted ? "pointer" : "default",
+          gap: 8,
+          textAlign: "left",
+        }}
+        onClick={() => submitted && statement && setExpanded(!expanded)}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span>🤖</span>
-          <span className="ddv2-verdict-title">AI Arbitration Verdict</span>
-        </div>
-        <span className="ddv2-muted" style={{ fontSize: 9 }}>
-          {verdict.model ?? "AI"}
-          {verdict.latency_ms
-            ? ` · ${(verdict.latency_ms / 1000).toFixed(1)}s`
-            : ""}
-        </span>
-      </div>
-      <div className="ddv2-verdict-body">
         <div
           style={{
             display: "flex",
             alignItems: "center",
-            gap: 10,
-            flexWrap: "wrap",
+            gap: 8,
+            flex: 1,
+            minWidth: 0,
           }}
         >
-          <span
-            className="ddv2-verdict-pill"
-            style={{ color: vc, background: vc + "0f", borderColor: vc + "28" }}
+          <div
+            style={{
+              width: 18,
+              height: 18,
+              borderRadius: 4,
+              background: accent + "15",
+              border: `1px solid ${accent}30`,
+              color: accent,
+              fontSize: 9,
+              fontFamily: "DM Mono, monospace",
+              fontWeight: 800,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexShrink: 0,
+            }}
           >
-            {verdictLabel(verdict.verdict)}
+            {party}
+          </div>
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              color: "rgba(255,255,255,0.65)",
+              fontFamily: "DM Sans, sans-serif",
+            }}
+          >
+            {label}
           </span>
-          {verdict.split_percentage !== undefined && (
-            <span className="ddv2-muted" style={{ fontSize: 10 }}>
-              Receiver {verdict.split_percentage}% / Payer{" "}
-              {100 - verdict.split_percentage}%
+        </div>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            flexShrink: 0,
+          }}
+        >
+          {evidenceCount > 0 && (
+            <span
+              style={{
+                fontSize: 9,
+                fontFamily: "DM Mono, monospace",
+                color: "rgba(255,255,255,0.28)",
+              }}
+            >
+              {evidenceCount} file{evidenceCount !== 1 ? "s" : ""}
             </span>
           )}
-          <div className="ddv2-conf-row">
-            <span className="ddv2-muted" style={{ fontSize: 9 }}>
-              Confidence
+          {submitted ? (
+            <span
+              style={{
+                fontSize: 9,
+                fontFamily: "DM Mono, monospace",
+                color: "#4ade80",
+                background: "rgba(74,222,128,0.08)",
+                border: "1px solid rgba(74,222,128,0.20)",
+                borderRadius: 3,
+                padding: "2px 6px",
+              }}
+            >
+              ✓ Filed
             </span>
-            <div className="ddv2-conf-bar">
-              <div
-                className="ddv2-conf-fill"
-                style={{
-                  width: `${verdict.confidence}%`,
-                  background:
-                    verdict.confidence >= 70
-                      ? "#4dcd8a"
-                      : verdict.confidence >= 40
-                        ? "#d4a23a"
-                        : "#e06c6c",
-                }}
-              />
-            </div>
-            <span className="ddv2-muted" style={{ fontSize: 9 }}>
-              {verdict.confidence}%
+          ) : (
+            <span
+              style={{
+                fontSize: 9,
+                fontFamily: "DM Mono, monospace",
+                color: "rgba(255,255,255,0.25)",
+                background: "rgba(255,255,255,0.04)",
+                border: "1px solid rgba(255,255,255,0.08)",
+                borderRadius: 3,
+                padding: "2px 6px",
+              }}
+            >
+              Pending
             </span>
-          </div>
+          )}
+          {submitted && statement && (
+            <span
+              style={{
+                fontSize: 9,
+                color: "rgba(255,255,255,0.25)",
+                transform: expanded ? "rotate(180deg)" : "none",
+                display: "inline-block",
+                transition: "transform 0.2s",
+              }}
+            >
+              ▾
+            </span>
+          )}
         </div>
-        <div>
-          <div className="ddv2-section-label">Reasoning</div>
-          <p className="ddv2-reasoning">{verdict.reasoning}</p>
-        </div>
-        {verdict.key_factors.length > 0 && (
-          <div>
-            <div className="ddv2-section-label">Key Factors</div>
-            {verdict.key_factors.map((f, i) => (
-              <div
-                key={i}
-                className="ddv2-factor"
-                style={{ color: "rgba(238,240,243,0.52)" }}
-              >
-                <span style={{ color: vc }}>→</span> {f}
-              </div>
-            ))}
-          </div>
-        )}
-        {verdict.warnings.length > 0 && (
-          <div>
-            <div className="ddv2-section-label" style={{ color: "#d4a23a" }}>
-              ⚠ Warnings
+      </button>
+
+      {expanded && statement && (
+        <div
+          style={{
+            padding: "10px 12px",
+            borderTop: `1px solid ${accent}12`,
+            background: "rgba(255,255,255,0.015)",
+          }}
+        >
+          <p
+            style={{
+              fontSize: 12,
+              color: "rgba(255,255,255,0.52)",
+              lineHeight: 1.65,
+              margin: 0,
+            }}
+          >
+            {statement}
+          </p>
+          {submittedAt && (
+            <div
+              style={{
+                fontSize: 9,
+                fontFamily: "DM Mono, monospace",
+                color: "rgba(255,255,255,0.22)",
+                marginTop: 6,
+              }}
+            >
+              Submitted {new Date(submittedAt).toLocaleString()}
             </div>
-            {verdict.warnings.map((w, i) => (
-              <div key={i} className="ddv2-factor ddv2-warning">
-                <span>⚠</span> {w}
-              </div>
-            ))}
-          </div>
-        )}
-        <span className="ddv2-muted" style={{ fontSize: 9 }}>
-          Generated {formatDate(verdict.generated_at)}
-        </span>
-      </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
-function ArbitratorDecisionCard({
-  decision,
-}: {
-  decision: ArbitratorDecision;
-}) {
-  const dc = verdictColor(decision.outcome);
+// ── AI Verdict Summary ────────────────────────────────────────
+
+function AIVerdictSummary({ verdict }: { verdict: AIVerdict }) {
+  const isRelease = verdict.verdict === "release_to_receiver";
+  const isRefund = verdict.verdict === "refund_to_payer";
+  const vc = isRelease ? "#4ade80" : isRefund ? "#f87171" : "#fbbf24";
+  const vl = isRelease
+    ? "AI Recommends: Release to Receiver"
+    : isRefund
+      ? "AI Recommends: Refund to Payer"
+      : `AI Recommends: Split (${verdict.split_percentage ?? 50}%)`;
+
   return (
-    <div className="ddv2-decision" style={{ borderColor: dc + "35" }}>
-      <div
-        className="ddv2-verdict-head"
-        style={{ background: dc + "06", borderColor: dc + "18" }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span>⚖️</span>
-          <span className="ddv2-verdict-title">Final Arbitrator Decision</span>
-        </div>
+    <div
+      style={{
+        border: `1px solid ${vc}22`,
+        borderRadius: 8,
+        padding: "10px 12px",
+        background: vc + "06",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 10,
+        flexWrap: "wrap",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 12 }}>🤖</span>
         <span
-          className={
-            decision.followed_ai ? "ddv2-badge-ai" : "ddv2-badge-override"
-          }
+          style={{
+            fontSize: 12,
+            fontFamily: "DM Mono, monospace",
+            color: vc,
+            fontWeight: 600,
+          }}
         >
-          {decision.followed_ai ? "Confirmed AI" : "Overrode AI"}
+          {vl}
         </span>
       </div>
-      <div className="ddv2-verdict-body">
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <span
-          className="ddv2-verdict-pill"
-          style={{ color: dc, background: dc + "0d", borderColor: dc + "28" }}
+          style={{
+            fontSize: 10,
+            fontFamily: "DM Mono, monospace",
+            color: "rgba(255,255,255,0.30)",
+          }}
         >
-          {verdictLabel(decision.outcome)}
+          Confidence
         </span>
-        {decision.override_reason && (
-          <div>
-            <div className="ddv2-section-label" style={{ color: "#d4a23a" }}>
-              Override Reason
-            </div>
-            <div className="ddv2-override">{decision.override_reason}</div>
-          </div>
-        )}
-        <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
-          <div>
-            <div className="ddv2-section-label">Arbitrator</div>
-            <span className="ddv2-mono">
-              {decision.arbitrator_address.length > 18
-                ? `${decision.arbitrator_address.slice(0, 12)}…${decision.arbitrator_address.slice(-6)}`
-                : decision.arbitrator_address}
-            </span>
-          </div>
-          <div>
-            <div className="ddv2-section-label">Decided</div>
-            <span className="ddv2-mono">{formatDate(decision.decided_at)}</span>
-          </div>
+        <div
+          style={{
+            width: 48,
+            height: 2,
+            background: "rgba(255,255,255,0.07)",
+            borderRadius: 1,
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              width: `${verdict.confidence}%`,
+              height: "100%",
+              background: vc,
+              borderRadius: 1,
+            }}
+          />
         </div>
+        <span
+          style={{
+            fontSize: 10,
+            fontFamily: "DM Mono, monospace",
+            color: vc,
+            fontWeight: 700,
+          }}
+        >
+          {verdict.confidence}%
+        </span>
       </div>
     </div>
   );
 }
 
-// ── Inline styles (loading state only) ───────────────────────
-const styles = {
-  loadingRow: {
+// ── Styles ────────────────────────────────────────────────────
+
+const styles: Record<string, React.CSSProperties> = {
+  root: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
+    fontFamily: "DM Sans, sans-serif",
+  },
+  statusBar: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  statusBadge: {
+    fontSize: 9,
+    fontFamily: "DM Mono, monospace",
+    fontWeight: 700,
+    textTransform: "uppercase" as const,
+    letterSpacing: "0.07em",
+    border: "1px solid",
+    borderRadius: 3,
+    padding: "2px 8px",
+  },
+  updatedAt: {
+    fontSize: 10,
+    fontFamily: "DM Mono, monospace",
+    color: "rgba(255,255,255,0.22)",
+  },
+  stmtsRow: {
+    display: "flex",
+    gap: 8,
+    flexWrap: "wrap" as const,
+  },
+  infoNotice: {
     display: "flex",
     alignItems: "center",
     gap: 8,
-    padding: "11px 16px",
-  } as React.CSSProperties,
-  spinnerSm: {
+    padding: "9px 12px",
+    border: "1px solid rgba(255,255,255,0.07)",
+    borderRadius: 7,
+    fontSize: 11,
+    fontFamily: "DM Mono, monospace",
+    color: "rgba(255,255,255,0.35)",
+    lineHeight: 1.6,
+  },
+  loading: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "12px 0",
+  },
+  spinner: {
     display: "inline-block",
-    width: 9,
-    height: 9,
+    width: 12,
+    height: 12,
     borderRadius: "50%",
-    border: "1.5px solid rgba(200,255,62,0.15)",
-    borderTopColor: "#c8ff3e",
-    animation: "ddv2Spin 0.65s linear infinite",
-  } as React.CSSProperties,
-  loadingText: {
-    fontSize: 10,
-    fontFamily: "var(--mono, monospace)",
-    color: "rgba(238,240,243,0.30)",
-  } as React.CSSProperties,
+    border: "1.5px solid rgba(255,255,255,0.10)",
+    borderTopColor: "rgba(255,255,255,0.55)",
+    animation: "spin 0.65s linear infinite",
+    flexShrink: 0,
+  },
+  spinnerAmber: {
+    display: "inline-block",
+    width: 10,
+    height: 10,
+    borderRadius: "50%",
+    border: "1.5px solid rgba(251,191,36,0.15)",
+    borderTopColor: "#fbbf24",
+    animation: "spin 0.65s linear infinite",
+    flexShrink: 0,
+  },
+  errorBox: {
+    padding: "10px 12px",
+    background: "rgba(248,113,113,0.07)",
+    border: "1px solid rgba(248,113,113,0.20)",
+    borderRadius: 7,
+    fontSize: 11,
+    fontFamily: "DM Mono, monospace",
+    color: "#f87171",
+  },
+  noDispute: {
+    fontSize: 11,
+    fontFamily: "DM Mono, monospace",
+    color: "rgba(255,255,255,0.25)",
+    fontStyle: "italic",
+    padding: "8px 0",
+  },
 };
-
-// ── CSS ───────────────────────────────────────────────────────
-const css = `
-@keyframes ddv2Spin  { to { transform: rotate(360deg); } }
-@keyframes ddv2Pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(0.84)} }
-@keyframes ddv2SlideDown { from{opacity:0;transform:translateY(-4px)} to{opacity:1;transform:translateY(0)} }
-
-.ddv2-wrap { border-top:1px solid rgba(212,162,58,0.10); transition:background 0.28s; }
-.ddv2-flash { background:rgba(212,162,58,0.03); }
-
-/* ── Strip ── */
-.ddv2-strip {
-  width:100%; display:flex; align-items:center; justify-content:space-between;
-  padding:10px 18px; gap:16px; cursor:pointer; background:none; border:none;
-  text-align:left; transition:background 0.14s;
-}
-.ddv2-strip:hover { background:rgba(238,240,243,0.02); }
-.ddv2-strip-left  { display:flex; align-items:center; gap:10px; min-width:0; flex:1; }
-.ddv2-strip-right { display:flex; align-items:center; gap:10px; flex-shrink:0; }
-
-.ddv2-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
-.ddv2-dot--active  { background:#d4a23a; box-shadow:0 0 6px rgba(212,162,58,0.45); animation:ddv2Pulse 2s ease infinite; }
-.ddv2-dot--resolved{ background:#4dcd8a; }
-
-.ddv2-pips { display:flex; align-items:center; gap:3px; flex-shrink:0; }
-.ddv2-pip  { width:16px; height:2px; border-radius:1px; background:rgba(238,240,243,0.08); transition:background 0.3s; }
-.ddv2-pip--done    { background:rgba(77,205,138,0.50); }
-.ddv2-pip--current { background:#d4a23a; }
-
-.ddv2-step-label { font-size:9px; font-family:'DM Mono',monospace; font-weight:700; color:#d4a23a; text-transform:uppercase; letter-spacing:0.09em; flex-shrink:0; white-space:nowrap; }
-.ddv2-sep        { font-size:10px; color:rgba(238,240,243,0.14); flex-shrink:0; }
-.ddv2-summary    { font-size:11px; color:rgba(238,240,243,0.38); font-family:'DM Sans',sans-serif; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
-
-.ddv2-parties { display:flex; align-items:center; gap:4px; }
-.ddv2-party-dot {
-  width:18px; height:18px; border-radius:50%; flex-shrink:0;
-  display:flex; align-items:center; justify-content:center;
-  font-size:8px; font-family:'DM Mono',monospace; font-weight:700;
-  background:rgba(238,240,243,0.04); border:1px solid rgba(238,240,243,0.09);
-  color:rgba(238,240,243,0.22); transition:all 0.2s;
-}
-.ddv2-party-dot--filed { background:rgba(77,205,138,0.10); border-color:rgba(77,205,138,0.28); color:#4dcd8a; }
-
-.ddv2-ts      { font-size:9px; font-family:'DM Mono',monospace; color:rgba(238,240,243,0.22); flex-shrink:0; }
-.ddv2-chevron { color:rgba(238,240,243,0.22); flex-shrink:0; transition:transform 0.22s cubic-bezier(0.16,1,0.3,1); }
-.ddv2-chevron--open { transform:rotate(180deg); }
-
-/* ── Panel ── */
-.ddv2-panel {
-  padding:16px 18px 18px; border-top:1px solid rgba(238,240,243,0.06);
-  display:flex; flex-direction:column; gap:14px;
-  animation:ddv2SlideDown 0.20s cubic-bezier(0.16,1,0.3,1) both;
-}
-
-/* ── Timeline ── */
-.ddv2-timeline { display:flex; align-items:flex-start; padding:4px 0 2px; }
-.ddv2-tl-step  { flex:1; display:flex; flex-direction:column; align-items:center; position:relative; }
-.ddv2-tl-line  { position:absolute; top:4px; left:calc(50% + 5px); right:calc(-50% + 5px); height:1px; z-index:0; transition:background 0.3s; }
-.ddv2-tl-dot   { width:10px; height:10px; border-radius:50%; flex-shrink:0; z-index:1; position:relative; border:1.5px solid rgba(238,240,243,0.14); background:#0f1011; transition:all 0.25s; }
-.ddv2-tl-dot--done   { background:rgba(77,205,138,0.45); border-color:#4dcd8a; }
-.ddv2-tl-dot--active { background:#0f1011; border-color:#d4a23a; box-shadow:0 0 0 3px rgba(212,162,58,0.16),0 0 7px rgba(212,162,58,0.30); animation:ddv2Pulse 2s ease infinite; }
-.ddv2-tl-dot--active::after { content:''; position:absolute; inset:2px; border-radius:50%; background:#d4a23a; }
-.ddv2-tl-label        { font-size:8px; font-family:'DM Mono',monospace; color:rgba(238,240,243,0.24); text-align:center; margin-top:7px; line-height:1.35; white-space:nowrap; }
-.ddv2-tl-label--active{ color:#d4a23a; font-weight:600; }
-
-/* ── Meta pills ── */
-.ddv2-meta-row  { display:flex; flex-wrap:wrap; gap:6px; }
-.ddv2-meta-pill { padding:6px 10px; border-radius:6px; background:rgba(238,240,243,0.03); border:1px solid rgba(238,240,243,0.07); min-width:0; }
-.ddv2-meta-pill-label { font-size:8px; font-family:'DM Mono',monospace; color:rgba(238,240,243,0.24); text-transform:uppercase; letter-spacing:0.09em; margin-bottom:3px; white-space:nowrap; }
-.ddv2-meta-pill-val   { font-size:11px; font-family:'DM Mono',monospace; color:rgba(238,240,243,0.72); font-weight:500; white-space:nowrap; }
-
-/* ── Statements ── */
-.ddv2-stmts { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-@media (max-width:640px) { .ddv2-stmts { grid-template-columns:1fr; } }
-.ddv2-stmt { border-radius:8px; border:1px solid; overflow:hidden; background:rgba(238,240,243,0.015); display:flex; flex-direction:column; }
-.ddv2-stmt-head { display:flex; align-items:center; justify-content:space-between; padding:10px 12px; border-bottom:1px solid; gap:8px; min-height:42px; }
-.ddv2-stmt-party { display:flex; align-items:center; gap:8px; min-width:0; flex:1; }
-.ddv2-stmt-avatar { width:22px; height:22px; border-radius:50%; flex-shrink:0; border:1px solid; display:flex; align-items:center; justify-content:center; font-size:8px; font-family:'DM Mono',monospace; font-weight:800; }
-.ddv2-stmt-name { font-size:12px; font-weight:600; color:rgba(238,240,243,0.80); font-family:'DM Sans',sans-serif; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.ddv2-stmt-body { padding:12px; flex:1; }
-.ddv2-stmt-text { font-size:12px; color:rgba(238,240,243,0.58); line-height:1.68; margin:0 0 8px; }
-
-.ddv2-badge-submitted { font-size:9px; font-family:'DM Mono',monospace; font-weight:600; color:#4dcd8a; background:rgba(77,205,138,0.08); border:1px solid rgba(77,205,138,0.22); border-radius:4px; padding:2px 7px; flex-shrink:0; white-space:nowrap; }
-.ddv2-badge-pending   { font-size:9px; font-family:'DM Mono',monospace; font-weight:500; color:rgba(238,240,243,0.28); background:rgba(238,240,243,0.04); border:1px solid rgba(238,240,243,0.08); border-radius:4px; padding:2px 7px; flex-shrink:0; white-space:nowrap; }
-
-.ddv2-locked       { display:flex; align-items:flex-start; gap:10px; padding:2px 0; }
-.ddv2-locked-icon  { font-size:15px; flex-shrink:0; margin-top:1px; }
-.ddv2-locked-title { font-size:11px; font-weight:600; color:rgba(238,240,243,0.48); margin-bottom:3px; font-family:'DM Sans',sans-serif; }
-.ddv2-locked-body  { font-size:10px; color:rgba(238,240,243,0.28); line-height:1.65; }
-
-.ddv2-evidence       { margin-top:8px; }
-.ddv2-evidence-label { font-size:8px; font-family:'DM Mono',monospace; color:rgba(238,240,243,0.26); text-transform:uppercase; letter-spacing:0.09em; margin-bottom:5px; }
-.ddv2-evidence-item  { display:flex; align-items:center; gap:6px; padding:5px 9px; border-radius:5px; border:1px solid; background:rgba(238,240,243,0.02); text-decoration:none; margin-bottom:3px; transition:background 0.14s; }
-.ddv2-evidence-item:hover { background:rgba(238,240,243,0.05); }
-.ddv2-evidence-name  { font-size:9px; font-family:'DM Mono',monospace; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-
-/* ── Notice / Awaiting ── */
-.ddv2-notice { display:flex; align-items:flex-start; gap:8px; background:rgba(212,162,58,0.03); border:1px solid rgba(212,162,58,0.12); border-radius:7px; padding:10px 12px; font-size:11px; color:rgba(238,240,243,0.38); line-height:1.65; }
-.ddv2-notice svg { flex-shrink:0; margin-top:2px; }
-.ddv2-awaiting       { background:rgba(212,162,58,0.02); border:1px solid rgba(212,162,58,0.12); border-radius:8px; padding:13px 15px; }
-.ddv2-awaiting-title { font-size:12px; font-weight:600; color:rgba(238,240,243,0.70); margin-bottom:5px; font-family:'DM Sans',sans-serif; }
-.ddv2-awaiting-body  { font-size:11px; color:rgba(238,240,243,0.36); line-height:1.65; }
-
-/* ── Resolved — rich layout ── */
-.ddv2-resolved { border-radius:8px; border:1px solid; padding:14px 15px; display:flex; flex-direction:column; gap:10px; }
-
-.ddv2-resolved-header {
-  display:flex; align-items:flex-start; gap:10px;
-}
-.ddv2-resolved-icon   { font-size:18px; flex-shrink:0; margin-top:1px; }
-.ddv2-resolved-eyebrow {
-  font-size:9px; font-family:'DM Mono',monospace; color:rgba(238,240,243,0.30);
-  text-transform:uppercase; letter-spacing:0.09em; margin-bottom:3px;
-}
-.ddv2-resolved-verdict {
-  font-size:15px; font-weight:700; font-family:'DM Mono',monospace;
-  letter-spacing:-0.01em; line-height:1.2;
-}
-.ddv2-resolved-narrative {
-  font-size:12px; color:rgba(238,240,243,0.55); line-height:1.70;
-  padding:10px 12px;
-  background:rgba(238,240,243,0.02); border:1px solid rgba(238,240,243,0.06);
-  border-radius:6px;
-}
-.ddv2-resolved-override {
-  padding:9px 12px;
-  background:rgba(212,162,58,0.04); border:1px solid rgba(212,162,58,0.14);
-  border-radius:6px;
-}
-.ddv2-resolved-override-text { font-size:11px; color:rgba(238,240,243,0.50); line-height:1.65; }
-
-.ddv2-resolved-meta {
-  display:flex; gap:16px; flex-wrap:wrap;
-  padding-top:8px; border-top:1px solid rgba(238,240,243,0.06);
-}
-.ddv2-resolved-meta-item { display:flex; flex-direction:column; gap:3px; }
-
-/* ── AI Pending ── */
-.ddv2-ai-pending { display:flex; align-items:center; gap:10px; font-size:11px; color:rgba(238,240,243,0.44); padding:12px 14px; background:rgba(212,162,58,0.03); border:1px solid rgba(212,162,58,0.10); border-radius:7px; }
-
-/* ── Verdict / Decision cards ── */
-.ddv2-verdict,.ddv2-decision { border-radius:8px; border:1px solid; overflow:hidden; }
-.ddv2-verdict-head  { display:flex; align-items:center; justify-content:space-between; padding:10px 13px; border-bottom:1px solid; gap:8px; }
-.ddv2-verdict-title { font-size:12px; font-weight:600; color:rgba(238,240,243,0.72); font-family:'DM Sans',sans-serif; }
-.ddv2-verdict-body  { padding:14px; display:flex; flex-direction:column; gap:12px; }
-.ddv2-verdict-pill  { display:inline-flex; align-items:center; font-size:11px; font-family:'DM Mono',monospace; font-weight:600; border:1px solid; border-radius:5px; padding:3px 10px; }
-
-.ddv2-conf-row { display:flex; align-items:center; gap:7px; }
-.ddv2-conf-bar { width:60px; height:2px; background:rgba(238,240,243,0.07); border-radius:1px; overflow:hidden; }
-.ddv2-conf-fill{ height:100%; border-radius:1px; transition:width 0.8s cubic-bezier(0.16,1,0.3,1); }
-
-.ddv2-reasoning    { font-size:11px; color:rgba(238,240,243,0.50); line-height:1.70; margin:3px 0 0; }
-.ddv2-section-label{ font-size:8px; font-family:'DM Mono',monospace; color:rgba(238,240,243,0.26); text-transform:uppercase; letter-spacing:0.10em; margin-bottom:5px; }
-.ddv2-factor       { font-size:11px; line-height:1.6; display:flex; gap:6px; margin-bottom:3px; }
-.ddv2-warning      { color:rgba(212,162,58,0.68); }
-.ddv2-override     { font-size:11px; color:rgba(238,240,243,0.50); background:rgba(212,162,58,0.05); border:1px solid rgba(212,162,58,0.14); border-radius:6px; padding:9px 12px; line-height:1.65; }
-
-.ddv2-badge-ai       { font-size:8px; font-family:'DM Mono',monospace; font-weight:600; color:#4dcd8a; background:rgba(77,205,138,0.08); border:1px solid rgba(77,205,138,0.20); border-radius:4px; padding:2px 7px; }
-.ddv2-badge-override { font-size:8px; font-family:'DM Mono',monospace; font-weight:600; color:#d4a23a; background:rgba(212,162,58,0.08); border:1px solid rgba(212,162,58,0.20); border-radius:4px; padding:2px 7px; }
-
-.ddv2-spinner-amber { display:inline-block; width:11px; height:11px; border-radius:50%; flex-shrink:0; border:1.5px solid rgba(212,162,58,0.18); border-top-color:#d4a23a; animation:ddv2Spin 0.65s linear infinite; }
-
-.ddv2-footer { font-size:9px; font-family:'DM Mono',monospace; color:rgba(238,240,243,0.20); text-align:right; padding-top:2px; }
-.ddv2-muted  { color:rgba(238,240,243,0.28); font-family:'DM Mono',monospace; }
-.ddv2-italic { font-style:italic; }
-.ddv2-mono   { font-size:10px; font-family:'DM Mono',monospace; color:rgba(238,240,243,0.58); }
-`;

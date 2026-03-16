@@ -88,7 +88,6 @@ function EvidenceList({ urls, party }: { urls: string[]; party: "A" | "B" }) {
 function AIVerdictPanel({ verdict }: { verdict: AIVerdict }) {
   const isRelease = verdict.verdict === "release_to_receiver";
   const isRefund = verdict.verdict === "refund_to_payer";
-  const isSplit = verdict.verdict === "split";
 
   const verdictColor = isRelease ? "#34d399" : isRefund ? "#f87171" : "#f59e0b";
   const verdictLabel = isRelease
@@ -108,7 +107,6 @@ function AIVerdictPanel({ verdict }: { verdict: AIVerdict }) {
         </div>
       </div>
 
-      {/* Verdict */}
       <div
         className="ai-verdict-block"
         style={{
@@ -122,8 +120,6 @@ function AIVerdictPanel({ verdict }: { verdict: AIVerdict }) {
         <div className="av-value" style={{ color: verdictColor }}>
           {verdictLabel}
         </div>
-
-        {/* Confidence bar */}
         <div className="confidence-row">
           <span className="conf-label">Confidence</span>
           <div className="conf-bar">
@@ -141,13 +137,11 @@ function AIVerdictPanel({ verdict }: { verdict: AIVerdict }) {
         </div>
       </div>
 
-      {/* Reasoning */}
       <div className="ai-section">
         <div className="ai-section-label">Reasoning</div>
         <p className="ai-reasoning">{verdict.reasoning}</p>
       </div>
 
-      {/* Key Factors */}
       {verdict.key_factors.length > 0 && (
         <div className="ai-section">
           <div className="ai-section-label">Key Factors</div>
@@ -162,7 +156,6 @@ function AIVerdictPanel({ verdict }: { verdict: AIVerdict }) {
         </div>
       )}
 
-      {/* Warnings */}
       {verdict.warnings.length > 0 && (
         <div className="ai-section">
           <div className="ai-section-label" style={{ color: "#f59e0b" }}>
@@ -182,6 +175,8 @@ function AIVerdictPanel({ verdict }: { verdict: AIVerdict }) {
 }
 
 // ── Decision Panel ────────────────────────────────────────────
+// NOTE: The arbitrator MUST provide a reason note for ALL decisions.
+// This note is shown to both parties so they understand why the decision was made.
 
 function DecisionPanel({
   agreementId,
@@ -202,7 +197,8 @@ function DecisionPanel({
   const [selected, setSelected] = useState<
     "confirm" | "override_release" | "override_refund" | null
   >(null);
-  const [overrideReason, setOverrideReason] = useState("");
+  // ── CHANGED: reason is now always required, not just for overrides ──
+  const [reason, setReason] = useState("");
   const [confirmed, setConfirmed] = useState(false);
 
   if (activeDispute?.status === "resolved") {
@@ -211,7 +207,7 @@ function DecisionPanel({
     return (
       <div className="decision-resolved">
         <div className="resolved-icon">✓</div>
-        <div className="resolved-title">Dispute Resolved</div>
+        <div className="resolved-title">Dispute Resolved by Arbitrator</div>
         <div
           className="resolved-outcome"
           style={{ color: isRelease ? "#34d399" : "#f87171" }}
@@ -220,16 +216,28 @@ function DecisionPanel({
             ? "Released to Receiver (Party B)"
             : "Refunded to Payer (Party A)"}
         </div>
-        {!dec.followed_ai && dec.override_reason && (
-          <div className="resolved-reason">
-            <span className="override-tag">Override</span>
-            {dec.override_reason}
+        {/* Always show the reason */}
+        {dec.override_reason && (
+          <div className="resolved-reason-block">
+            <div className="resolved-reason-label">
+              {dec.followed_ai ? "Arbitrator Note" : "Override Reason"}
+            </div>
+            <p className="resolved-reason-text">{dec.override_reason}</p>
           </div>
         )}
-        {dec.followed_ai && (
-          <div className="resolved-ai-badge">Followed AI recommendation</div>
-        )}
-        <div className="resolved-time">{timeAgo(dec.decided_at)}</div>
+        <div className="resolved-meta-row">
+          {dec.followed_ai ? (
+            <div className="resolved-ai-badge">
+              ✓ Followed AI recommendation
+            </div>
+          ) : (
+            <div className="resolved-override-badge">
+              ↺ Overrode AI recommendation
+            </div>
+          )}
+          <span className="resolved-sep">·</span>
+          <div className="resolved-time">{timeAgo(dec.decided_at)}</div>
+        </div>
       </div>
     );
   }
@@ -276,10 +284,11 @@ function DecisionPanel({
   ];
 
   const isOverride = selected !== null && selected !== "confirm";
+  // ── CHANGED: reason always required ──
+  const reasonMissing = !reason.trim();
 
   function handleSubmit() {
-    if (!selected) return;
-    if (isOverride && !overrideReason.trim()) return;
+    if (!selected || reasonMissing) return;
     if (!confirmed) {
       setConfirmed(true);
       return;
@@ -290,7 +299,8 @@ function DecisionPanel({
         milestone_index: milestoneIndex,
         arbitrator_address: walletAddress,
         action: selected,
-        override_reason: overrideReason || undefined,
+        // ── CHANGED: always pass the reason as override_reason so it's stored ──
+        override_reason: reason.trim(),
       }),
     );
   }
@@ -302,8 +312,9 @@ function DecisionPanel({
         Your Decision
       </div>
       <p className="dp-desc">
-        Review the AI verdict and evidence above, then select your ruling. This
-        action is final and will trigger the on-chain resolution.
+        Review the AI verdict and evidence above, then select your ruling. You
+        must provide a reason note — this will be shown to both parties so they
+        understand your decision. This action is final and irreversible.
       </p>
 
       <div className="dp-options">
@@ -352,18 +363,32 @@ function DecisionPanel({
         ))}
       </div>
 
-      {isOverride && (
-        <div className="dp-reason-wrap fade-in">
-          <label className="dp-reason-label">Override Reason (required)</label>
-          <textarea
-            className="dp-reason-input"
-            value={overrideReason}
-            onChange={(e) => setOverrideReason(e.target.value)}
-            placeholder="Explain why you are overriding the AI verdict…"
-            rows={3}
-          />
-        </div>
-      )}
+      {/* ── CHANGED: reason field is always shown and always required ── */}
+      <div className="dp-reason-wrap">
+        <label className="dp-reason-label">
+          {isOverride ? "Override Reason" : "Decision Note"}
+          <span className="dp-reason-required"> * required</span>
+        </label>
+        <textarea
+          className={`dp-reason-input ${selected && reasonMissing ? "dp-reason-input--error" : ""}`}
+          value={reason}
+          onChange={(e) => {
+            setReason(e.target.value);
+            setConfirmed(false);
+          }}
+          placeholder={
+            isOverride
+              ? "Explain why you are overriding the AI recommendation…"
+              : "Provide your reasoning for this decision — both parties will see this note…"
+          }
+          rows={3}
+        />
+        {selected && reasonMissing && (
+          <div className="dp-reason-hint">
+            A note is required. Both parties will see your reasoning.
+          </div>
+        )}
+      </div>
 
       {verdictError && (
         <div className="error-box fade-in" style={{ marginBottom: 12 }}>
@@ -375,7 +400,7 @@ function DecisionPanel({
         <button
           className={`dp-submit ${confirmed ? "dp-submit--confirm" : ""}`}
           onClick={handleSubmit}
-          disabled={decidingVerdict || (isOverride && !overrideReason.trim())}
+          disabled={decidingVerdict || reasonMissing}
         >
           {decidingVerdict ? (
             <>
@@ -405,35 +430,8 @@ export default function ArbitratorDisputeDetail() {
 
   useEffect(() => {
     if (!activeDispute?.agreement_id) return;
-
-    // Join the agreement room so this arbitrator receives dispute:updated events
     joinDisputeRoom(activeDispute.agreement_id, activeDispute.milestone_index);
-
     const socket = getSocket();
-
-    function onDisputeUpdated(dispute: DisputeUpdatedPayload) {
-      // Only apply if it's for the dispute we're currently viewing
-      if (
-        dispute.agreement_id === activeDispute?.agreement_id &&
-        dispute.milestone_index === activeDispute?.milestone_index
-      ) {
-        dispatch(updateActiveDispute(dispute as any));
-      }
-    }
-
-    socket.on("dispute:updated", onDisputeUpdated);
-    return () => {
-      socket.off("dispute:updated", onDisputeUpdated);
-    };
-  }, [activeDispute?.agreement_id, activeDispute?.milestone_index, dispatch]);
-
-  useEffect(() => {
-    if (!activeDispute?.agreement_id) return;
-
-    joinDisputeRoom(activeDispute.agreement_id, activeDispute.milestone_index); // ← fixed
-
-    const socket = getSocket();
-
     function onDisputeUpdated(dispute: DisputeUpdatedPayload) {
       if (
         dispute.agreement_id === activeDispute?.agreement_id &&
@@ -442,15 +440,13 @@ export default function ArbitratorDisputeDetail() {
         dispatch(updateActiveDispute(dispute as any));
       }
     }
-
     socket.on("dispute:updated", onDisputeUpdated);
-
     return () => {
       socket.off("dispute:updated", onDisputeUpdated);
       leaveDisputeRoom(
         activeDispute.agreement_id,
         activeDispute.milestone_index,
-      ); // ← add this
+      );
     };
   }, [activeDispute?.agreement_id, activeDispute?.milestone_index, dispatch]);
 
@@ -583,7 +579,6 @@ export default function ArbitratorDisputeDetail() {
 
         {/* Two-column: statements */}
         <div className="two-col fade-up d1">
-          {/* Party A */}
           <div className="card party-card party-card--a">
             <div className="party-header">
               <div className="party-badge party-badge--a">Party A · Payer</div>
@@ -598,7 +593,6 @@ export default function ArbitratorDisputeDetail() {
             <div className="wallet-line blue">
               {ct.payer.slice(0, 14)}…{ct.payer.slice(-8)}
             </div>
-
             {d.party_a_statement ? (
               <div className="statement-box">
                 <div className="statement-label">Statement</div>
@@ -607,7 +601,6 @@ export default function ArbitratorDisputeDetail() {
             ) : (
               <div className="no-statement">No statement submitted yet</div>
             )}
-
             <div className="evidence-section">
               <div className="evidence-label">
                 Evidence · {d.party_a_evidence.length} file
@@ -617,7 +610,6 @@ export default function ArbitratorDisputeDetail() {
             </div>
           </div>
 
-          {/* Party B */}
           <div className="card party-card party-card--b">
             <div className="party-header">
               <div className="party-badge party-badge--b">
@@ -634,7 +626,6 @@ export default function ArbitratorDisputeDetail() {
             <div className="wallet-line pink">
               {ct.receiver.slice(0, 14)}…{ct.receiver.slice(-8)}
             </div>
-
             {d.party_b_statement ? (
               <div className="statement-box">
                 <div className="statement-label">Statement</div>
@@ -643,7 +634,6 @@ export default function ArbitratorDisputeDetail() {
             ) : (
               <div className="no-statement">No statement submitted yet</div>
             )}
-
             <div className="evidence-section">
               <div className="evidence-label">
                 Evidence · {d.party_b_evidence.length} file
@@ -696,7 +686,6 @@ const css = `
     color: #f0faf5;
   }
 
-  /* Nav */
   .detail-nav {
     position: sticky; top: 0; z-index: 100;
     height: 54px;
@@ -719,10 +708,8 @@ const css = `
   .nav-case { font-size: 11px; font-family: 'DM Mono', monospace; color: rgba(240,250,245,0.4); }
   .nav-status { font-size: 11px; font-family: 'DM Mono', monospace; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
 
-  /* Body */
   .detail-body { max-width: 1000px; margin: 0 auto; padding: 36px 24px 80px; }
 
-  /* Card */
   .card {
     background: rgba(12,18,14,0.8);
     border: 1px solid rgba(52,211,153,0.1);
@@ -733,10 +720,8 @@ const css = `
     text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 18px;
   }
 
-  /* Terms grid */
   .terms-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
   @media (max-width: 640px) { .terms-grid { grid-template-columns: 1fr; } }
-  .term-item {}
   .term-label { font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(240,250,245,0.3); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 4px; }
   .term-value { font-size: 13px; color: #f0faf5; font-weight: 500; }
   .term-value.accent { color: #34d399; font-family: 'DM Mono', monospace; font-weight: 600; }
@@ -744,21 +729,14 @@ const css = `
   .term-value.blue { color: #60a5fa; }
   .term-value.pink { color: #f472b6; }
 
-  /* Two col */
   .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
   @media (max-width: 760px) { .two-col { grid-template-columns: 1fr; } }
 
-  /* Party cards */
   .party-card { display: flex; flex-direction: column; gap: 16px; }
   .party-card--a { border-color: rgba(96,165,250,0.2); }
   .party-card--b { border-color: rgba(244,114,182,0.2); }
-
   .party-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
-  .party-badge {
-    font-size: 10px; font-family: 'DM Mono', monospace; font-weight: 600;
-    text-transform: uppercase; letter-spacing: 0.08em;
-    padding: 4px 10px; border-radius: 8px; border: 1px solid;
-  }
+  .party-badge { font-size: 10px; font-family: 'DM Mono', monospace; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; padding: 4px 10px; border-radius: 8px; border: 1px solid; }
   .party-badge--a { color: #60a5fa; border-color: rgba(96,165,250,0.3); background: rgba(96,165,250,0.08); }
   .party-badge--b { color: #f472b6; border-color: rgba(244,114,182,0.3); background: rgba(244,114,182,0.08); }
   .submitted-tag { font-size: 10px; font-family: 'DM Mono', monospace; color: #34d399; }
@@ -766,197 +744,96 @@ const css = `
   .wallet-line { font-size: 11px; font-family: 'DM Mono', monospace; }
   .wallet-line.blue { color: rgba(96,165,250,0.6); }
   .wallet-line.pink { color: rgba(244,114,182,0.6); }
-
   .statement-box { background: rgba(240,250,245,0.03); border-radius: 10px; padding: 14px; }
   .statement-label { font-size: 9px; font-family: 'DM Mono', monospace; color: rgba(240,250,245,0.3); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 8px; }
   .statement-text { font-size: 13px; line-height: 1.75; color: rgba(240,250,245,0.75); }
   .no-statement { font-size: 12px; color: rgba(240,250,245,0.25); font-style: italic; padding: 8px 0; }
 
-  /* Evidence */
   .evidence-section {}
   .evidence-label { font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(240,250,245,0.3); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 10px; }
   .evidence-empty { font-size: 12px; color: rgba(240,250,245,0.25); font-style: italic; }
   .evidence-grid { display: flex; flex-wrap: wrap; gap: 8px; }
-  .evidence-item {
-    position: relative; overflow: hidden;
-    border: 1px solid rgba(240,250,245,0.1); border-radius: 10px;
-    text-decoration: none; cursor: pointer; transition: border-color 0.2s;
-  }
+  .evidence-item { position: relative; overflow: hidden; border: 1px solid rgba(240,250,245,0.1); border-radius: 10px; text-decoration: none; cursor: pointer; transition: border-color 0.2s; }
   .evidence-item:hover { border-color: rgba(240,250,245,0.3); }
   .evidence-item:hover .evidence-overlay { opacity: 1; }
   .evidence-thumb { width: 80px; height: 80px; object-fit: cover; display: block; }
-  .evidence-file {
-    width: 120px; height: 70px; display: flex; flex-direction: column;
-    align-items: center; justify-content: center; gap: 6px;
-    background: rgba(240,250,245,0.04); padding: 8px;
-  }
-  .evidence-file--pdf .file-icon { font-size: 22px; }
-  .file-icon { font-size: 18px; }
+  .evidence-file { width: 120px; height: 70px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; background: rgba(240,250,245,0.04); padding: 8px; }
   .file-name { font-size: 9px; font-family: 'DM Mono', monospace; color: rgba(240,250,245,0.4); text-align: center; word-break: break-all; max-width: 100px; }
-  .evidence-overlay {
-    position: absolute; inset: 0; background: rgba(8,12,10,0.7);
-    display: flex; align-items: center; justify-content: center;
-    font-size: 11px; color: #34d399; font-family: 'DM Mono', monospace;
-    opacity: 0; transition: opacity 0.2s;
-  }
+  .evidence-overlay { position: absolute; inset: 0; background: rgba(8,12,10,0.7); display: flex; align-items: center; justify-content: center; font-size: 11px; color: #34d399; font-family: 'DM Mono', monospace; opacity: 0; transition: opacity 0.2s; }
 
-  /* AI Panel */
-  .ai-panel {
-    background: rgba(12,18,14,0.8); border: 1px solid rgba(96,165,250,0.15);
-    border-radius: 16px; padding: 24px;
-    display: flex; flex-direction: column; gap: 18px;
-  }
+  .ai-panel { background: rgba(12,18,14,0.8); border: 1px solid rgba(96,165,250,0.15); border-radius: 16px; padding: 24px; display: flex; flex-direction: column; gap: 18px; }
   .ai-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
-  .ai-badge {
-    display: flex; align-items: center; gap: 7px;
-    font-size: 11px; font-family: 'DM Mono', monospace; font-weight: 600;
-    color: #60a5fa; background: rgba(96,165,250,0.08);
-    border: 1px solid rgba(96,165,250,0.2); border-radius: 8px; padding: 5px 12px;
-  }
+  .ai-badge { display: flex; align-items: center; gap: 7px; font-size: 11px; font-family: 'DM Mono', monospace; font-weight: 600; color: #60a5fa; background: rgba(96,165,250,0.08); border: 1px solid rgba(96,165,250,0.2); border-radius: 8px; padding: 5px 12px; }
   .ai-meta { font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(240,250,245,0.25); }
-
   .ai-verdict-block { border: 1px solid; border-radius: 12px; padding: 18px; }
   .av-label { font-size: 9px; font-family: 'DM Mono', monospace; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 6px; }
   .av-value { font-family: 'DM Serif Display', serif; font-size: 20px; letter-spacing: -0.02em; margin-bottom: 14px; }
-
   .confidence-row { display: flex; align-items: center; gap: 10px; }
   .conf-label { font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(240,250,245,0.4); flex-shrink: 0; }
   .conf-bar { flex: 1; height: 4px; background: rgba(240,250,245,0.08); border-radius: 2px; overflow: hidden; }
   .conf-fill { height: 100%; border-radius: 2px; transition: width 1s ease; }
   .conf-pct { font-size: 12px; font-family: 'DM Mono', monospace; font-weight: 600; flex-shrink: 0; }
-
   .ai-section {}
   .ai-section-label { font-size: 9px; font-family: 'DM Mono', monospace; color: rgba(240,250,245,0.3); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 10px; }
   .ai-reasoning { font-size: 14px; line-height: 1.75; color: rgba(240,250,245,0.7); }
-
   .factor-list { display: flex; flex-direction: column; gap: 7px; }
-  .factor-chip {
-    display: flex; align-items: center; gap: 10px;
-    background: rgba(240,250,245,0.03); border: 1px solid rgba(240,250,245,0.06);
-    border-radius: 8px; padding: 9px 12px; font-size: 13px; color: rgba(240,250,245,0.65);
-  }
-  .factor-num {
-    width: 20px; height: 20px; border-radius: 50%; flex-shrink: 0;
-    background: rgba(96,165,250,0.15); border: 1px solid rgba(96,165,250,0.25);
-    color: #60a5fa; font-size: 10px; font-family: 'DM Mono', monospace; font-weight: 600;
-    display: flex; align-items: center; justify-content: center;
-  }
-
+  .factor-chip { display: flex; align-items: center; gap: 10px; background: rgba(240,250,245,0.03); border: 1px solid rgba(240,250,245,0.06); border-radius: 8px; padding: 9px 12px; font-size: 13px; color: rgba(240,250,245,0.65); }
+  .factor-num { width: 20px; height: 20px; border-radius: 50%; flex-shrink: 0; background: rgba(96,165,250,0.15); border: 1px solid rgba(96,165,250,0.25); color: #60a5fa; font-size: 10px; font-family: 'DM Mono', monospace; font-weight: 600; display: flex; align-items: center; justify-content: center; }
   .warning-list { display: flex; flex-direction: column; gap: 7px; }
-  .warning-item {
-    background: rgba(245,158,11,0.06); border: 1px solid rgba(245,158,11,0.15);
-    border-radius: 8px; padding: 9px 12px;
-    font-size: 12px; color: rgba(245,158,11,0.8);
-    font-family: 'DM Mono', monospace;
-  }
-
+  .warning-item { background: rgba(245,158,11,0.06); border: 1px solid rgba(245,158,11,0.15); border-radius: 8px; padding: 9px 12px; font-size: 12px; color: rgba(245,158,11,0.8); font-family: 'DM Mono', monospace; }
   .ai-pending-card { text-align: center; padding: 32px; }
   .ai-pending-msg { font-size: 13px; color: rgba(240,250,245,0.4); margin-top: 12px; line-height: 1.6; }
 
   /* Decision Panel */
-  .decision-panel {
-    background: rgba(12,18,14,0.8); border: 1px solid rgba(52,211,153,0.15);
-    border-radius: 16px; padding: 28px;
-  }
-  .dp-title {
-    display: flex; align-items: center; gap: 10px;
-    font-family: 'DM Serif Display', serif; font-size: 22px; color: #f0faf5;
-    margin-bottom: 10px;
-  }
+  .decision-panel { background: rgba(12,18,14,0.8); border: 1px solid rgba(52,211,153,0.15); border-radius: 16px; padding: 28px; }
+  .dp-title { display: flex; align-items: center; gap: 10px; font-family: 'DM Serif Display', serif; font-size: 22px; color: #f0faf5; margin-bottom: 10px; }
   .dp-icon { font-size: 20px; }
   .dp-desc { font-size: 13px; color: rgba(240,250,245,0.45); line-height: 1.7; margin-bottom: 22px; }
-
   .dp-options { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
-  .dp-option {
-    display: flex; align-items: center; gap: 14px;
-    background: rgba(240,250,245,0.02); border: 1px solid rgba(240,250,245,0.08);
-    border-radius: 12px; padding: 14px 18px;
-    cursor: pointer; text-align: left; width: 100%;
-    transition: all 0.2s; font-family: 'DM Sans', sans-serif;
-  }
+  .dp-option { display: flex; align-items: center; gap: 14px; background: rgba(240,250,245,0.02); border: 1px solid rgba(240,250,245,0.08); border-radius: 12px; padding: 14px 18px; cursor: pointer; text-align: left; width: 100%; transition: all 0.2s; font-family: 'DM Sans', sans-serif; }
   .dp-option:hover { border-color: rgba(240,250,245,0.15); background: rgba(240,250,245,0.04); }
-  .dp-option--selected {}
-  .dp-option-icon {
-    width: 34px; height: 34px; border-radius: 8px; flex-shrink: 0;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 15px; border: 1px solid;
-  }
+  .dp-option-icon { width: 34px; height: 34px; border-radius: 8px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 15px; border: 1px solid; }
   .dp-option-text { flex: 1; }
   .dp-option-label { font-size: 14px; font-weight: 600; color: rgba(240,250,245,0.8); margin-bottom: 3px; }
   .dp-option-desc { font-size: 11px; font-family: 'DM Mono', monospace; color: rgba(240,250,245,0.35); }
   .dp-check { font-size: 16px; flex-shrink: 0; }
 
-  .dp-reason-wrap { margin-bottom: 16px; }
-  .dp-reason-label { display: block; font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(240,250,245,0.35); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
-  .dp-reason-input {
-    width: 100%; background: rgba(240,250,245,0.04); border: 1px solid rgba(240,250,245,0.12);
-    border-radius: 10px; padding: 12px 14px; color: #f0faf5; resize: vertical;
-    font-family: 'DM Sans', sans-serif; font-size: 13px; line-height: 1.6;
-    outline: none; transition: border-color 0.2s;
-  }
+  /* ── Reason field — always shown ── */
+  .dp-reason-wrap { margin-bottom: 20px; }
+  .dp-reason-label { display: block; font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(240,250,245,0.40); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
+  .dp-reason-required { color: #f87171; font-size: 9px; letter-spacing: 0; text-transform: none; margin-left: 4px; }
+  .dp-reason-input { width: 100%; background: rgba(240,250,245,0.04); border: 1px solid rgba(240,250,245,0.12); border-radius: 10px; padding: 12px 14px; color: #f0faf5; resize: vertical; font-family: 'DM Sans', sans-serif; font-size: 13px; line-height: 1.6; outline: none; transition: border-color 0.2s; }
   .dp-reason-input:focus { border-color: rgba(52,211,153,0.3); }
+  .dp-reason-input--error { border-color: rgba(248,113,113,0.35) !important; }
   .dp-reason-input::placeholder { color: rgba(240,250,245,0.2); }
+  .dp-reason-hint { font-size: 10px; font-family: 'DM Mono', monospace; color: #f87171; margin-top: 6px; }
 
-  .dp-submit {
-    width: 100%; padding: 14px 24px;
-    background: rgba(52,211,153,0.15); border: 1px solid rgba(52,211,153,0.3);
-    border-radius: 12px; cursor: pointer;
-    font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 600;
-    color: #34d399; display: flex; align-items: center; justify-content: center; gap: 8px;
-    transition: all 0.2s;
-  }
+  .dp-submit { width: 100%; padding: 14px 24px; background: rgba(52,211,153,0.15); border: 1px solid rgba(52,211,153,0.3); border-radius: 12px; cursor: pointer; font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 600; color: #34d399; display: flex; align-items: center; justify-content: center; gap: 8px; transition: all 0.2s; }
   .dp-submit:hover:not(:disabled) { background: rgba(52,211,153,0.22); }
-  .dp-submit--confirm {
-    background: rgba(239,68,68,0.12); border-color: rgba(239,68,68,0.35); color: #f87171;
-  }
+  .dp-submit--confirm { background: rgba(239,68,68,0.12); border-color: rgba(239,68,68,0.35); color: #f87171; }
   .dp-submit--confirm:hover:not(:disabled) { background: rgba(239,68,68,0.2); }
   .dp-submit:disabled { opacity: 0.4; cursor: not-allowed; }
 
-  /* Resolved */
-  .decision-resolved {
-    background: rgba(12,18,14,0.8); border: 1px solid rgba(52,211,153,0.2);
-    border-radius: 16px; padding: 32px; text-align: center;
-    display: flex; flex-direction: column; align-items: center; gap: 10px;
-  }
+  /* Resolved block — improved to always show reason */
+  .decision-resolved { background: rgba(12,18,14,0.8); border: 1px solid rgba(52,211,153,0.2); border-radius: 16px; padding: 32px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 12px; }
   .resolved-icon { font-size: 36px; color: #34d399; }
   .resolved-title { font-family: 'DM Serif Display', serif; font-size: 24px; color: #f0faf5; }
   .resolved-outcome { font-size: 15px; font-weight: 600; }
-  .resolved-reason {
-    font-size: 12px; font-family: 'DM Mono', monospace; color: rgba(240,250,245,0.5);
-    display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center;
-  }
-  .override-tag {
-    background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.2);
-    color: #f59e0b; border-radius: 4px; padding: 1px 7px; font-size: 9px; font-weight: 700;
-    letter-spacing: 0.08em; text-transform: uppercase;
-  }
-  .resolved-ai-badge {
-    font-size: 11px; font-family: 'DM Mono', monospace; color: rgba(52,211,153,0.6);
-    background: rgba(52,211,153,0.06); border: 1px solid rgba(52,211,153,0.15);
-    border-radius: 6px; padding: 4px 10px;
-  }
+  .resolved-reason-block { width: 100%; max-width: 500px; background: rgba(240,250,245,0.04); border: 1px solid rgba(240,250,245,0.1); border-radius: 10px; padding: 14px 16px; text-align: left; }
+  .resolved-reason-label { font-size: 9px; font-family: 'DM Mono', monospace; color: rgba(240,250,245,0.35); text-transform: uppercase; letter-spacing: 0.10em; margin-bottom: 6px; }
+  .resolved-reason-text { font-size: 13px; color: rgba(240,250,245,0.65); line-height: 1.65; margin: 0; }
+  .resolved-meta-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: center; }
+  .resolved-ai-badge { font-size: 11px; font-family: 'DM Mono', monospace; color: rgba(52,211,153,0.6); background: rgba(52,211,153,0.06); border: 1px solid rgba(52,211,153,0.15); border-radius: 6px; padding: 4px 10px; }
+  .resolved-override-badge { font-size: 11px; font-family: 'DM Mono', monospace; color: rgba(245,158,11,0.7); background: rgba(245,158,11,0.06); border: 1px solid rgba(245,158,11,0.15); border-radius: 6px; padding: 4px 10px; }
+  .resolved-sep { color: rgba(240,250,245,0.2); }
   .resolved-time { font-size: 11px; font-family: 'DM Mono', monospace; color: rgba(240,250,245,0.25); }
 
-  /* Waiting */
-  .decision-waiting {
-    background: rgba(12,18,14,0.8); border: 1px dashed rgba(240,250,245,0.1);
-    border-radius: 16px; padding: 32px; text-align: center;
-    display: flex; flex-direction: column; align-items: center; gap: 12px;
-  }
+  .decision-waiting { background: rgba(12,18,14,0.8); border: 1px dashed rgba(240,250,245,0.1); border-radius: 16px; padding: 32px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 12px; }
   .waiting-icon { font-size: 32px; }
   .decision-waiting p { font-size: 13px; color: rgba(240,250,245,0.35); line-height: 1.7; max-width: 360px; }
 
-  /* Shared */
-  .loading-state {
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    height: 60vh; gap: 16px;
-    color: rgba(240,250,245,0.35); font-size: 13px; font-family: 'DM Mono', monospace;
-  }
-  .error-box {
-    background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.2);
-    border-radius: 10px; padding: 14px 18px;
-    font-size: 13px; color: #f87171; font-family: 'DM Mono', monospace;
-  }
+  .loading-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 60vh; gap: 16px; color: rgba(240,250,245,0.35); font-size: 13px; font-family: 'DM Mono', monospace; }
+  .error-box { background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.2); border-radius: 10px; padding: 14px 18px; font-size: 13px; color: #f87171; font-family: 'DM Mono', monospace; }
 
   .spinner { display: inline-block; border: 2px solid rgba(52,211,153,0.15); border-top-color: #34d399; border-radius: 50%; animation: spin 0.7s linear infinite; }
   .spinner.sm { width: 14px; height: 14px; }

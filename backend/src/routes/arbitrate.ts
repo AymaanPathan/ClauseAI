@@ -13,7 +13,6 @@ import Agreement from "../models/Agreement";
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
 
-
 // ── GET /api/arbitrate/by-arbitrator/:address ────────────────
 // Returns all disputes where contract_terms.arbitrator === address
 router.get("/by-arbitrator/:address", async (req, res) => {
@@ -30,7 +29,6 @@ router.get("/by-arbitrator/:address", async (req, res) => {
     res.status(500).json({ error: "Internal error", details: String(err) });
   }
 });
-
 
 // ── GET /api/arbitrate/dashboard/:address ────────────────────
 router.get("/dashboard/:address", async (req: Request, res: Response) => {
@@ -70,7 +68,6 @@ router.get("/dashboard/:address", async (req: Request, res: Response) => {
     res.status(500).json({ error: "Failed to fetch disputes" });
   }
 });
-
 
 // ── Socket.io injection ───────────────────────────────────────
 let _io: SocketIOServer | null = null;
@@ -480,7 +477,7 @@ router.post("/resolve", async (req: Request, res: Response) => {
     milestone_index,
     arbitrator_address,
     action,
-    override_reason,
+    override_reason, // ← now required for all actions
   } = req.body as {
     agreement_id: string;
     milestone_index: number;
@@ -498,6 +495,14 @@ router.post("/resolve", async (req: Request, res: Response) => {
     return res.status(400).json({
       error:
         "agreement_id, milestone_index, arbitrator_address, and action are required",
+    });
+  }
+
+  // ── CHANGED: require a reason note for all decisions ──
+  if (!override_reason || !override_reason.trim()) {
+    return res.status(400).json({
+      error:
+        "override_reason (arbitrator note) is required for all decisions. Both parties will see this note.",
     });
   }
 
@@ -548,7 +553,8 @@ router.post("/resolve", async (req: Request, res: Response) => {
       arbitrator_decision: {
         outcome,
         followed_ai: followedAI,
-        override_reason: followedAI ? undefined : override_reason,
+        // ── CHANGED: always store the reason, regardless of follow/override ──
+        override_reason: override_reason.trim(),
         decided_at: new Date(),
         arbitrator_address,
       },
@@ -719,7 +725,6 @@ router.get("/:agreementId/:milestoneIndex", async (req, res) => {
     res.status(500).json({ error: "Internal error", details: String(err) });
   }
 });
-
 
 router.post("/:agreementId/:milestoneIndex/decide", async (req, res) => {
   try {

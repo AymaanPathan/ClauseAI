@@ -1,7 +1,3 @@
-// ============================================================
-// store/slices/arbitratorSlice.ts
-// ============================================================
-
 import { createSlice, createAsyncThunk, PayloadAction } from "@reduxjs/toolkit";
 import {
   connectHiroWallet,

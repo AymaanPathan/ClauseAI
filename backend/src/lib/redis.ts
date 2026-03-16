@@ -1,8 +1,3 @@
-// ============================================================
-// src/lib/redis.ts
-// Redis client with graceful in-memory fallback.
-// Set REDIS_URL env var to enable (e.g. redis://localhost:6379)
-// ============================================================
 
 import { createClient, RedisClientType } from "redis";
 
@@ -22,6 +17,7 @@ export function isRedisAvailable(): boolean {
 
 export async function initRedis(): Promise<void> {
   const url = process.env.REDIS_URL;
+
   if (!url) {
     console.warn(
       "[Redis] REDIS_URL not set — using in-memory store (dev mode)",
@@ -33,8 +29,14 @@ export async function initRedis(): Promise<void> {
     client = createClient({
       url,
       socket: {
-        tls: true,
-        reconnectStrategy: (retries) => Math.min(retries * 50, 2000),
+        tls: true, // required for Upstash
+        reconnectStrategy: (retries) => {
+          if (retries > 10) {
+            console.error("[Redis] Too many retries — giving up");
+            return new Error("Redis reconnect failed");
+          }
+          return Math.min(retries * 200, 3000);
+        },
       },
     }) as RedisClientType;
 
@@ -45,6 +47,10 @@ export async function initRedis(): Promise<void> {
 
     client.on("connect", () => {
       console.log("[Redis] Connected");
+    });
+
+    client.on("ready", () => {
+      console.log("[Redis] Ready");
       connected = true;
     });
 
@@ -52,9 +58,12 @@ export async function initRedis(): Promise<void> {
       console.warn("[Redis] Reconnecting...");
     });
 
+    client.on("end", () => {
+      console.warn("[Redis] Connection closed");
+      connected = false;
+    });
+
     await client.connect();
-    connected = true;
-    console.log("[Redis] Ready");
   } catch (err) {
     console.error(
       "[Redis] Failed to connect — falling back to in-memory:",

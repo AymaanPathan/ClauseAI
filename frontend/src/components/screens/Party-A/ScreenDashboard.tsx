@@ -24,6 +24,7 @@ import { formatSats, explorerTxUrl } from "@/lib/stacksConfig";
 import { getAllMilestones, MILESTONE_STATUS } from "@/lib/contractReads";
 import DisputeSubmitScreen from "@/components/screens/Shared/DisputeSubmitScreen";
 import DisputeDetailView from "../Shared/Disputedetailview";
+import { getSocket, joinAgreementRoom, joinDisputeRoom } from "@/lib/socket";
 
 type MilestoneUIStatus =
   | "locked"
@@ -203,6 +204,28 @@ export default function ScreenDashboard() {
   }
 
   useEffect(() => {
+    if (!agreementId) return;
+    const socket = getSocket();
+    joinAgreementRoom(agreementId);
+
+    function onDisputeUpdated(payload: any) {
+      if (payload.agreement_id && payload.agreement_id !== agreementId) return;
+      // Refresh on-chain statuses so DisputeDetailView mounts
+      setLastRefresh(Date.now());
+      // Join the dispute room so DisputeDetailView gets live updates
+      const idx = payload.milestone_index ?? payload.milestoneIndex;
+      if (idx !== undefined) {
+        joinDisputeRoom(agreementId!, idx);
+      }
+    }
+
+    socket.on("dispute:updated", onDisputeUpdated);
+    return () => {
+      socket.off("dispute:updated", onDisputeUpdated);
+    };
+  }, [agreementId]);
+
+  useEffect(() => {
     if (!agreementId || savedToDb || milestones.length === 0) return;
     setSavedToDb(true);
     dispatch(
@@ -239,6 +262,15 @@ export default function ScreenDashboard() {
     },
     [txMilestone, milestoneOnChainStatuses],
   );
+
+  useEffect(() => {
+    if (!agreementId || milestones.length === 0) return;
+    milestones.forEach((ms) => {
+      if (getStatus(ms.index) === "disputed") {
+        joinDisputeRoom(agreementId, ms.index);
+      }
+    });
+  }, [agreementId, milestones.length, getStatus]);
 
   useEffect(() => {
     if (!agreementId || milestones.length === 0) return;

@@ -584,6 +584,16 @@ export default function PartyBDashboard() {
           setData(json);
           setLoading(false);
           checkArbitrateDisputes(json.milestones);
+          json.milestones.forEach((ms: DbMilestone) => {
+            if (
+              ms.status === "disputed" &&
+              agreementId &&
+              !joinedDisputeRooms.has(ms.index)
+            ) {
+              joinDisputeRoom(agreementId, ms.index);
+              joinedDisputeRooms.add(ms.index);
+            }
+          });
           return;
         }
       }

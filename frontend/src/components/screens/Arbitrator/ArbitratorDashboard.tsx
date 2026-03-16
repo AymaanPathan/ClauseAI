@@ -1,20 +1,4 @@
 "use client";
-// ============================================================
-// components/arbitrator/ArbitratorDashboard.tsx
-//
-// WHAT'S REAL HERE:
-//   1. Arbitrator calls callResolveToReceiver / callResolveToPayer
-//      which are ACTUAL Clarity contract calls via @stacks/connect.
-//      sBTC physically moves on-chain when confirmed.
-//   2. After the tx is broadcast, we POST to /api/arbitrate/:id/:idx/decide
-//      to record the decision in MongoDB and trigger socket events.
-//   3. The tx is polled via /extended/v1/tx/:txId until confirmed.
-//
-// WHAT STAYS OFF-CHAIN:
-//   - The AI verdict (just advisory, no on-chain component)
-//   - The statement/evidence storage (MongoDB)
-//   - The "override reason" text (MongoDB only)
-// ============================================================
 
 import { useEffect, useState, useCallback } from "react";
 import { callResolveToReceiver, callResolveToPayer } from "@/lib/contractCalls";
@@ -23,8 +7,6 @@ import { getConnectedUser, connectHiroWallet } from "@/lib/hiroWallet";
 import { getSocket, joinDisputeRoom, leaveDisputeRoom } from "@/lib/socket";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-
-// ── Types ─────────────────────────────────────────────────────
 
 type VerdictOutcome = "release_to_receiver" | "refund_to_payer" | "split";
 type DisputeStatus =
@@ -47,7 +29,6 @@ interface AIVerdict {
   model?: string;
   latency_ms?: number;
 }
-
 interface ArbitratorDecision {
   outcome: VerdictOutcome;
   followed_ai: boolean;
@@ -55,7 +36,6 @@ interface ArbitratorDecision {
   decided_at: string;
   arbitrator_address: string;
 }
-
 interface DisputeData {
   agreement_id: string;
   milestone_index: number;
@@ -82,37 +62,30 @@ interface DisputeData {
   resolved_at?: string;
   updated_at: string;
 }
-
 type TxPhase = "idle" | "broadcasting" | "polling" | "confirmed" | "failed";
-
 interface TxState {
   phase: TxPhase;
   txId: string | null;
   error: string | null;
 }
 
-// ── Helpers ───────────────────────────────────────────────────
-
 function verdictColor(v?: string) {
-  if (v === "release_to_receiver") return "#4ade80";
-  if (v === "refund_to_payer") return "#f87171";
-  if (v === "split") return "#fbbf24";
-  return "rgba(255,255,255,0.4)";
+  if (v === "release_to_receiver") return "#f5c518";
+  if (v === "refund_to_payer") return "rgba(245,197,24,0.55)";
+  if (v === "split") return "#f5c518";
+  return "rgba(255,255,255,0.20)";
 }
-
 function verdictLabel(v?: string) {
   if (v === "release_to_receiver") return "Release to Receiver";
   if (v === "refund_to_payer") return "Refund to Payer";
   if (v === "split") return "Split Payment";
   return "—";
 }
-
 function truncate(addr: string) {
   if (!addr || addr === "TBD") return addr;
   if (addr.length <= 14) return addr;
   return `${addr.slice(0, 8)}…${addr.slice(-5)}`;
 }
-
 function fmtDate(iso?: string) {
   if (!iso) return "—";
   return new Date(iso).toLocaleString(undefined, {
@@ -122,8 +95,6 @@ function fmtDate(iso?: string) {
     minute: "2-digit",
   });
 }
-
-// Poll Stacks API until tx is confirmed or failed
 async function pollTx(
   txId: string,
   maxAttempts = 60,
@@ -145,38 +116,28 @@ async function pollTx(
       )
         return "failed";
     } catch {
-      // keep polling
+      /* keep polling */
     }
   }
   return "failed";
 }
 
-// ── Main Component ────────────────────────────────────────────
-
 export default function ArbitratorDashboard() {
   const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
-
-  // disputes assigned to this arbitrator
   const [disputes, setDisputes] = useState<DisputeData[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeDispute, setActiveDispute] = useState<DisputeData | null>(null);
-
-  // per-dispute tx state
   const [txState, setTxState] = useState<TxState>({
     phase: "idle",
     txId: null,
     error: null,
   });
-
-  // decision form
   const [chosenOutcome, setChosenOutcome] = useState<VerdictOutcome | null>(
     null,
   );
-  const [overrideReason, setOverrideReason] = useState("");
-  const [showOverrideField, setShowOverrideField] = useState(false);
+  const [decisionNote, setDecisionNote] = useState("");
 
-  // ── Wallet ──
   const handleConnect = useCallback(async () => {
     setConnecting(true);
     try {
@@ -194,7 +155,6 @@ export default function ArbitratorDashboard() {
     if (user) setWalletAddress(user.address);
   }, []);
 
-  // ── Fetch disputes for this arbitrator ──
   const fetchDisputes = useCallback(async () => {
     if (!walletAddress) return;
     setLoading(true);
@@ -207,7 +167,7 @@ export default function ArbitratorDashboard() {
         setDisputes(json.disputes ?? []);
       }
     } catch {
-      // swallow
+      /* swallow */
     } finally {
       setLoading(false);
     }
@@ -219,7 +179,6 @@ export default function ArbitratorDashboard() {
     return () => clearInterval(iv);
   }, [fetchDisputes]);
 
-  // ── Socket: refresh when dispute updates ──
   useEffect(() => {
     if (!activeDispute) return;
     const socket = getSocket();
@@ -228,9 +187,8 @@ export default function ArbitratorDashboard() {
       if (
         payload.agreement_id === activeDispute.agreement_id &&
         payload.milestone_index === activeDispute.milestone_index
-      ) {
+      )
         setActiveDispute(payload);
-      }
       fetchDisputes();
     });
     return () => {
@@ -242,72 +200,54 @@ export default function ArbitratorDashboard() {
     };
   }, [activeDispute, fetchDisputes]);
 
-  // ── THE REAL ON-CHAIN RESOLUTION ──
-  // This is what makes the arbitrator logic real:
-  // 1. call the Clarity contract (sBTC moves)
-  // 2. poll for confirmation
-  // 3. record in MongoDB
   const handleResolve = useCallback(async () => {
-    if (!activeDispute || !chosenOutcome || !walletAddress) return;
-
+    if (
+      !activeDispute ||
+      !chosenOutcome ||
+      !walletAddress ||
+      !decisionNote.trim()
+    )
+      return;
     const { agreement_id, milestone_index, contract_terms, ai_verdict } =
       activeDispute;
-
-    // We need the milestone's sats amount. Try to derive it.
     const milestoneAmountSats = BigInt(
       Math.round(
         ((contract_terms.total_amount * contract_terms.milestone_percentage) /
           100) *
-          1000, // testnet: 1000 sats per $1
+          1000,
       ),
     );
-
-    // --- STEP 1: Broadcast on-chain tx ---
     setTxState({ phase: "broadcasting", txId: null, error: null });
-
     let txId: string;
     try {
-      if (chosenOutcome === "release_to_receiver") {
+      if (chosenOutcome === "release_to_receiver")
         txId = await callResolveToReceiver(
           agreement_id,
           milestone_index,
           milestoneAmountSats,
         );
-      } else if (chosenOutcome === "refund_to_payer") {
+      else if (chosenOutcome === "refund_to_payer")
         txId = await callResolveToPayer(
           agreement_id,
           milestone_index,
           milestoneAmountSats,
         );
-      } else {
-        // "split" — not yet in the Clarity contract, treat as release for now
-        // You'd need to call both with split amounts
-        throw new Error(
-          "Split is not yet implemented on-chain. Choose Release or Refund.",
-        );
-      }
+      else throw new Error("Split is not yet implemented on-chain.");
     } catch (e: unknown) {
       setTxState({ phase: "failed", txId: null, error: (e as Error).message });
       return;
     }
-
-    // --- STEP 2: Poll for confirmation ---
     setTxState({ phase: "polling", txId, error: null });
     const result = await pollTx(txId);
-
     if (result === "failed") {
       setTxState({
         phase: "failed",
         txId,
-        error: "Transaction aborted on-chain. Check post conditions.",
+        error: "Transaction aborted on-chain.",
       });
       return;
     }
-
     setTxState({ phase: "confirmed", txId, error: null });
-
-    // --- STEP 3: Record decision in MongoDB ---
-    // This is purely informational — the sBTC already moved on chain above.
     const followed_ai = ai_verdict?.verdict === chosenOutcome;
     try {
       await fetch(
@@ -318,37 +258,31 @@ export default function ArbitratorDashboard() {
           body: JSON.stringify({
             outcome: chosenOutcome,
             followed_ai,
-            override_reason: !followed_ai ? overrideReason : undefined,
+            override_reason: decisionNote.trim(),
             arbitrator_address: walletAddress,
             tx_id: txId,
           }),
         },
       );
     } catch {
-      // DB write failing doesn't matter — sBTC already moved
       console.warn("Failed to record decision in DB (chain tx succeeded)");
     }
-
-    // Refresh
     await fetchDisputes();
   }, [
     activeDispute,
     chosenOutcome,
     walletAddress,
-    overrideReason,
+    decisionNote,
     fetchDisputes,
   ]);
 
-  // ── Derived ──
   const isResolved =
     activeDispute?.status === "resolved" ||
     activeDispute?.status === "auto_refunded" ||
     !!activeDispute?.arbitrator_decision;
-
   const canDecide =
     activeDispute?.status === "ai_complete" ||
     (activeDispute?.status === "party_b_submitted" && !isResolved);
-
   const actionable = disputes.filter(
     (d) =>
       d.status === "ai_complete" ||
@@ -358,116 +292,170 @@ export default function ArbitratorDashboard() {
   const resolved = disputes.filter(
     (d) => d.status === "resolved" || d.status === "auto_refunded",
   );
+  const pending = disputes.filter(
+    (d) => d.status === "awaiting_statements" || d.status === "ai_pending",
+  );
 
-  // ── Render ────────────────────────────────────────────────
   return (
     <div>
       <style>{css}</style>
 
-      {/* Topbar */}
-      <header className="arb-topbar">
-        <div className="arb-topbar-left">
-          <a className="arb-brand" href="/">
-            <span className="arb-brand-mark">⚖</span>
-            <span className="arb-brand-name">ClauseAI</span>
+      {/* ── Topbar ── */}
+      <header className="a-topbar">
+        <div className="a-topbar-l">
+          <a className="a-brand" href="/">
+            <span className="a-brand-mark">◈</span>
+            <span className="a-brand-name">ClauseAI</span>
           </a>
-          <div className="arb-topbar-sep" />
-          <span className="arb-topbar-label">Arbitrator Portal</span>
-          <span className="arb-network-badge">{NETWORK_NAME}</span>
+          <div className="a-sep" />
+          <span className="a-portal-label">Arbitrator Portal</span>
+          <span className="a-net-badge">{NETWORK_NAME}</span>
         </div>
-        <div className="arb-topbar-right">
+        <div className="a-topbar-r">
           {walletAddress ? (
-            <div className="arb-wallet-pill">
-              <span className="arb-wallet-dot" />
-              <span className="arb-wallet-addr">{truncate(walletAddress)}</span>
+            <div className="a-wallet">
+              <span className="a-wallet-dot" />
+              <span className="a-wallet-addr">{truncate(walletAddress)}</span>
             </div>
           ) : (
             <button
-              className="arb-connect-btn"
+              className="a-connect-btn"
               onClick={handleConnect}
               disabled={connecting}
             >
-              {connecting ? <span className="arb-spinner" /> : "Connect Wallet"}
+              {connecting ? <span className="a-spin" /> : null}
+              Connect Wallet
             </button>
           )}
+          <div className="a-live">
+            <span className="a-live-dot" />
+            sBTC Live
+          </div>
         </div>
       </header>
 
-      <div className="arb-shell">
-        {/* Sidebar: dispute list */}
-        <aside className="arb-sidebar">
-          <div className="arb-sidebar-head">
-            <span className="arb-sidebar-label">Your Disputes</span>
-            {loading && <span className="arb-spinner-xs" />}
+      {/* ── App shell ── */}
+      <div className="a-shell">
+        {/* ── Sidebar ── */}
+        <aside className="a-sidebar">
+          <div className="a-sb-block">
+            <div className="a-sb-heading">Overview</div>
+            <div className="a-sb-stats">
+              {[
+                {
+                  k: "Action Required",
+                  v: actionable.length,
+                  hi: actionable.length > 0,
+                },
+                { k: "Pending Stmts", v: pending.length, hi: false },
+                { k: "Resolved", v: resolved.length, hi: false },
+                { k: "Total", v: disputes.length, hi: false },
+              ].map(({ k, v, hi }) => (
+                <div key={k} className="a-sb-row">
+                  <span className="a-sb-key">{k}</span>
+                  <span
+                    className="a-sb-val"
+                    style={hi && v > 0 ? { color: "#f5c518" } : {}}
+                  >
+                    {v}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
 
-          {!walletAddress && (
-            <div className="arb-empty">
-              Connect your wallet to see assigned disputes.
+          <div className="a-sb-block a-sb-block--grow">
+            <div className="a-sb-heading-row">
+              <span className="a-sb-heading">Disputes</span>
+              {loading && <span className="a-spin-xs" />}
             </div>
-          )}
+            {!walletAddress && (
+              <p className="a-sb-empty">
+                Connect your wallet to see assigned disputes.
+              </p>
+            )}
+            {walletAddress && !loading && disputes.length === 0 && (
+              <p className="a-sb-empty">
+                No disputes assigned to your address.
+              </p>
+            )}
 
-          {walletAddress && !loading && disputes.length === 0 && (
-            <div className="arb-empty">
-              No disputes assigned to your address.
-            </div>
-          )}
-
-          {actionable.length > 0 && (
-            <div className="arb-group">
-              <div className="arb-group-label">Needs Action</div>
-              {actionable.map((d) => (
-                <DisputeRow
-                  key={`${d.agreement_id}:${d.milestone_index}`}
-                  dispute={d}
-                  active={
-                    activeDispute?.agreement_id === d.agreement_id &&
-                    activeDispute?.milestone_index === d.milestone_index
-                  }
-                  onClick={() => {
-                    setActiveDispute(d);
-                    setTxState({ phase: "idle", txId: null, error: null });
-                    setChosenOutcome(null);
-                    setOverrideReason("");
-                    setShowOverrideField(false);
-                  }}
-                />
-              ))}
-            </div>
-          )}
-
-          {resolved.length > 0 && (
-            <div className="arb-group">
-              <div className="arb-group-label">Resolved</div>
-              {resolved.map((d) => (
-                <DisputeRow
-                  key={`${d.agreement_id}:${d.milestone_index}`}
-                  dispute={d}
-                  active={
-                    activeDispute?.agreement_id === d.agreement_id &&
-                    activeDispute?.milestone_index === d.milestone_index
-                  }
-                  onClick={() => {
-                    setActiveDispute(d);
-                    setTxState({ phase: "idle", txId: null, error: null });
-                    setChosenOutcome(null);
-                  }}
-                />
-              ))}
-            </div>
-          )}
+            {actionable.length > 0 && (
+              <div className="a-dg">
+                <div className="a-dg-label">Needs Action</div>
+                {actionable.map((d) => (
+                  <DisputeRow
+                    key={`${d.agreement_id}:${d.milestone_index}`}
+                    dispute={d}
+                    active={
+                      activeDispute?.agreement_id === d.agreement_id &&
+                      activeDispute?.milestone_index === d.milestone_index
+                    }
+                    onClick={() => {
+                      setActiveDispute(d);
+                      setTxState({ phase: "idle", txId: null, error: null });
+                      setChosenOutcome(null);
+                      setDecisionNote("");
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+            {pending.length > 0 && (
+              <div className="a-dg">
+                <div className="a-dg-label">Awaiting Statements</div>
+                {pending.map((d) => (
+                  <DisputeRow
+                    key={`${d.agreement_id}:${d.milestone_index}`}
+                    dispute={d}
+                    active={
+                      activeDispute?.agreement_id === d.agreement_id &&
+                      activeDispute?.milestone_index === d.milestone_index
+                    }
+                    onClick={() => {
+                      setActiveDispute(d);
+                      setTxState({ phase: "idle", txId: null, error: null });
+                      setChosenOutcome(null);
+                      setDecisionNote("");
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+            {resolved.length > 0 && (
+              <div className="a-dg">
+                <div className="a-dg-label">Resolved</div>
+                {resolved.map((d) => (
+                  <DisputeRow
+                    key={`${d.agreement_id}:${d.milestone_index}`}
+                    dispute={d}
+                    active={
+                      activeDispute?.agreement_id === d.agreement_id &&
+                      activeDispute?.milestone_index === d.milestone_index
+                    }
+                    onClick={() => {
+                      setActiveDispute(d);
+                      setTxState({ phase: "idle", txId: null, error: null });
+                      setChosenOutcome(null);
+                      setDecisionNote("");
+                    }}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
         </aside>
 
-        {/* Main panel */}
-        <main className="arb-main">
+        {/* ── Main ── */}
+        <main className="a-main">
           {!activeDispute ? (
-            <div className="arb-placeholder">
-              <div className="arb-placeholder-icon">⚖</div>
-              <div className="arb-placeholder-title">Select a dispute</div>
-              <div className="arb-placeholder-body">
+            <div className="a-empty">
+              <div className="a-empty-icon">⚖</div>
+              <div className="a-empty-title">Select a dispute</div>
+              <p className="a-empty-body">
                 Choose a dispute from the sidebar to review statements and issue
                 a binding on-chain resolution.
-              </div>
+              </p>
             </div>
           ) : (
             <DisputePanel
@@ -476,10 +464,8 @@ export default function ArbitratorDashboard() {
               txState={txState}
               chosenOutcome={chosenOutcome}
               setChosenOutcome={setChosenOutcome}
-              overrideReason={overrideReason}
-              setOverrideReason={setOverrideReason}
-              showOverrideField={showOverrideField}
-              setShowOverrideField={setShowOverrideField}
+              decisionNote={decisionNote}
+              setDecisionNote={setDecisionNote}
               canDecide={canDecide}
               isResolved={isResolved}
               onResolve={handleResolve}
@@ -491,8 +477,7 @@ export default function ArbitratorDashboard() {
   );
 }
 
-// ── Dispute Row (sidebar) ─────────────────────────────────────
-
+// ── Dispute Row ─────────────────────────────────────────────────────────────
 function DisputeRow({
   dispute,
   active,
@@ -504,48 +489,44 @@ function DisputeRow({
 }) {
   const needsAction =
     dispute.status === "ai_complete" || dispute.status === "party_b_submitted";
-  const resolved =
+  const isRes =
     dispute.status === "resolved" || dispute.status === "auto_refunded";
-
   return (
     <button
-      className={`arb-dispute-row${active ? " arb-dispute-row--active" : ""}`}
+      className={`a-drow${active ? " a-drow--active" : ""}`}
       onClick={onClick}
     >
-      <div
-        className="arb-row-dot"
+      <span
+        className="a-drow-dot"
         style={{
-          background: resolved
-            ? "#4ade80"
+          background: isRes
+            ? "#f5c518"
             : needsAction
-              ? "#fbbf24"
-              : "rgba(255,255,255,0.15)",
+              ? "rgba(245,197,24,0.55)"
+              : "rgba(255,255,255,0.12)",
         }}
       />
-      <div className="arb-row-body">
-        <div className="arb-row-id">#{dispute.agreement_id.slice(0, 14)}…</div>
-        <div className="arb-row-ms">
+      <div className="a-drow-body">
+        <div className="a-drow-id">#{dispute.agreement_id.slice(0, 13)}…</div>
+        <div className="a-drow-sub">
           MS {dispute.milestone_index} ·{" "}
           {dispute.contract_terms.milestone_percentage}%
         </div>
       </div>
-      {needsAction && !resolved && <span className="arb-row-action-dot" />}
+      {needsAction && !isRes && <span className="a-drow-pulse" />}
     </button>
   );
 }
 
-// ── Main dispute panel ────────────────────────────────────────
-
+// ── Dispute Panel ───────────────────────────────────────────────────────────
 function DisputePanel({
   dispute,
   walletAddress,
   txState,
   chosenOutcome,
   setChosenOutcome,
-  overrideReason,
-  setOverrideReason,
-  showOverrideField,
-  setShowOverrideField,
+  decisionNote,
+  setDecisionNote,
   canDecide,
   isResolved,
   onResolve,
@@ -555,10 +536,8 @@ function DisputePanel({
   txState: TxState;
   chosenOutcome: VerdictOutcome | null;
   setChosenOutcome: (v: VerdictOutcome | null) => void;
-  overrideReason: string;
-  setOverrideReason: (s: string) => void;
-  showOverrideField: boolean;
-  setShowOverrideField: (b: boolean) => void;
+  decisionNote: string;
+  setDecisionNote: (s: string) => void;
   canDecide: boolean;
   isResolved: boolean;
   onResolve: () => void;
@@ -569,24 +548,22 @@ function DisputePanel({
   const isOverride = chosenOutcome && aiV && chosenOutcome !== aiV.verdict;
 
   return (
-    <div className="arb-panel">
+    <div className="a-panel">
       {/* Header */}
-      <div className="arb-panel-header">
+      <div className="a-panel-hd">
         <div>
-          <div className="arb-panel-eyebrow">Dispute Review</div>
-          <div className="arb-panel-title">
+          <div className="a-eyebrow">Dispute Review</div>
+          <h1 className="a-title">
             Agreement{" "}
-            <span className="arb-panel-id">#{dispute.agreement_id}</span>
-          </div>
-          <div className="arb-panel-sub">
-            Milestone {dispute.milestone_index}
-          </div>
+            <span className="a-title-dim">#{dispute.agreement_id}</span>
+          </h1>
+          <div className="a-sub">Milestone {dispute.milestone_index}</div>
         </div>
         <StatusBadge status={dispute.status} />
       </div>
 
-      {/* Contract terms */}
-      <div className="arb-terms-grid">
+      {/* Terms grid */}
+      <div className="a-terms">
         {[
           { k: "Payer", v: truncate(ct.payer) },
           { k: "Receiver", v: truncate(ct.receiver) },
@@ -598,148 +575,141 @@ function DisputePanel({
           { k: "Type", v: ct.agreement_type ?? "freelance" },
           { k: "Opened", v: fmtDate(dispute.opened_at) },
         ].map(({ k, v }) => (
-          <div key={k} className="arb-terms-cell">
-            <div className="arb-terms-key">{k}</div>
-            <div className="arb-terms-val">{v}</div>
+          <div key={k} className="a-terms-cell">
+            <div className="a-terms-k">{k}</div>
+            <div className="a-terms-v">{v}</div>
           </div>
         ))}
       </div>
 
-      {/* Milestone description */}
-      <div className="arb-desc-block">
-        <div className="arb-desc-label">Milestone Description</div>
-        <p className="arb-desc-text">{ct.milestone_description}</p>
+      {/* Description */}
+      <div className="a-desc">
+        <div className="a-label">Milestone Description</div>
+        <p className="a-desc-text">{ct.milestone_description}</p>
       </div>
 
       {/* Statements */}
-      <div className="arb-stmts-head">Statements</div>
-      <div className="arb-stmts-grid">
-        <StatementBlock
-          label="Payer (Party A)"
-          accent="#60a5fa"
-          statement={dispute.party_a_statement}
-          evidence={dispute.party_a_evidence ?? []}
-          submittedAt={dispute.party_a_submitted_at}
-        />
-        <StatementBlock
-          label="Receiver (Party B)"
-          accent="#4ade80"
-          statement={dispute.party_b_statement}
-          evidence={dispute.party_b_evidence ?? []}
-          submittedAt={dispute.party_b_submitted_at}
-        />
+      <div>
+        <div className="a-label">Statements</div>
+        <div className="a-stmts">
+          <StatementBlock
+            label="Payer — Party A"
+            statement={dispute.party_a_statement}
+            evidence={dispute.party_a_evidence ?? []}
+            submittedAt={dispute.party_a_submitted_at}
+          />
+          <StatementBlock
+            label="Receiver — Party B"
+            statement={dispute.party_b_statement}
+            evidence={dispute.party_b_evidence ?? []}
+            submittedAt={dispute.party_b_submitted_at}
+          />
+        </div>
       </div>
 
-      {/* AI Verdict */}
+      {/* AI verdict */}
       {aiV && <AIVerdictBlock verdict={aiV} />}
 
-      {/* Awaiting both statements */}
-      {!dispute.party_a_submitted_at && !dispute.party_b_submitted_at && (
-        <div className="arb-notice arb-notice--warn">
-          Neither party has submitted their statement yet.
+      {/* Notices */}
+      {dispute.status === "ai_pending" && (
+        <div className="a-notice a-notice--warn">
+          <span className="a-spin-amber" />
+          AI is analyzing statements… usually 5–15 seconds.
+        </div>
+      )}
+      {(dispute.status === "awaiting_statements" ||
+        dispute.status === "party_a_submitted") && (
+        <div className="a-notice a-notice--dim">
+          Waiting for both parties to submit statements before AI analysis can
+          begin.
         </div>
       )}
       {(dispute.party_a_submitted_at || dispute.party_b_submitted_at) &&
-        !(dispute.party_a_submitted_at && dispute.party_b_submitted_at) && (
-          <div className="arb-notice arb-notice--warn">
+        !(dispute.party_a_submitted_at && dispute.party_b_submitted_at) &&
+        canDecide && (
+          <div className="a-notice a-notice--warn">
             Only one party has submitted. You may decide now or wait for both
             statements.
           </div>
         )}
 
-      {/* ── DECISION SECTION ── */}
+      {/* Decision section */}
       {!isResolved && canDecide && (
-        <div className="arb-decision-section">
-          <div className="arb-decision-title">
-            <span>⚖</span> Issue Binding On-Chain Decision
+        <div className="a-decision">
+          <div className="a-decision-title">
+            Issue Binding On-Chain Decision
           </div>
-          <p className="arb-decision-body">
-            Your decision will call the smart contract directly. sBTC will be
-            transferred immediately when the transaction confirms on Stacks.
-            This action is irreversible.
+          <p className="a-decision-body">
+            Your decision calls the smart contract directly. sBTC transfers
+            immediately on confirmation. A note is required — both parties will
+            see it.
           </p>
 
-          {/* Outcome picker */}
-          <div className="arb-outcome-grid">
+          <div className="a-outcomes">
             {(
               [
                 {
                   v: "release_to_receiver" as VerdictOutcome,
                   label: "Release to Receiver",
                   sub: "sBTC → Party B",
-                  color: "#4ade80",
                 },
                 {
                   v: "refund_to_payer" as VerdictOutcome,
                   label: "Refund to Payer",
                   sub: "sBTC → Party A",
-                  color: "#f87171",
                 },
               ] as const
-            ).map(({ v, label, sub, color }) => {
+            ).map(({ v, label, sub }) => {
               const isAI = aiV?.verdict === v;
-              const selected = chosenOutcome === v;
+              const sel = chosenOutcome === v;
               return (
                 <button
                   key={v}
-                  className={`arb-outcome-btn${selected ? " arb-outcome-btn--selected" : ""}`}
-                  style={
-                    selected
-                      ? {
-                          borderColor: color,
-                          background: color + "12",
-                          color,
-                        }
-                      : {}
-                  }
-                  onClick={() => {
-                    setChosenOutcome(v);
-                    setShowOverrideField(isAI ? false : true);
-                  }}
+                  className={`a-outcome${sel ? " a-outcome--sel" : ""}`}
+                  onClick={() => setChosenOutcome(v)}
                 >
-                  <div className="arb-outcome-label">{label}</div>
-                  <div className="arb-outcome-sub">{sub}</div>
-                  {isAI && <span className="arb-ai-rec">AI Recommends</span>}
-                  {selected && (
-                    <div className="arb-outcome-check" style={{ color }}>
-                      ✓
-                    </div>
-                  )}
+                  {isAI && <span className="a-ai-tag">AI Recommends</span>}
+                  <div className="a-outcome-label">{label}</div>
+                  <div className="a-outcome-sub">{sub}</div>
+                  {sel && <span className="a-outcome-check">✓</span>}
                 </button>
               );
             })}
           </div>
 
-          {/* Override reason */}
-          {isOverride && showOverrideField && (
-            <div className="arb-override-wrap">
-              <label className="arb-override-label">
-                Override Reason{" "}
-                <span className="arb-override-hint">
-                  (required when overriding AI)
-                </span>
-              </label>
-              <textarea
-                className="arb-override-input"
-                placeholder="Explain why you're overriding the AI recommendation…"
-                value={overrideReason}
-                onChange={(e) => setOverrideReason(e.target.value)}
-                rows={3}
-              />
-            </div>
-          )}
+          <div className="a-note">
+            <label className="a-note-label">
+              {isOverride ? "Override Reason" : "Decision Note"}
+              <span className="a-note-req">
+                {" "}
+                * required — shown to both parties
+              </span>
+            </label>
+            <textarea
+              className={`a-note-ta${chosenOutcome && !decisionNote.trim() ? " a-note-ta--err" : ""}`}
+              placeholder={
+                isOverride
+                  ? "Explain why you are overriding the AI recommendation…"
+                  : "Explain your decision — e.g. 'The receiver provided sufficient proof of delivery. Releasing funds.'"
+              }
+              value={decisionNote}
+              onChange={(e) => setDecisionNote(e.target.value)}
+              rows={3}
+            />
+            {chosenOutcome && !decisionNote.trim() && (
+              <div className="a-note-hint">
+                A note is required before you can confirm.
+              </div>
+            )}
+          </div>
 
-          {/* TX status */}
           {txState.phase !== "idle" && <TxStatusBlock txState={txState} />}
 
-          {/* Confirm button */}
-          {txState.phase === "idle" || txState.phase === "failed" ? (
+          {(txState.phase === "idle" || txState.phase === "failed") && (
             <button
-              className="arb-confirm-btn"
+              className="a-confirm"
               disabled={
-                !chosenOutcome ||
-                !walletAddress ||
-                (!!isOverride && showOverrideField && !overrideReason.trim())
+                !chosenOutcome || !walletAddress || !decisionNote.trim()
               }
               onClick={onResolve}
             >
@@ -747,99 +717,63 @@ function DisputePanel({
                 "Retry On-Chain Resolution"
               ) : chosenOutcome ? (
                 <>
-                  Confirm: {verdictLabel(chosenOutcome)} →{" "}
-                  <span style={{ opacity: 0.65, fontSize: 12 }}>
-                    broadcasts on Stacks
-                  </span>
+                  {verdictLabel(chosenOutcome)}{" "}
+                  <span className="a-confirm-sub">— broadcasts on Stacks</span>
                 </>
               ) : (
                 "Select an outcome above"
               )}
             </button>
-          ) : null}
+          )}
         </div>
       )}
 
-      {/* Already resolved */}
-      {isResolved && arbD && <ResolvedBlock decision={arbD} aiVerdict={aiV} />}
-
-      {/* Pending AI */}
-      {dispute.status === "ai_pending" && (
-        <div className="arb-notice arb-notice--info">
-          <span className="arb-spinner-amber" />
-          AI is analyzing statements… Usually 5–15 seconds.
-        </div>
-      )}
-
-      {/* Awaiting statements */}
-      {(dispute.status === "awaiting_statements" ||
-        dispute.status === "party_a_submitted") && (
-        <div className="arb-notice arb-notice--info">
-          Waiting for both parties to submit statements before AI analysis can
-          begin.
-        </div>
-      )}
+      {isResolved && arbD && <ResolvedBlock decision={arbD} />}
     </div>
   );
 }
 
-// ── Sub-blocks ────────────────────────────────────────────────
-
+// ── Statement Block ─────────────────────────────────────────────────────────
 function StatementBlock({
   label,
-  accent,
   statement,
   evidence,
   submittedAt,
 }: {
   label: string;
-  accent: string;
   statement: string;
   evidence: string[];
   submittedAt?: string;
 }) {
   return (
-    <div className="arb-stmt" style={{ borderColor: accent + "25" }}>
-      <div
-        className="arb-stmt-head"
-        style={{ background: accent + "08", borderColor: accent + "18" }}
-      >
-        <div
-          className="arb-stmt-avatar"
-          style={{
-            background: accent + "15",
-            border: `1px solid ${accent}30`,
-            color: accent,
-          }}
-        >
-          {label[0]}
-        </div>
-        <span className="arb-stmt-label">{label}</span>
+    <div className="a-stmt">
+      <div className="a-stmt-hd">
+        <span className="a-stmt-avatar">{label[0]}</span>
+        <span className="a-stmt-name">{label}</span>
         {submittedAt ? (
-          <span className="arb-stmt-filed">✓ Filed {fmtDate(submittedAt)}</span>
+          <span className="a-badge a-badge--filed">
+            ✓ {fmtDate(submittedAt)}
+          </span>
         ) : (
-          <span className="arb-stmt-pending">Pending</span>
+          <span className="a-badge a-badge--pend">Pending</span>
         )}
       </div>
-      <div className="arb-stmt-body">
+      <div className="a-stmt-body">
         {statement ? (
-          <p className="arb-stmt-text">{statement}</p>
+          <p className="a-stmt-text">{statement}</p>
         ) : (
-          <p className="arb-stmt-empty">No statement submitted yet.</p>
+          <p className="a-stmt-empty">No statement submitted yet.</p>
         )}
         {evidence.length > 0 && (
-          <div className="arb-evidence-list">
-            <div className="arb-evidence-label">
-              Evidence ({evidence.length})
-            </div>
+          <div className="a-evidence">
+            <div className="a-evidence-label">Evidence ({evidence.length})</div>
             {evidence.map((url, i) => (
               <a
                 key={i}
                 href={url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="arb-evidence-item"
-                style={{ borderColor: accent + "20", color: accent }}
+                className="a-evidence-item"
               >
                 📎 {url.split("/").pop() ?? url} ↗
               </a>
@@ -851,81 +785,58 @@ function StatementBlock({
   );
 }
 
+// ── AI Verdict Block ────────────────────────────────────────────────────────
 function AIVerdictBlock({ verdict }: { verdict: AIVerdict }) {
-  const vc = verdictColor(verdict.verdict);
+  const isRelease = verdict.verdict === "release_to_receiver";
   return (
-    <div className="arb-ai-block" style={{ borderColor: vc + "30" }}>
-      <div
-        className="arb-ai-head"
-        style={{ background: vc + "06", borderColor: vc + "18" }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span>🤖</span>
-          <span className="arb-ai-title">AI Advisory Verdict</span>
-          <span className="arb-ai-advisory">(advisory only — not binding)</span>
+    <div className="a-ai">
+      <div className="a-ai-hd">
+        <div className="a-ai-hd-l">
+          <span className="a-ai-icon">🤖</span>
+          <span className="a-ai-title">AI Advisory Verdict</span>
+          <span className="a-ai-note">advisory only — not binding</span>
         </div>
-        <span className="arb-ai-model">
-          {verdict.model ?? "claude"}{" "}
+        <span className="a-ai-model">
+          {verdict.model ?? "claude"}
           {verdict.latency_ms
-            ? `· ${(verdict.latency_ms / 1000).toFixed(1)}s`
+            ? ` · ${(verdict.latency_ms / 1000).toFixed(1)}s`
             : ""}
         </span>
       </div>
-      <div className="arb-ai-body">
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            flexWrap: "wrap",
-          }}
-        >
+      <div className="a-ai-body">
+        <div className="a-ai-top">
           <span
-            className="arb-ai-pill"
-            style={{ color: vc, background: vc + "10", borderColor: vc + "28" }}
+            className={`a-ai-pill${isRelease ? " a-ai-pill--rel" : " a-ai-pill--ref"}`}
           >
             {verdictLabel(verdict.verdict)}
           </span>
-          <div className="arb-conf-row">
-            <span className="arb-conf-label">Confidence</span>
-            <div className="arb-conf-track">
+          <div className="a-conf">
+            <span className="a-conf-label">Confidence</span>
+            <div className="a-conf-track">
               <div
-                className="arb-conf-fill"
-                style={{
-                  width: `${verdict.confidence}%`,
-                  background:
-                    verdict.confidence >= 70
-                      ? "#4ade80"
-                      : verdict.confidence >= 40
-                        ? "#fbbf24"
-                        : "#f87171",
-                }}
+                className="a-conf-fill"
+                style={{ width: `${verdict.confidence}%` }}
               />
             </div>
-            <span className="arb-conf-label">{verdict.confidence}%</span>
+            <span className="a-conf-pct">{verdict.confidence}%</span>
           </div>
         </div>
-
-        <p className="arb-ai-reasoning">{verdict.reasoning}</p>
-
+        <p className="a-ai-reasoning">{verdict.reasoning}</p>
         {verdict.key_factors.length > 0 && (
           <div>
-            <div className="arb-ai-sublabel">Key Factors</div>
+            <div className="a-ai-sublabel">Key Factors</div>
             {verdict.key_factors.map((f, i) => (
-              <div key={i} className="arb-ai-factor">
-                <span style={{ color: vc }}>→</span> {f}
+              <div key={i} className="a-ai-factor">
+                → {f}
               </div>
             ))}
           </div>
         )}
-
         {verdict.warnings.length > 0 && (
           <div>
-            <div className="arb-ai-sublabel" style={{ color: "#fbbf24" }}>
-              ⚠ Warnings
-            </div>
+            <div className="a-ai-sublabel a-ai-sublabel--warn">Warnings</div>
             {verdict.warnings.map((w, i) => (
-              <div key={i} className="arb-ai-factor arb-ai-warn">
+              <div key={i} className="a-ai-warn">
                 ⚠ {w}
               </div>
             ))}
@@ -936,26 +847,27 @@ function AIVerdictBlock({ verdict }: { verdict: AIVerdict }) {
   );
 }
 
+// ── Tx Status Block ─────────────────────────────────────────────────────────
 function TxStatusBlock({ txState }: { txState: TxState }) {
   const { phase, txId, error } = txState;
   return (
-    <div className={`arb-tx-status arb-tx-status--${phase}`}>
+    <div className={`a-tx a-tx--${phase}`}>
       {phase === "broadcasting" && (
         <>
-          <span className="arb-spinner-sm" />
-          <span>Broadcasting transaction via Leather wallet…</span>
+          <span className="a-spin-sm" />
+          <span>Broadcasting via Leather wallet…</span>
         </>
       )}
       {phase === "polling" && txId && (
         <>
-          <span className="arb-spinner-sm" />
+          <span className="a-spin-sm" />
           <span>
             Confirming on Stacks…{" "}
             <a
               href={explorerTxUrl(txId)}
               target="_blank"
               rel="noopener noreferrer"
-              className="arb-tx-link"
+              className="a-tx-link"
             >
               {txId.slice(0, 14)}… ↗
             </a>
@@ -964,27 +876,25 @@ function TxStatusBlock({ txState }: { txState: TxState }) {
       )}
       {phase === "confirmed" && txId && (
         <>
-          <span style={{ color: "#4ade80" }}>✓</span>
+          <span className="a-tx-ok">✓</span>
           <span>
             Confirmed.{" "}
             <a
               href={explorerTxUrl(txId)}
               target="_blank"
               rel="noopener noreferrer"
-              className="arb-tx-link"
+              className="a-tx-link"
             >
               View on Explorer ↗
             </a>
           </span>
-          <span style={{ color: "rgba(255,255,255,0.35)", fontSize: 11 }}>
-            sBTC has been transferred on-chain.
-          </span>
+          <span className="a-tx-dim">sBTC transferred on-chain.</span>
         </>
       )}
       {phase === "failed" && (
         <>
-          <span style={{ color: "#f87171" }}>⚠</span>
-          <span style={{ color: "#f87171" }}>
+          <span className="a-tx-fail-icon">⚠</span>
+          <span className="a-tx-fail-text">
             {error ?? "Transaction failed"}
           </span>
           {txId && (
@@ -992,7 +902,7 @@ function TxStatusBlock({ txState }: { txState: TxState }) {
               href={explorerTxUrl(txId)}
               target="_blank"
               rel="noopener noreferrer"
-              className="arb-tx-link"
+              className="a-tx-link"
             >
               View details ↗
             </a>
@@ -1003,453 +913,398 @@ function TxStatusBlock({ txState }: { txState: TxState }) {
   );
 }
 
-function ResolvedBlock({
-  decision,
-  aiVerdict,
-}: {
-  decision: ArbitratorDecision;
-  aiVerdict?: AIVerdict;
-}) {
-  const dc = verdictColor(decision.outcome);
-  return (
-    <div
-      className="arb-resolved"
-      style={{ borderColor: dc + "30", background: dc + "06" }}
-    >
-      <div className="arb-resolved-title">⚖ Dispute Resolved On-Chain</div>
-      <div className="arb-resolved-outcome" style={{ color: dc }}>
-        {verdictLabel(decision.outcome)}
-      </div>
-      <div className="arb-resolved-meta">
-        <span>
-          {decision.followed_ai
-            ? "✓ Followed AI recommendation"
-            : "↺ Overrode AI recommendation"}
-        </span>
-        <span>·</span>
-        <span>{fmtDate(decision.decided_at)}</span>
-        <span>·</span>
-        <span>{truncate(decision.arbitrator_address)}</span>
-      </div>
-      {decision.override_reason && (
-        <p className="arb-resolved-reason">
-          Override reason: {decision.override_reason}
-        </p>
-      )}
-    </div>
-  );
-}
-
+// ── Status Badge ────────────────────────────────────────────────────────────
 function StatusBadge({ status }: { status: DisputeStatus }) {
-  const map: Record<DisputeStatus, { label: string; color: string }> = {
-    awaiting_statements: {
-      label: "Awaiting Statements",
-      color: "rgba(255,255,255,0.35)",
-    },
-    party_a_submitted: { label: "Payer Filed", color: "#60a5fa" },
-    party_b_submitted: { label: "Both Filed", color: "#fbbf24" },
-    ai_pending: { label: "AI Analyzing…", color: "#fbbf24" },
-    ai_complete: { label: "AI Ready · Action Required", color: "#fbbf24" },
-    resolved: { label: "Resolved", color: "#4ade80" },
-    auto_refunded: { label: "Auto-Refunded", color: "#4ade80" },
+  const map: Record<DisputeStatus, { label: string; bright: boolean }> = {
+    awaiting_statements: { label: "Awaiting Statements", bright: false },
+    party_a_submitted: { label: "Payer Filed", bright: false },
+    party_b_submitted: { label: "Both Filed", bright: true },
+    ai_pending: { label: "AI Analyzing", bright: true },
+    ai_complete: { label: "Action Required", bright: true },
+    resolved: { label: "Resolved", bright: true },
+    auto_refunded: { label: "Auto-Refunded", bright: false },
   };
-  const m = map[status] ?? { label: status, color: "rgba(255,255,255,0.35)" };
+  const m = map[status] ?? { label: status, bright: false };
   return (
     <span
-      className="arb-status-badge"
-      style={{
-        color: m.color,
-        borderColor: m.color + "35",
-        background: m.color + "10",
-      }}
+      className={`a-status-badge${m.bright ? " a-status-badge--bright" : ""}`}
     >
-      {status === "ai_pending" && <span className="arb-spinner-xs-amber" />}
+      {status === "ai_pending" && <span className="a-spin-xs-y" />}
       {m.label}
     </span>
   );
 }
 
-// ── CSS ───────────────────────────────────────────────────────
+// ── Resolved Block ──────────────────────────────────────────────────────────
+function ResolvedBlock({ decision }: { decision: ArbitratorDecision }) {
+  return (
+    <div className="a-resolved">
+      <div className="a-resolved-hd">
+        <span className="a-resolved-eye">⚖ Dispute Resolved On-Chain</span>
+        <span className="a-resolved-outcome">
+          {verdictLabel(decision.outcome)}
+        </span>
+      </div>
+      {decision.override_reason && (
+        <div className="a-resolved-note">
+          <div className="a-resolved-note-label">
+            {decision.followed_ai ? "Decision Note" : "Override Reason"}
+          </div>
+          <p className="a-resolved-note-text">"{decision.override_reason}"</p>
+        </div>
+      )}
+      <div className="a-resolved-meta">
+        <span>{decision.followed_ai ? "✓ Followed AI" : "↺ Overrode AI"}</span>
+        <span className="a-dot">·</span>
+        <span>{fmtDate(decision.decided_at)}</span>
+        <span className="a-dot">·</span>
+        <span>{truncate(decision.arbitrator_address)}</span>
+      </div>
+    </div>
+  );
+}
+
+// ── CSS ─────────────────────────────────────────────────────────────────────
 const css = `
-/* ── Reset / base ── */
-* { box-sizing: border-box; }
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap');
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+
+/* Tokens */
+:root{
+  --bg:#0a0a0a;
+  --bg1:#101010;
+  --bg2:#161616;
+  --bg3:#1c1c1c;
+  --y:#f5c518;
+  --yd:rgba(245,197,24,0.70);
+  --ydim:rgba(245,197,24,0.08);
+  --yborder:rgba(245,197,24,0.22);
+  --t1:#f0f0f0;
+  --t2:rgba(240,240,240,0.70);
+  --t3:rgba(240,240,240,0.40);
+  --t4:rgba(240,240,240,0.22);
+  --border:rgba(240,240,240,0.08);
+  --border2:rgba(240,240,240,0.13);
+  --mono:'DM Mono',monospace;
+  --display:'Syne',sans-serif;
+  --sans:'DM Sans',sans-serif;
+}
 
 /* ── Topbar ── */
-.arb-topbar {
-  position: sticky; top: 0; z-index: 100;
-  height: 52px; background: #0c0c0c;
-  border-bottom: 1px solid rgba(255,255,255,0.07);
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 0 24px; gap: 12px;
-  font-family: 'DM Mono', 'Roboto Mono', monospace;
+.a-topbar{
+  position:sticky;top:0;z-index:200;height:54px;
+  background:rgba(10,10,10,0.95);backdrop-filter:blur(20px);
+  border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between;
+  padding:0 28px;
 }
-.arb-topbar-left  { display: flex; align-items: center; gap: 10px; }
-.arb-topbar-right { display: flex; align-items: center; gap: 10px; }
-.arb-topbar-sep   { width: 1px; height: 14px; background: rgba(255,255,255,0.08); margin: 0 4px; }
-.arb-topbar-label { font-size: 11px; color: rgba(255,255,255,0.40); }
-
-.arb-brand { display: flex; align-items: center; gap: 8px; text-decoration: none; }
-.arb-brand-mark {
-  width: 26px; height: 26px; border-radius: 5px;
-  background: #fbbf24; display: flex; align-items: center; justify-content: center;
-  font-size: 13px; color: #0c0c0c; font-weight: 900; flex-shrink: 0;
+.a-topbar-l,.a-topbar-r{display:flex;align-items:center;gap:12px;}
+.a-sep{width:1px;height:16px;background:var(--border);margin:0 6px;}
+.a-brand{display:flex;align-items:center;gap:9px;text-decoration:none;}
+.a-brand-mark{
+  width:28px;height:28px;border-radius:5px;flex-shrink:0;
+  background:var(--y);display:flex;align-items:center;justify-content:center;
+  font-family:var(--display);font-size:14px;font-weight:800;color:#0a0a0a;
 }
-.arb-brand-name {
-  font-family: 'Syne', sans-serif; font-size: 14px; font-weight: 800;
-  color: #ffffff; letter-spacing: -0.02em;
+.a-brand-name{font-family:var(--display);font-size:15px;font-weight:800;color:var(--t1);letter-spacing:-0.04em;}
+.a-portal-label{font-size:10px;font-family:var(--mono);color:var(--t4);}
+.a-net-badge{
+  font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;
+  color:var(--y);border:1px solid var(--yborder);border-radius:3px;
+  padding:2px 8px;background:var(--ydim);font-family:var(--mono);
 }
-
-.arb-network-badge {
-  font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.10em;
-  color: #fbbf24; border: 1px solid rgba(251,191,36,0.25);
-  border-radius: 3px; padding: 2px 7px;
+.a-wallet{display:flex;align-items:center;gap:7px;border:1px solid var(--border);border-radius:4px;padding:5px 12px;}
+.a-wallet-dot{width:5px;height:5px;border-radius:50%;background:var(--y);flex-shrink:0;}
+.a-wallet-addr{font-size:10px;font-family:var(--mono);color:var(--t4);}
+.a-connect-btn{
+  display:flex;align-items:center;gap:7px;padding:7px 16px;
+  border:none;background:var(--y);color:#0a0a0a;cursor:pointer;
+  font-family:var(--display);font-size:12px;font-weight:700;
+  letter-spacing:-0.02em;border-radius:4px;transition:background 0.13s;
 }
-
-.arb-wallet-pill {
-  display: flex; align-items: center; gap: 6px;
-  border: 1px solid rgba(255,255,255,0.10); border-radius: 4px; padding: 4px 10px;
+.a-connect-btn:hover{background:#ffd740;}
+.a-connect-btn:disabled{opacity:0.45;cursor:not-allowed;}
+.a-live{
+  display:flex;align-items:center;gap:5px;
+  font-size:9px;font-family:var(--mono);font-weight:700;
+  letter-spacing:0.07em;text-transform:uppercase;
+  color:var(--y);border:1px solid var(--yborder);
+  border-radius:4px;padding:4px 10px;background:var(--ydim);
 }
-.arb-wallet-dot  { width: 5px; height: 5px; border-radius: 50%; background: #fbbf24; flex-shrink: 0; }
-.arb-wallet-addr { font-size: 10px; color: rgba(255,255,255,0.45); }
-
-.arb-connect-btn {
-  padding: 6px 16px; border-radius: 4px; cursor: pointer;
-  background: #fbbf24; color: #0c0c0c; border: none;
-  font-size: 11px; font-weight: 700; font-family: 'DM Mono', monospace;
-  display: flex; align-items: center; gap: 6px;
-}
-.arb-connect-btn:hover { background: #fcd34d; }
-.arb-connect-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.a-live-dot{width:5px;height:5px;border-radius:50%;background:var(--y);animation:aPulse 2s ease infinite;flex-shrink:0;}
 
 /* ── Shell ── */
-.arb-shell {
-  display: flex; min-height: calc(100vh - 52px); background: #0c0c0c;
+.a-shell{
+  display:flex;min-height:calc(100vh - 54px);
+  background:var(--bg);
+  background-image:radial-gradient(circle at 1px 1px, rgba(245,197,24,0.025) 1px, transparent 0);
+  background-size:28px 28px;
 }
 
 /* ── Sidebar ── */
-.arb-sidebar {
-  width: 240px; flex-shrink: 0;
-  background: #0e0e0e; border-right: 1px solid rgba(255,255,255,0.07);
-  padding: 16px 0;
-  position: sticky; top: 52px; height: calc(100vh - 52px); overflow-y: auto;
+.a-sidebar{
+  width:224px;flex-shrink:0;
+  background:var(--bg1);
+  border-right:1px solid var(--border);
+  display:flex;flex-direction:column;
+  position:sticky;top:54px;height:calc(100vh - 54px);
+  overflow-y:auto;
 }
-.arb-sidebar-head {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 0 14px 10px; margin-bottom: 4px;
-  border-bottom: 1px solid rgba(255,255,255,0.05);
+.a-sidebar::-webkit-scrollbar{width:2px;}
+.a-sidebar::-webkit-scrollbar-thumb{background:var(--bg3);}
+.a-sb-block{padding:16px 16px 18px;border-bottom:1px solid var(--border);}
+.a-sb-block--grow{flex:1;border-bottom:none;}
+.a-sb-heading{
+  font-size:8px;font-family:var(--mono);color:var(--t4);
+  text-transform:uppercase;letter-spacing:0.14em;display:block;margin-bottom:11px;
 }
-.arb-sidebar-label {
-  font-size: 9px; font-family: 'DM Mono', monospace;
-  color: rgba(255,255,255,0.22); text-transform: uppercase; letter-spacing: 0.12em;
-}
-.arb-empty {
-  padding: 16px 14px;
-  font-size: 11px; color: rgba(255,255,255,0.28);
-  font-family: 'DM Mono', monospace; line-height: 1.6;
+.a-sb-heading-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:11px;}
+.a-sb-stats{display:flex;flex-direction:column;gap:9px;}
+.a-sb-row{display:flex;align-items:center;justify-content:space-between;}
+.a-sb-key{font-size:10px;font-family:var(--mono);color:var(--t4);}
+.a-sb-val{font-size:11px;font-family:var(--mono);color:var(--t2);font-weight:500;}
+.a-sb-empty{font-size:11px;font-family:var(--mono);color:var(--t4);line-height:1.7;}
+.a-dg{margin-bottom:2px;}
+.a-dg-label{
+  font-size:8px;font-family:var(--mono);color:rgba(240,240,240,0.16);
+  text-transform:uppercase;letter-spacing:0.13em;
+  padding:10px 0 5px;
 }
 
-.arb-group { padding: 12px 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
-.arb-group-label {
-  padding: 0 14px 6px;
-  font-size: 8px; font-family: 'DM Mono', monospace;
-  color: rgba(255,255,255,0.18); text-transform: uppercase; letter-spacing: 0.12em;
+/* Dispute rows */
+.a-drow{
+  width:100%;display:flex;align-items:center;gap:9px;
+  padding:9px 10px 9px 12px;
+  border:none;background:none;cursor:pointer;text-align:left;
+  border-left:2px solid transparent;
+  transition:background 0.11s,border-color 0.11s;
 }
-
-.arb-dispute-row {
-  width: 100%; display: flex; align-items: center; gap: 10px;
-  padding: 8px 14px; text-align: left; background: none; border: none; cursor: pointer;
-  transition: background 0.12s;
-}
-.arb-dispute-row:hover    { background: rgba(255,255,255,0.04); }
-.arb-dispute-row--active  { background: rgba(251,191,36,0.07); }
-
-.arb-row-dot  { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
-.arb-row-body { flex: 1; min-width: 0; }
-.arb-row-id   {
-  font-size: 10px; font-family: 'DM Mono', monospace;
-  color: rgba(255,255,255,0.65); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.arb-row-ms   { font-size: 9px; color: rgba(255,255,255,0.28); font-family: 'DM Mono', monospace; margin-top: 2px; }
-.arb-row-action-dot {
-  width: 6px; height: 6px; border-radius: 50%; background: #fbbf24;
-  flex-shrink: 0; animation: arbPulse 2s ease infinite;
-}
+.a-drow:hover{background:rgba(245,197,24,0.03);}
+.a-drow--active{background:rgba(245,197,24,0.05);border-left-color:var(--y);}
+.a-drow-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;}
+.a-drow-body{flex:1;min-width:0;}
+.a-drow-id{font-size:10px;font-family:var(--mono);color:rgba(240,240,240,0.60);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.a-drow-sub{font-size:9px;font-family:var(--mono);color:var(--t4);margin-top:1px;}
+.a-drow-pulse{width:6px;height:6px;border-radius:50%;background:var(--y);flex-shrink:0;animation:aPulse 2s ease infinite;}
 
 /* ── Main ── */
-.arb-main {
-  flex: 1; min-width: 0; overflow-y: auto;
+.a-main{
+  flex:1;min-width:0;overflow-y:auto;
+  display:flex;justify-content:center;
 }
 
-.arb-placeholder {
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  min-height: calc(100vh - 52px); gap: 12px;
-  text-align: center; padding: 32px;
+/* Empty state */
+.a-empty{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  min-height:calc(100vh - 54px);gap:12px;text-align:center;padding:40px;
+  width:100%;
 }
-.arb-placeholder-icon { font-size: 32px; opacity: 0.2; }
-.arb-placeholder-title {
-  font-family: 'Syne', sans-serif; font-size: 18px; font-weight: 800;
-  color: rgba(255,255,255,0.40); letter-spacing: -0.03em;
-}
-.arb-placeholder-body { font-size: 12px; color: rgba(255,255,255,0.20); max-width: 340px; line-height: 1.7; }
+.a-empty-icon{font-size:28px;opacity:0.10;margin-bottom:4px;}
+.a-empty-title{font-family:var(--display);font-size:20px;font-weight:800;color:rgba(240,240,240,0.22);letter-spacing:-0.04em;}
+.a-empty-body{font-size:13px;color:rgba(240,240,240,0.16);max-width:300px;line-height:1.75;margin:0;}
 
-/* ── Panel ── */
-.arb-panel {
-  padding: 36px 48px 72px; display: flex; flex-direction: column; gap: 20px;
-  max-width: 860px;
-}
-
-.arb-panel-header { display: flex; justify-content: space-between; align-items: flex-start; }
-.arb-panel-eyebrow {
-  font-size: 9px; font-family: 'DM Mono', monospace; color: #fbbf24;
-  text-transform: uppercase; letter-spacing: 0.12em; margin-bottom: 6px;
-}
-.arb-panel-title {
-  font-family: 'Syne', sans-serif; font-size: 22px; font-weight: 800;
-  color: #ffffff; letter-spacing: -0.04em;
-}
-.arb-panel-id   { color: rgba(255,255,255,0.40); }
-.arb-panel-sub  { font-size: 11px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.28); margin-top: 4px; }
-
-.arb-status-badge {
-  font-size: 9px; font-family: 'DM Mono', monospace; font-weight: 700;
-  text-transform: uppercase; letter-spacing: 0.07em;
-  border: 1px solid; border-radius: 3px; padding: 3px 9px;
-  display: flex; align-items: center; gap: 5px; flex-shrink: 0;
-  white-space: nowrap;
+/* ── Panel — centered ── */
+.a-panel{
+  width:100%;max-width:820px;
+  padding:44px 52px 88px;
+  display:flex;flex-direction:column;gap:22px;
 }
 
-/* Terms grid */
-.arb-terms-grid {
-  display: grid; grid-template-columns: repeat(3, 1fr);
-  border: 1px solid rgba(255,255,255,0.07);
+/* Panel header */
+.a-panel-hd{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;}
+.a-eyebrow{
+  font-size:9px;font-family:var(--mono);color:var(--y);
+  text-transform:uppercase;letter-spacing:0.12em;margin-bottom:8px;
 }
-.arb-terms-cell {
-  padding: 12px 14px;
-  border-right: 1px solid rgba(255,255,255,0.06);
-  border-bottom: 1px solid rgba(255,255,255,0.06);
+.a-title{
+  font-family:var(--display);font-size:26px;font-weight:800;
+  color:var(--t1);letter-spacing:-0.04em;line-height:1.1;
 }
-.arb-terms-key { font-size: 8px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.25); text-transform: uppercase; letter-spacing: 0.10em; margin-bottom: 4px; }
-.arb-terms-val { font-size: 12px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.75); font-weight: 600; }
+.a-title-dim{color:rgba(240,240,240,0.28);}
+.a-sub{font-size:11px;font-family:var(--mono);color:var(--t4);margin-top:5px;}
+.a-status-badge{
+  font-size:9px;font-family:var(--mono);font-weight:700;text-transform:uppercase;
+  letter-spacing:0.07em;border:1px solid var(--border2);border-radius:3px;
+  padding:4px 10px;display:inline-flex;align-items:center;gap:6px;
+  flex-shrink:0;white-space:nowrap;
+  color:var(--t3);background:var(--bg2);margin-top:4px;
+}
+.a-status-badge--bright{color:var(--y);border-color:var(--yborder);background:var(--ydim);}
+
+/* Terms */
+.a-terms{display:grid;grid-template-columns:repeat(3,1fr);border:1px solid var(--border);}
+.a-terms-cell{
+  padding:14px 16px;border-right:1px solid var(--border);border-bottom:1px solid var(--border);
+  background:var(--bg1);
+}
+.a-terms-cell:nth-child(3n){border-right:none;}
+.a-terms-k{font-size:8px;font-family:var(--mono);color:var(--t4);text-transform:uppercase;letter-spacing:0.10em;margin-bottom:5px;}
+.a-terms-v{font-size:12px;font-family:var(--mono);color:var(--t2);font-weight:500;}
 
 /* Description */
-.arb-desc-block { border: 1px solid rgba(255,255,255,0.07); padding: 14px 16px; }
-.arb-desc-label {
-  font-size: 8px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.25);
-  text-transform: uppercase; letter-spacing: 0.10em; margin-bottom: 6px;
+.a-desc{border:1px solid var(--border);padding:15px 18px;background:var(--bg1);}
+.a-label{
+  font-size:8px;font-family:var(--mono);color:var(--t4);
+  text-transform:uppercase;letter-spacing:0.12em;margin-bottom:10px;display:block;
 }
-.arb-desc-text { font-size: 13px; color: rgba(255,255,255,0.55); line-height: 1.7; margin: 0; }
+.a-desc-text{font-size:13px;color:var(--t3);line-height:1.74;margin:0;}
 
 /* Statements */
-.arb-stmts-head {
-  font-size: 9px; font-family: 'DM Mono', monospace;
-  color: rgba(255,255,255,0.25); text-transform: uppercase; letter-spacing: 0.10em;
+.a-stmts{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+@media(max-width:700px){.a-stmts{grid-template-columns:1fr;}}
+.a-stmt{border:1px solid var(--border);overflow:hidden;background:var(--bg1);}
+.a-stmt-hd{
+  display:flex;align-items:center;gap:9px;
+  padding:11px 14px;border-bottom:1px solid var(--border);
+  background:var(--bg2);
 }
-.arb-stmts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-@media (max-width: 700px) { .arb-stmts-grid { grid-template-columns: 1fr; } }
+.a-stmt-avatar{
+  width:22px;height:22px;border-radius:50%;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  font-size:9px;font-family:var(--mono);font-weight:700;
+  background:rgba(245,197,24,0.12);border:1px solid rgba(245,197,24,0.22);color:var(--y);
+}
+.a-stmt-name{font-size:12px;font-weight:600;color:var(--t2);flex:1;font-family:var(--sans);}
+.a-badge{font-size:9px;font-family:var(--mono);border-radius:3px;padding:2px 7px;flex-shrink:0;}
+.a-badge--filed{color:var(--y);background:var(--ydim);border:1px solid var(--yborder);}
+.a-badge--pend{color:var(--t4);background:var(--bg3);border:1px solid var(--border);}
+.a-stmt-body{padding:13px;}
+.a-stmt-text{font-size:12px;color:var(--t3);line-height:1.72;margin:0;}
+.a-stmt-empty{font-size:11px;color:rgba(240,240,240,0.18);font-style:italic;margin:0;}
+.a-evidence{margin-top:11px;}
+.a-evidence-label{font-size:8px;font-family:var(--mono);color:var(--t4);text-transform:uppercase;letter-spacing:0.10em;margin-bottom:5px;}
+.a-evidence-item{
+  display:flex;align-items:center;gap:5px;padding:5px 9px;
+  border:1px solid var(--border);text-decoration:none;
+  font-size:9px;font-family:var(--mono);color:var(--yd);
+  background:var(--bg2);margin-bottom:3px;transition:opacity 0.12s;
+}
+.a-evidence-item:hover{opacity:0.70;}
 
-.arb-stmt { border: 1px solid; overflow: hidden; }
-.arb-stmt-head {
-  display: flex; align-items: center; gap: 9px;
-  padding: 10px 12px; border-bottom: 1px solid;
+/* AI Verdict */
+.a-ai{border:1px solid var(--border);overflow:hidden;background:var(--bg1);}
+.a-ai-hd{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:11px 15px;border-bottom:1px solid var(--border);background:var(--bg2);
 }
-.arb-stmt-avatar {
-  width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 9px; font-family: 'DM Mono', monospace; font-weight: 800;
+.a-ai-hd-l{display:flex;align-items:center;gap:8px;}
+.a-ai-icon{font-size:14px;}
+.a-ai-title{font-size:12px;font-weight:600;color:var(--t2);font-family:var(--sans);}
+.a-ai-note{font-size:9px;font-family:var(--mono);color:var(--t4);}
+.a-ai-model{font-size:9px;font-family:var(--mono);color:var(--t4);}
+.a-ai-body{padding:16px;display:flex;flex-direction:column;gap:14px;}
+.a-ai-top{display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
+.a-ai-pill{
+  display:inline-flex;align-items:center;
+  font-size:11px;font-family:var(--mono);font-weight:700;
+  border:1px solid;padding:4px 12px;
 }
-.arb-stmt-label { font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.78); flex: 1; font-family: 'DM Sans', sans-serif; }
-.arb-stmt-filed {
-  font-size: 9px; font-family: 'DM Mono', monospace; color: #4ade80;
-  background: rgba(74,222,128,0.08); border: 1px solid rgba(74,222,128,0.20);
-  border-radius: 3px; padding: 2px 6px; flex-shrink: 0;
-}
-.arb-stmt-pending {
-  font-size: 9px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.28);
-  background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
-  border-radius: 3px; padding: 2px 6px; flex-shrink: 0;
-}
-.arb-stmt-body  { padding: 12px; }
-.arb-stmt-text  { font-size: 12px; color: rgba(255,255,255,0.55); line-height: 1.68; margin: 0; }
-.arb-stmt-empty { font-size: 11px; color: rgba(255,255,255,0.20); font-style: italic; margin: 0; }
-
-/* Evidence */
-.arb-evidence-list  { margin-top: 10px; }
-.arb-evidence-label {
-  font-size: 8px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.25);
-  text-transform: uppercase; letter-spacing: 0.10em; margin-bottom: 4px;
-}
-.arb-evidence-item {
-  display: flex; align-items: center; gap: 5px;
-  padding: 5px 8px; border: 1px solid; border-radius: 4px;
-  text-decoration: none; font-size: 9px; font-family: 'DM Mono', monospace;
-  background: rgba(255,255,255,0.02); margin-bottom: 3px;
-  transition: background 0.12s;
-}
-.arb-evidence-item:hover { background: rgba(255,255,255,0.05); }
-
-/* AI block */
-.arb-ai-block { border: 1px solid; overflow: hidden; }
-.arb-ai-head  {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 13px; border-bottom: 1px solid;
-}
-.arb-ai-title    { font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.75); font-family: 'DM Sans', sans-serif; }
-.arb-ai-advisory { font-size: 9px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.25); }
-.arb-ai-model    { font-size: 9px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.25); }
-.arb-ai-body     { padding: 14px; display: flex; flex-direction: column; gap: 12px; }
-.arb-ai-pill {
-  display: inline-flex; align-items: center;
-  font-size: 11px; font-family: 'DM Mono', monospace; font-weight: 700;
-  border: 1px solid; border-radius: 4px; padding: 3px 10px;
-}
-.arb-ai-reasoning { font-size: 12px; color: rgba(255,255,255,0.50); line-height: 1.7; margin: 0; }
-.arb-ai-sublabel  {
-  font-size: 8px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.25);
-  text-transform: uppercase; letter-spacing: 0.10em; margin-bottom: 4px;
-}
-.arb-ai-factor { font-size: 11px; color: rgba(255,255,255,0.45); line-height: 1.6; display: flex; gap: 5px; }
-.arb-ai-warn   { color: rgba(251,191,36,0.65); }
-.arb-ai-rec    {
-  font-size: 8px; font-family: 'DM Mono', monospace; font-weight: 700;
-  color: #fbbf24; background: rgba(251,191,36,0.10);
-  border: 1px solid rgba(251,191,36,0.22); border-radius: 3px; padding: 1px 6px;
-  position: absolute; top: 8px; left: 8px;
-}
-.arb-conf-row    { display: flex; align-items: center; gap: 6px; }
-.arb-conf-label  { font-size: 9px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.30); }
-.arb-conf-track  { width: 64px; height: 2px; background: rgba(255,255,255,0.07); border-radius: 1px; overflow: hidden; }
-.arb-conf-fill   { height: 100%; border-radius: 1px; transition: width 0.8s; }
-
-/* Decision section */
-.arb-decision-section {
-  border: 1px solid rgba(251,191,36,0.18);
-  padding: 20px; display: flex; flex-direction: column; gap: 14px;
-  background: rgba(251,191,36,0.02);
-}
-.arb-decision-title {
-  font-family: 'Syne', sans-serif; font-size: 14px; font-weight: 800;
-  color: #ffffff; letter-spacing: -0.02em;
-  display: flex; align-items: center; gap: 8px;
-}
-.arb-decision-body { font-size: 12px; color: rgba(255,255,255,0.40); line-height: 1.7; margin: 0; }
-
-/* Outcome grid */
-.arb-outcome-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.arb-outcome-btn {
-  padding: 14px 16px; border-radius: 4px; text-align: left; cursor: pointer;
-  background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.10);
-  color: rgba(255,255,255,0.50); transition: all 0.15s; position: relative;
-}
-.arb-outcome-btn:hover { border-color: rgba(255,255,255,0.22); color: rgba(255,255,255,0.80); }
-.arb-outcome-btn--selected { }
-.arb-outcome-label { font-size: 13px; font-weight: 600; font-family: 'DM Sans', sans-serif; margin-bottom: 3px; }
-.arb-outcome-sub   { font-size: 10px; font-family: 'DM Mono', monospace; opacity: 0.55; }
-.arb-outcome-check { position: absolute; top: 12px; right: 12px; font-size: 14px; font-weight: 700; }
-
-/* Override reason */
-.arb-override-wrap { display: flex; flex-direction: column; gap: 6px; }
-.arb-override-label {
-  font-size: 9px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.35);
-  text-transform: uppercase; letter-spacing: 0.10em;
-}
-.arb-override-hint { color: rgba(255,255,255,0.22); font-size: 9px; text-transform: none; letter-spacing: 0; }
-.arb-override-input {
-  width: 100%; padding: 10px 12px; border-radius: 4px; resize: vertical;
-  background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.12);
-  color: rgba(255,255,255,0.80); font-size: 12px; font-family: 'DM Sans', sans-serif;
-  outline: none; line-height: 1.6;
-}
-.arb-override-input:focus { border-color: rgba(251,191,36,0.35); }
-
-/* TX status */
-.arb-tx-status {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  padding: 11px 14px; border: 1px solid; border-radius: 4px;
-  font-size: 12px; font-family: 'DM Mono', monospace;
-}
-.arb-tx-status--broadcasting { border-color: rgba(255,255,255,0.10); color: rgba(255,255,255,0.55); }
-.arb-tx-status--polling       { border-color: rgba(251,191,36,0.20); color: rgba(255,255,255,0.55); }
-.arb-tx-status--confirmed     { border-color: rgba(74,222,128,0.25); color: rgba(255,255,255,0.65); }
-.arb-tx-status--failed        { border-color: rgba(248,113,113,0.25); color: rgba(248,113,113,0.80); }
-.arb-tx-link {
-  color: inherit; text-decoration: underline; opacity: 0.75;
-}
-.arb-tx-link:hover { opacity: 1; }
-
-/* Confirm button */
-.arb-confirm-btn {
-  padding: 12px 24px; border-radius: 4px; cursor: pointer;
-  background: #fbbf24; color: #0c0c0c; border: none;
-  font-family: 'Syne', sans-serif; font-size: 13px; font-weight: 800;
-  letter-spacing: -0.01em; display: flex; align-items: center; gap: 8px;
-  width: 100%; justify-content: center;
-  transition: background 0.14s;
-}
-.arb-confirm-btn:hover:not(:disabled) { background: #fcd34d; }
-.arb-confirm-btn:disabled { opacity: 0.35; cursor: not-allowed; }
-
-/* Resolved block */
-.arb-resolved { border: 1px solid; border-radius: 6px; padding: 16px; }
-.arb-resolved-title  { font-size: 11px; font-weight: 700; color: rgba(255,255,255,0.55); margin-bottom: 6px; }
-.arb-resolved-outcome {
-  font-family: 'DM Mono', monospace; font-size: 16px; font-weight: 700;
-  margin-bottom: 8px;
-}
-.arb-resolved-meta {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.30);
-}
-.arb-resolved-reason {
-  font-size: 11px; color: rgba(255,255,255,0.40); margin: 8px 0 0;
-  font-style: italic; line-height: 1.6;
-}
+.a-ai-pill--rel{color:var(--y);background:var(--ydim);border-color:var(--yborder);}
+.a-ai-pill--ref{color:rgba(245,197,24,0.55);background:rgba(245,197,24,0.05);border-color:rgba(245,197,24,0.18);}
+.a-conf{display:flex;align-items:center;gap:7px;}
+.a-conf-label{font-size:9px;font-family:var(--mono);color:var(--t4);}
+.a-conf-track{width:68px;height:2px;background:var(--bg3);overflow:hidden;}
+.a-conf-fill{height:100%;background:var(--y);transition:width 0.8s;}
+.a-conf-pct{font-size:10px;font-family:var(--mono);color:var(--t3);font-weight:500;}
+.a-ai-reasoning{font-size:12px;color:var(--t3);line-height:1.74;margin:0;}
+.a-ai-sublabel{font-size:8px;font-family:var(--mono);color:var(--t4);text-transform:uppercase;letter-spacing:0.10em;margin-bottom:5px;}
+.a-ai-sublabel--warn{color:rgba(245,197,24,0.50);}
+.a-ai-factor{font-size:11px;color:var(--t3);line-height:1.62;display:flex;gap:7px;align-items:flex-start;}
+.a-ai-warn{font-size:11px;color:rgba(245,197,24,0.55);line-height:1.62;display:flex;gap:7px;}
 
 /* Notices */
-.arb-notice {
-  display: flex; align-items: flex-start; gap: 10px;
-  padding: 12px 14px; border: 1px solid; border-radius: 4px;
-  font-size: 12px; font-family: 'DM Mono', monospace; line-height: 1.7;
+.a-notice{display:flex;align-items:center;gap:10px;padding:12px 15px;border:1px solid;font-size:12px;font-family:var(--mono);line-height:1.7;}
+.a-notice--warn{border-color:rgba(245,197,24,0.18);color:var(--t3);background:rgba(245,197,24,0.03);}
+.a-notice--dim{border-color:var(--border);color:var(--t4);}
+
+/* Decision */
+.a-decision{
+  border:1px solid rgba(245,197,24,0.18);
+  padding:22px;display:flex;flex-direction:column;gap:16px;
+  background:rgba(245,197,24,0.02);
 }
-.arb-notice--warn { border-color: rgba(251,191,36,0.18); color: rgba(255,255,255,0.45); background: rgba(251,191,36,0.02); }
-.arb-notice--info { border-color: rgba(255,255,255,0.08); color: rgba(255,255,255,0.35); }
+.a-decision-title{font-family:var(--display);font-size:15px;font-weight:800;color:var(--t1);letter-spacing:-0.03em;}
+.a-decision-body{font-size:12px;color:var(--t4);line-height:1.72;margin:0;}
+
+/* Outcomes */
+.a-outcomes{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+.a-outcome{
+  padding:16px 18px;text-align:left;cursor:pointer;
+  background:var(--bg2);border:1px solid var(--border);
+  color:var(--t3);transition:all 0.14s;position:relative;
+}
+.a-outcome:hover{border-color:var(--border2);color:var(--t2);}
+.a-outcome--sel{border-color:var(--y) !important;background:var(--ydim) !important;color:var(--y) !important;}
+.a-ai-tag{
+  font-size:8px;font-family:var(--mono);font-weight:700;
+  color:var(--y);background:var(--ydim);border:1px solid var(--yborder);
+  padding:2px 7px;display:block;margin-bottom:8px;width:fit-content;
+}
+.a-outcome-label{font-size:13px;font-weight:600;font-family:var(--sans);margin-bottom:3px;}
+.a-outcome-sub{font-size:10px;font-family:var(--mono);opacity:0.50;}
+.a-outcome-check{position:absolute;top:14px;right:15px;font-size:14px;font-weight:700;color:var(--y);}
+
+/* Note */
+.a-note{display:flex;flex-direction:column;gap:7px;}
+.a-note-label{font-size:9px;font-family:var(--mono);color:var(--t3);text-transform:uppercase;letter-spacing:0.10em;font-weight:600;}
+.a-note-req{color:rgba(245,197,24,0.55);font-size:9px;text-transform:none;letter-spacing:0;margin-left:4px;font-weight:400;}
+.a-note-ta{
+  width:100%;padding:11px 13px;resize:vertical;
+  background:var(--bg2);border:1px solid var(--border);
+  color:var(--t1);font-size:12px;font-family:var(--sans);
+  outline:none;line-height:1.65;
+  transition:border-color 0.13s;
+}
+.a-note-ta:focus{border-color:rgba(245,197,24,0.40);}
+.a-note-ta--err{border-color:rgba(245,197,24,0.30) !important;}
+.a-note-ta::placeholder{color:rgba(240,240,240,0.18);}
+.a-note-hint{font-size:10px;font-family:var(--mono);color:rgba(245,197,24,0.55);}
+
+/* Tx */
+.a-tx{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 15px;border:1px solid;font-size:12px;font-family:var(--mono);}
+.a-tx--broadcasting{border-color:var(--border);color:var(--t3);}
+.a-tx--polling{border-color:rgba(245,197,24,0.18);color:var(--t3);}
+.a-tx--confirmed{border-color:rgba(245,197,24,0.25);color:var(--t2);}
+.a-tx--failed{border-color:rgba(245,197,24,0.18);}
+.a-tx-link{color:inherit;text-decoration:underline;opacity:0.65;}
+.a-tx-link:hover{opacity:1;}
+.a-tx-ok{color:var(--y);}
+.a-tx-dim{color:var(--t4);font-size:11px;}
+.a-tx-fail-icon,.a-tx-fail-text{color:rgba(245,197,24,0.60);}
+
+/* Confirm */
+.a-confirm{
+  padding:13px 24px;border:none;cursor:pointer;
+  background:var(--y);color:#0a0a0a;
+  font-family:var(--display);font-size:13px;font-weight:800;
+  letter-spacing:-0.02em;display:flex;align-items:center;justify-content:center;
+  gap:8px;width:100%;transition:background 0.13s;
+}
+.a-confirm:hover:not(:disabled){background:#ffd740;}
+.a-confirm:disabled{opacity:0.28;cursor:not-allowed;}
+.a-confirm-sub{font-family:var(--mono);font-size:11px;font-weight:400;opacity:0.50;}
+
+/* Resolved */
+.a-resolved{border:1px solid rgba(245,197,24,0.20);padding:20px;background:rgba(245,197,24,0.03);}
+.a-resolved-hd{display:flex;flex-direction:column;gap:5px;margin-bottom:12px;}
+.a-resolved-eye{font-size:10px;font-family:var(--mono);font-weight:600;color:var(--t4);}
+.a-resolved-outcome{font-family:var(--mono);font-size:18px;font-weight:700;color:var(--y);}
+.a-resolved-note{background:var(--bg2);border:1px solid var(--border);padding:12px 14px;margin-bottom:10px;}
+.a-resolved-note-label{font-size:8px;font-family:var(--mono);color:var(--t4);text-transform:uppercase;letter-spacing:0.10em;margin-bottom:6px;}
+.a-resolved-note-text{font-size:12px;color:var(--t3);line-height:1.70;font-style:italic;margin:0;}
+.a-resolved-meta{display:flex;align-items:center;gap:7px;flex-wrap:wrap;font-size:10px;font-family:var(--mono);color:var(--t4);}
+.a-dot{color:rgba(240,240,240,0.14);}
 
 /* Spinners */
-.arb-spinner {
-  display: inline-block; width: 14px; height: 14px; border-radius: 50%;
-  border: 2px solid rgba(0,0,0,0.2); border-top-color: #0c0c0c;
-  animation: arbSpin 0.65s linear infinite;
-}
-.arb-spinner-xs {
-  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-  border: 1.5px solid rgba(255,255,255,0.10); border-top-color: rgba(255,255,255,0.55);
-  animation: arbSpin 0.65s linear infinite;
-}
-.arb-spinner-xs-amber {
-  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
-  border: 1.5px solid rgba(251,191,36,0.15); border-top-color: #fbbf24;
-  animation: arbSpin 0.65s linear infinite;
-}
-.arb-spinner-sm {
-  display: inline-block; width: 11px; height: 11px; border-radius: 50%;
-  border: 1.5px solid rgba(255,255,255,0.12); border-top-color: rgba(255,255,255,0.65);
-  animation: arbSpin 0.65s linear infinite; flex-shrink: 0;
-}
-.arb-spinner-amber {
-  display: inline-block; width: 11px; height: 11px; border-radius: 50%;
-  border: 1.5px solid rgba(251,191,36,0.15); border-top-color: #fbbf24;
-  animation: arbSpin 0.65s linear infinite; flex-shrink: 0;
-}
+.a-spin{display:inline-block;width:13px;height:13px;border-radius:50%;border:2px solid rgba(10,10,10,0.2);border-top-color:#0a0a0a;animation:aSpin 0.65s linear infinite;}
+.a-spin-xs{display:inline-block;width:8px;height:8px;border-radius:50%;border:1.5px solid var(--bg3);border-top-color:var(--t3);animation:aSpin 0.65s linear infinite;}
+.a-spin-xs-y{display:inline-block;width:7px;height:7px;border-radius:50%;border:1.5px solid rgba(245,197,24,0.15);border-top-color:var(--y);animation:aSpin 0.65s linear infinite;}
+.a-spin-sm{display:inline-block;width:11px;height:11px;border-radius:50%;border:1.5px solid var(--bg3);border-top-color:var(--t2);animation:aSpin 0.65s linear infinite;flex-shrink:0;}
+.a-spin-amber{display:inline-block;width:11px;height:11px;border-radius:50%;border:1.5px solid rgba(245,197,24,0.15);border-top-color:var(--y);animation:aSpin 0.65s linear infinite;flex-shrink:0;}
 
-@keyframes arbSpin  { to { transform: rotate(360deg); } }
-@keyframes arbPulse { 0%,100% { opacity:1; transform:scale(1); } 50% { opacity:0.5; transform:scale(0.8); } }
+@keyframes aSpin{to{transform:rotate(360deg);}}
+@keyframes aPulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:0.40;transform:scale(0.78);}}
 
-/* Responsive */
-@media (max-width: 900px) {
-  .arb-sidebar { display: none; }
-  .arb-panel   { padding: 24px 20px 48px; }
-}
-@media (max-width: 600px) {
-  .arb-terms-grid   { grid-template-columns: 1fr 1fr; }
-  .arb-outcome-grid { grid-template-columns: 1fr; }
-}
+@media(max-width:960px){.a-sidebar{display:none;}.a-panel{padding:28px 20px 60px;}}
+@media(max-width:640px){.a-terms{grid-template-columns:1fr 1fr;}.a-outcomes{grid-template-columns:1fr;}}
 `;

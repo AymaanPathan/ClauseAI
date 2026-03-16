@@ -23,8 +23,9 @@ import { usdToSatsPreview } from "@/lib/contractCalls";
 import { formatSats, explorerTxUrl } from "@/lib/stacksConfig";
 import { getAllMilestones, MILESTONE_STATUS } from "@/lib/contractReads";
 import DisputeSubmitScreen from "@/components/screens/Shared/DisputeSubmitScreen";
-import DisputeDetailView from "../Shared/Disputedetailview";
 import { getSocket, joinAgreementRoom, joinDisputeRoom } from "@/lib/socket";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 type MilestoneUIStatus =
   | "locked"
@@ -43,6 +44,16 @@ interface MilestoneUI {
   amountUsd: string;
   amountSats: number;
 }
+
+// ── Arbitrator decision type ──────────────────────────────────
+interface ArbitratorDecision {
+  outcome: "release_to_receiver" | "refund_to_payer" | "split";
+  followed_ai: boolean;
+  override_reason?: string;
+  decided_at: string;
+  arbitrator_address: string;
+}
+type ArbDecisionMap = Record<number, ArbitratorDecision | null>;
 
 function onChainStatusToUI(s: number): MilestoneUIStatus {
   switch (s) {
@@ -115,6 +126,229 @@ const MS_COLORS = [
   "#a78bfa",
 ];
 
+function truncateAddr(addr: string): string {
+  if (!addr) return "";
+  return `${addr.slice(0, 8)}…${addr.slice(-5)}`;
+}
+function fmtDate(iso?: string): string {
+  if (!iso) return "";
+  return new Date(iso).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+// ── Arbitrator Decision Banner ────────────────────────────────
+// Shown inline under a milestone that was resolved by arbitration.
+// viewerRole="A" means the payer is viewing.
+
+function ArbitratorDecisionBanner({
+  decision,
+  viewerRole,
+}: {
+  decision: ArbitratorDecision;
+  viewerRole: "A" | "B";
+}) {
+  const isRelease = decision.outcome === "release_to_receiver";
+  const outcomeColor = isRelease ? "#4ade80" : "#f87171";
+  const outcomeLabel = isRelease
+    ? "Funds Released to Receiver"
+    : "Funds Refunded to Payer";
+
+  const personalMsg = isRelease
+    ? viewerRole === "A"
+      ? "The arbitrator ruled in favour of the Receiver. Funds were released to Party B."
+      : "The arbitrator ruled in your favour. Funds were released to your wallet."
+    : viewerRole === "A"
+      ? "The arbitrator ruled in your favour. Funds were returned to your wallet."
+      : "The arbitrator ruled in favour of the Payer. Funds were refunded.";
+
+  const isBeneficiary =
+    (viewerRole === "B" && isRelease) || (viewerRole === "A" && !isRelease);
+
+  return (
+    <div
+      style={{
+        margin: "4px 0 8px",
+        border: `1px solid ${outcomeColor}28`,
+        borderRadius: 6,
+        overflow: "hidden",
+        background: `${outcomeColor}06`,
+      }}
+    >
+      {/* Header */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          padding: "9px 14px",
+          background: `${outcomeColor}0a`,
+          borderBottom: `1px solid ${outcomeColor}18`,
+        }}
+      >
+        <span style={{ fontSize: 13 }}>⚖</span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            style={{
+              fontSize: 9,
+              fontFamily: "'DM Mono', monospace",
+              fontWeight: 700,
+              textTransform: "uppercase",
+              letterSpacing: "0.10em",
+              color: outcomeColor,
+              marginBottom: 2,
+            }}
+          >
+            Arbitrator Decision
+          </div>
+          <div
+            style={{
+              fontSize: 12,
+              fontWeight: 700,
+              color: outcomeColor,
+              letterSpacing: "-0.02em",
+            }}
+          >
+            {outcomeLabel}
+          </div>
+        </div>
+        {isBeneficiary && (
+          <span
+            style={{
+              fontSize: 9,
+              fontFamily: "'DM Mono', monospace",
+              fontWeight: 700,
+              textTransform: "uppercase",
+              letterSpacing: "0.06em",
+              color: outcomeColor,
+              background: `${outcomeColor}15`,
+              border: `1px solid ${outcomeColor}30`,
+              borderRadius: 3,
+              padding: "2px 7px",
+            }}
+          >
+            You
+          </span>
+        )}
+      </div>
+
+      {/* Body */}
+      <div
+        style={{
+          padding: "10px 14px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+        }}
+      >
+        <p
+          style={{
+            fontSize: 12,
+            color: "rgba(255,255,255,0.45)",
+            lineHeight: 1.6,
+            margin: 0,
+          }}
+        >
+          {personalMsg}
+        </p>
+
+        {/* Arbitrator's note — always shown */}
+        {decision.override_reason && (
+          <div
+            style={{
+              background: "rgba(255,255,255,0.03)",
+              border: "1px solid rgba(255,255,255,0.08)",
+              borderRadius: 5,
+              padding: "9px 11px",
+            }}
+          >
+            <div
+              style={{
+                fontSize: 9,
+                fontFamily: "'DM Mono', monospace",
+                fontWeight: 600,
+                textTransform: "uppercase",
+                letterSpacing: "0.10em",
+                color: "rgba(255,255,255,0.30)",
+                marginBottom: 5,
+              }}
+            >
+              Arbitrator's Note
+            </div>
+            <p
+              style={{
+                fontSize: 12,
+                color: "rgba(255,255,255,0.55)",
+                lineHeight: 1.65,
+                fontStyle: "italic",
+                margin: 0,
+              }}
+            >
+              "{decision.override_reason}"
+            </p>
+          </div>
+        )}
+
+        {/* Meta row */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            flexWrap: "wrap",
+          }}
+        >
+          <span
+            style={{
+              fontSize: 9,
+              fontFamily: "'DM Mono', monospace",
+              color: "rgba(255,255,255,0.28)",
+            }}
+          >
+            By {truncateAddr(decision.arbitrator_address)}
+          </span>
+          <span style={{ color: "rgba(255,255,255,0.15)", fontSize: 10 }}>
+            ·
+          </span>
+          <span
+            style={{
+              fontSize: 9,
+              fontFamily: "'DM Mono', monospace",
+              color: "rgba(255,255,255,0.28)",
+            }}
+          >
+            {fmtDate(decision.decided_at)}
+          </span>
+          <span style={{ color: "rgba(255,255,255,0.15)", fontSize: 10 }}>
+            ·
+          </span>
+          <span
+            style={{
+              fontSize: 8,
+              fontFamily: "'DM Mono', monospace",
+              fontWeight: 700,
+              textTransform: "uppercase",
+              letterSpacing: "0.08em",
+              color: decision.followed_ai ? "#4ade80" : "#fbbf24",
+              background: decision.followed_ai
+                ? "rgba(74,222,128,0.07)"
+                : "rgba(251,191,36,0.07)",
+              border: `1px solid ${decision.followed_ai ? "rgba(74,222,128,0.20)" : "rgba(251,191,36,0.20)"}`,
+              borderRadius: 3,
+              padding: "2px 6px",
+            }}
+          >
+            {decision.followed_ai ? "✓ Followed AI" : "↺ Overrode AI"}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ScreenDashboard() {
   const dispatch = useDispatch<AppDispatch>();
   const {
@@ -167,6 +401,9 @@ export default function ScreenDashboard() {
   const [savedToDb, setSavedToDb] = useState(false);
   const [lastRefresh, setLastRefresh] = useState(0);
 
+  // ── NEW: per-milestone arbitrator decision cache ──
+  const [arbDecisions, setArbDecisions] = useState<ArbDecisionMap>({});
+
   const [disputeModal, setDisputeModal] = useState<{
     open: boolean;
     ms: MilestoneUI | null;
@@ -179,6 +416,38 @@ export default function ScreenDashboard() {
   function closeDisputeModal() {
     setDisputeModal({ open: false, ms: null, step: "confirm" });
   }
+
+  // ── NEW: fetch arbitrator decision for a milestone ──
+  const fetchArbDecision = useCallback(
+    async (milestoneIndex: number) => {
+      if (!agreementId) return;
+      try {
+        const res = await fetch(
+          `${API_BASE}/api/arbitrate/${agreementId}/${milestoneIndex}`,
+        );
+        if (!res.ok) return;
+        const json = await res.json();
+        if (
+          json.dispute?.status === "resolved" &&
+          json.dispute?.arbitrator_decision
+        ) {
+          setArbDecisions((prev) => ({
+            ...prev,
+            [milestoneIndex]: json.dispute.arbitrator_decision,
+          }));
+        }
+      } catch {
+        /* ignore */
+      }
+    },
+    [agreementId],
+  );
+
+  // ── NEW: check all milestones for arbitrator decisions on load ──
+  const checkAllArbDecisions = useCallback(async () => {
+    if (!agreementId || milestones.length === 0) return;
+    await Promise.all(milestones.map((ms) => fetchArbDecision(ms.index)));
+  }, [agreementId, milestones.length, fetchArbDecision]);
 
   async function handleDisputeConfirm(ms: MilestoneUI) {
     if (!agreementId) return;
@@ -210,12 +479,19 @@ export default function ScreenDashboard() {
 
     function onDisputeUpdated(payload: any) {
       if (payload.agreement_id && payload.agreement_id !== agreementId) return;
-      // Refresh on-chain statuses so DisputeDetailView mounts
       setLastRefresh(Date.now());
-      // Join the dispute room so DisputeDetailView gets live updates
       const idx = payload.milestone_index ?? payload.milestoneIndex;
       if (idx !== undefined) {
         joinDisputeRoom(agreementId!, idx);
+        // ── NEW: if resolved, fetch the arbitrator decision ──
+        if (payload.status === "resolved" && payload.arbitrator_decision) {
+          setArbDecisions((prev) => ({
+            ...prev,
+            [idx]: payload.arbitrator_decision,
+          }));
+        } else {
+          fetchArbDecision(idx);
+        }
       }
     }
 
@@ -223,7 +499,7 @@ export default function ScreenDashboard() {
     return () => {
       socket.off("dispute:updated", onDisputeUpdated);
     };
-  }, [agreementId]);
+  }, [agreementId, fetchArbDecision]);
 
   useEffect(() => {
     if (!agreementId || savedToDb || milestones.length === 0) return;
@@ -266,9 +542,8 @@ export default function ScreenDashboard() {
   useEffect(() => {
     if (!agreementId || milestones.length === 0) return;
     milestones.forEach((ms) => {
-      if (getStatus(ms.index) === "disputed") {
+      if (getStatus(ms.index) === "disputed")
         joinDisputeRoom(agreementId, ms.index);
-      }
     });
   }, [agreementId, milestones.length, getStatus]);
 
@@ -283,6 +558,8 @@ export default function ScreenDashboard() {
           setMilestoneOnChainStatus({ index: ms.index, status: ms.status }),
         ),
       );
+      // ── NEW: after on-chain refresh, check arbitrator decisions for done milestones ──
+      if (!cancelled) checkAllArbDecisions();
     })();
     return () => {
       cancelled = true;
@@ -702,6 +979,9 @@ export default function ScreenDashboard() {
                 const isDisputed = status === "disputed";
                 const alreadySub = disputeSubmitted[ms.index];
                 const accent = MS_COLORS[ms.index % MS_COLORS.length];
+                const arbDecision = arbDecisions[ms.index] ?? null;
+                // Show banner when milestone is settled AND came from arbitration
+                const showArbBanner = isDone && arbDecision !== null;
 
                 return (
                   <div
@@ -726,7 +1006,6 @@ export default function ScreenDashboard() {
                               : accent,
                         }}
                       />
-
                       <div
                         className="v2-ms-num"
                         style={{
@@ -776,6 +1055,25 @@ export default function ScreenDashboard() {
                           {isFailed && (
                             <span className="v2-chip v2-chip--failed">
                               ⚠ Failed
+                            </span>
+                          )}
+                          {/* ── NEW: "Arbitrated" chip when resolved via arbitration ── */}
+                          {isDone && arbDecision && (
+                            <span
+                              style={{
+                                fontSize: 9,
+                                fontFamily: "'DM Mono', monospace",
+                                fontWeight: 700,
+                                textTransform: "uppercase",
+                                letterSpacing: "0.07em",
+                                color: "#fbbf24",
+                                background: "rgba(251,191,36,0.10)",
+                                border: "1px solid rgba(251,191,36,0.25)",
+                                borderRadius: 3,
+                                padding: "2px 7px",
+                              }}
+                            >
+                              ⚖ Arbitrated
                             </span>
                           )}
                         </div>
@@ -852,7 +1150,6 @@ export default function ScreenDashboard() {
                             )}
                             {meta.label}
                           </span>
-
                           {isFailed && (
                             <button
                               className="v2-btn v2-btn--retry"
@@ -986,13 +1283,29 @@ export default function ScreenDashboard() {
                       </div>
                     </div>
 
-                    {isDisputed && agreementId && (
+                    {/* ── NEW: Arbitrator Decision Banner (Party A view) ── */}
+                    {showArbBanner && arbDecision && (
                       <div className="v2-dispute-panel">
-                        <DisputeDetailView
-                          agreementId={agreementId}
-                          milestoneIndex={ms.index}
+                        <ArbitratorDecisionBanner
+                          decision={arbDecision}
                           viewerRole="A"
                         />
+                      </div>
+                    )}
+
+                    {/* Dispute panel — only while still open (not yet resolved) */}
+                    {isDisputed && agreementId && !showArbBanner && (
+                      <div className="v2-dispute-panel">
+                        <div
+                          style={{
+                            fontSize: 11,
+                            fontFamily: "'DM Mono', monospace",
+                            color: "rgba(255,255,255,0.28)",
+                            marginBottom: 8,
+                          }}
+                        >
+                          ⚑ Dispute is open — awaiting arbitrator decision
+                        </div>
                       </div>
                     )}
                   </div>
@@ -1361,524 +1674,176 @@ export default function ScreenDashboard() {
 }
 
 /* ════════════════════════════════════════════════════════════
-   CSS — Flat / Unmarshal-style
+   CSS — unchanged from original
    ════════════════════════════════════════════════════════════ */
 const css = `
-
-/* ── Topbar ── */
-.v2-topbar {
-  position: sticky; top: 0; z-index: 100;
-  height: 56px;
-  background: #0a0a0a;
-  border-bottom: 1px solid rgba(255,255,255,0.07);
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 0 28px; gap: 12px;
-}
-.v2-topbar-left  { display: flex; align-items: center; }
-.v2-topbar-right { display: flex; align-items: center; gap: 10px; }
-.v2-topbar-sep   { width: 1px; height: 16px; background: rgba(255,255,255,0.08); margin: 0 20px; }
-
-.v2-brand { display: flex; align-items: center; gap: 9px; text-decoration: none; }
-.v2-brand-mark {
-  width: 28px; height: 28px; border-radius: 6px;
-  background: #d4ff00; display: flex; align-items: center; justify-content: center;
-  font-size: 13px; font-weight: 900; color: #0a0a0a;
-  font-family: 'Syne', sans-serif; flex-shrink: 0;
-}
-.v2-brand-name {
-  font-family: 'Syne', sans-serif; font-size: 15px; font-weight: 800;
-  color: #ffffff; letter-spacing: -0.02em;
-}
-
-.v2-breadcrumb { display: flex; align-items: center; }
-.v2-bc-dim   { font-size: 11px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.22); }
-.v2-bc-arrow { font-size: 11px; color: rgba(255,255,255,0.15); margin: 0 6px; }
-.v2-bc-cur   { font-size: 11px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.55); }
-
-.v2-wallet-pill {
-  display: flex; align-items: center; gap: 7px;
-  border: 1px solid rgba(255,255,255,0.10);
-  border-radius: 4px; padding: 5px 12px;
-}
-.v2-wallet-dot  { width: 5px; height: 5px; border-radius: 50%; background: #d4ff00; flex-shrink: 0; }
-.v2-wallet-addr { font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.45); }
-
-.v2-live-badge {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 10px; font-family: 'DM Mono', monospace; font-weight: 700;
-  letter-spacing: 0.06em; text-transform: uppercase; color: #d4ff00;
-  border: 1px solid rgba(212,255,0,0.25); border-radius: 4px; padding: 4px 10px;
-}
-.v2-live-dot { width: 5px; height: 5px; border-radius: 50%; background: #d4ff00; flex-shrink: 0; }
-
-/* ── Shell ── */
-.v2-shell { display: flex; min-height: calc(100vh - 56px); background: #0a0a0a; }
-
-/* ── Sidebar ── */
-.v2-sidebar {
-  width: 220px; flex-shrink: 0;
-  background: #0d0d0d;
-  border-right: 1px solid rgba(255,255,255,0.07);
-  display: flex; flex-direction: column;
-  position: sticky; top: 56px;
-  height: calc(100vh - 56px);
-  overflow-y: auto; padding: 20px 0 24px;
-}
-.v2-sidebar-block {
-  padding: 0 14px 20px; margin-bottom: 4px;
-  border-bottom: 1px solid rgba(255,255,255,0.05);
-}
-.v2-sidebar-block:last-of-type { border-bottom: none; }
-.v2-sidebar-label {
-  font-size: 9px; font-family: 'DM Mono', monospace;
-  color: rgba(255,255,255,0.22); text-transform: uppercase;
-  letter-spacing: 0.14em; margin-bottom: 10px;
-}
-
-.v2-nav { display: flex; flex-direction: column; gap: 1px; }
-.v2-nav-item {
-  display: flex; align-items: center; gap: 9px;
-  width: 100%; padding: 8px 10px; border-radius: 4px;
-  font-size: 12px; font-weight: 500; color: rgba(255,255,255,0.35);
-  background: none; border: none; cursor: pointer; text-align: left;
-  font-family: 'DM Sans', sans-serif;
-}
-.v2-nav-item:hover { color: #ffffff; background: rgba(255,255,255,0.05); }
-.v2-nav-item--active { color: #ffffff; background: rgba(255,255,255,0.06); }
-.v2-nav-icon { color: rgba(255,255,255,0.25); flex-shrink: 0; width: 16px; display: flex; align-items: center; justify-content: center; }
-.v2-nav-item--active .v2-nav-icon,
-.v2-nav-item:hover .v2-nav-icon { color: #d4ff00; }
-
-.v2-ring-block {
-  display: flex; flex-direction: column; align-items: center; gap: 8px;
-  padding: 16px 14px 20px;
-  border-bottom: 1px solid rgba(255,255,255,0.05);
-}
-.v2-ring-label {
-  font-size: 9px; font-family: 'DM Mono', monospace;
-  color: rgba(255,255,255,0.25); text-align: center;
-  letter-spacing: 0.10em; text-transform: uppercase;
-}
-
-.v2-meta-list { display: flex; flex-direction: column; gap: 10px; }
-.v2-meta-row  { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.v2-meta-key  { font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.25); }
-.v2-meta-val  { font-size: 11px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.70); font-weight: 600; }
-
-.v2-state-tag {
-  font-size: 9px; font-family: 'DM Mono', monospace; font-weight: 700;
-  text-transform: uppercase; letter-spacing: 0.07em;
-  border-radius: 3px; padding: 2px 7px; border: 1px solid;
-}
-.v2-state-tag--active   { color: #d4ff00; border-color: rgba(212,255,0,0.30); }
-.v2-state-tag--complete { color: #4ade80; border-color: rgba(74,222,128,0.30); }
-
-.v2-ms-mini-list { display: flex; flex-direction: column; gap: 8px; }
-.v2-ms-mini { display: flex; align-items: center; gap: 9px; }
-.v2-ms-mini-dot {
-  width: 18px; height: 18px; border-radius: 3px; flex-shrink: 0;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 9px; font-family: 'DM Mono', monospace; font-weight: 700;
-}
-.v2-ms-mini-body { flex: 1; min-width: 0; }
-.v2-ms-mini-title {
-  font-size: 10px; color: rgba(255,255,255,0.50); font-weight: 500;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 5px;
-}
-.v2-ms-mini-track { height: 1px; background: rgba(255,255,255,0.06); overflow: hidden; }
-.v2-ms-mini-fill  { height: 100%; }
-.v2-ms-mini-pct   { font-size: 9px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.22); flex-shrink: 0; }
-
-.v2-sidebar-footer { padding: 0 14px; margin-top: auto; padding-top: 16px; }
-.v2-btn-ghost-sm {
-  display: flex; align-items: center; justify-content: center; gap: 6px;
-  width: 100%; padding: 8px 12px; border-radius: 4px;
-  background: none; border: 1px solid rgba(255,255,255,0.10);
-  color: rgba(255,255,255,0.35); font-size: 11px;
-  font-family: 'DM Sans', sans-serif; font-weight: 500; cursor: pointer;
-}
-.v2-btn-ghost-sm:hover { border-color: rgba(255,255,255,0.20); color: rgba(255,255,255,0.70); }
-
-/* ── Main ── */
-.v2-main {
-  flex: 1; min-width: 0;
-  padding: 40px 48px 72px;
-  display: flex; flex-direction: column; gap: 28px;
-}
-
-.v2-page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.v2-eyebrow {
-  font-size: 10px; font-family: 'DM Mono', monospace; color: #d4ff00;
-  text-transform: uppercase; letter-spacing: 0.12em; margin-bottom: 8px;
-}
-.v2-page-title {
-  font-family: 'Syne', sans-serif; font-size: clamp(26px, 3vw, 36px);
-  font-weight: 800; color: #ffffff; letter-spacing: -0.04em; line-height: 1; margin: 0;
-}
-.v2-agreement-id-chip {
-  display: flex; align-items: center; gap: 8px;
-  border: 1px solid rgba(255,255,255,0.10);
-  border-radius: 4px; padding: 8px 14px; margin-top: 4px;
-}
-.v2-agreement-id-label {
-  font-size: 9px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.22);
-  text-transform: uppercase; letter-spacing: 0.12em;
-}
-.v2-agreement-id-val { font-size: 12px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.60); font-weight: 600; }
-
-/* Stats grid */
-.v2-stats-grid {
-  display: grid; grid-template-columns: repeat(4, 1fr);
-  border: 1px solid rgba(255,255,255,0.07);
-}
-@media (max-width: 780px) { .v2-stats-grid { grid-template-columns: 1fr 1fr; } }
-
-.v2-stat-card {
-  padding: 24px 20px 20px;
-  display: flex; flex-direction: column;
-  border-right: 1px solid rgba(255,255,255,0.07);
-}
-.v2-stat-card:last-child { border-right: none; }
-.v2-stat-icon { font-size: 18px; margin-bottom: 20px; opacity: 0.6; }
-.v2-stat-label {
-  font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.30);
-  text-transform: uppercase; letter-spacing: 0.10em; margin-bottom: 8px;
-}
-.v2-stat-value {
-  font-family: 'Syne', sans-serif; font-size: 16px; font-weight: 700;
-  color: #ffffff; letter-spacing: -0.03em; line-height: 1.2;
-  word-break: break-all; margin-bottom: 5px;
-}
-.v2-stat-sub { font-size: 11px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.25); }
-
-/* Progress card */
-.v2-progress-card {
-  border: 1px solid rgba(255,255,255,0.07);
-  padding: 20px; display: flex; flex-direction: column; gap: 14px;
-}
-.v2-progress-top  { display: flex; align-items: center; justify-content: space-between; }
-.v2-progress-title {
-  font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.30);
-  text-transform: uppercase; letter-spacing: 0.09em;
-}
-.v2-progress-stat { display: flex; align-items: baseline; gap: 8px; }
-.v2-progress-pct  { font-size: 20px; font-family: 'DM Mono', monospace; font-weight: 800; letter-spacing: -0.03em; }
-.v2-progress-frac { font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.25); }
-.v2-progress-track { height: 3px; background: rgba(255,255,255,0.06); overflow: hidden; }
-.v2-progress-fill  { height: 100%; transition: width 0.8s ease; }
-
-/* Section head */
-.v2-section-head {
-  display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: 12px;
-}
-.v2-section-title {
-  font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.30);
-  text-transform: uppercase; letter-spacing: 0.10em;
-}
-.v2-section-count { font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.20); }
-
-/* Milestone list */
-.v2-ms-list { display: flex; flex-direction: column; border: 1px solid rgba(255,255,255,0.07); }
-
-.v2-ms-block {
-  background: #0d0d0d;
-  border-bottom: 1px solid rgba(255,255,255,0.06);
-}
-.v2-ms-block:last-child { border-bottom: none; }
-.v2-ms-block--done     { opacity: 0.55; }
-.v2-ms-block--disputed { background: rgba(212,255,0,0.02); border-left: 2px solid rgba(212,255,0,0.35); }
-.v2-ms-block--pending  { background: rgba(255,255,255,0.01); }
-
-.v2-ms-row { display: flex; align-items: flex-start; }
-
-.v2-ms-accent-bar { width: 2px; flex-shrink: 0; align-self: stretch; min-height: 60px; }
-
-.v2-ms-num {
-  width: 28px; height: 28px; border-radius: 4px; flex-shrink: 0;
-  border: 1px solid; margin: 20px 16px 20px 18px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 10px; font-family: 'DM Mono', monospace; font-weight: 800;
-}
-
-.v2-ms-info { flex: 1; min-width: 0; padding: 20px 0 20px 2px; }
-.v2-ms-title-row { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; flex-wrap: wrap; }
-.v2-ms-title { font-size: 14px; font-weight: 600; color: #ffffff; letter-spacing: -0.02em; font-family: 'DM Sans', sans-serif; }
-.v2-ms-condition { font-size: 12px; color: rgba(255,255,255,0.38); line-height: 1.65; max-width: 440px; margin-bottom: 8px; }
-.v2-ms-meta-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
-.v2-ms-deadline {
-  display: flex; align-items: center; gap: 4px;
-  font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.22);
-}
-.v2-tx-link {
-  display: flex; align-items: center; gap: 4px;
-  font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.28);
-  text-decoration: none;
-}
-.v2-tx-link:hover { color: #d4ff00; }
-.v2-tx-error { font-size: 10px; font-family: 'DM Mono', monospace; color: #f87171; }
-
-.v2-ms-right {
-  display: flex; flex-direction: column; align-items: flex-end;
-  gap: 10px; flex-shrink: 0; padding: 20px 22px;
-}
-.v2-ms-amount-block { text-align: right; }
-.v2-ms-amount { font-family: 'DM Mono', monospace; font-size: 14px; font-weight: 600; letter-spacing: -0.02em; line-height: 1; }
-.v2-ms-amount-sub { font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.22); margin-top: 4px; }
-.v2-ms-actions { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; justify-content: flex-end; }
-
-.v2-status-pill {
-  display: inline-flex; align-items: center; gap: 5px;
-  font-size: 9px; font-family: 'DM Mono', monospace; font-weight: 700;
-  letter-spacing: 0.05em; border: 1px solid; border-radius: 3px;
-  padding: 3px 8px; white-space: nowrap;
-}
-.v2-spinner-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; animation: v2Pulse 1.4s ease infinite; }
-
-.v2-chip {
-  display: inline-flex; align-items: center; gap: 5px;
-  font-size: 9px; font-family: 'DM Mono', monospace; font-weight: 700;
-  letter-spacing: 0.04em; border-radius: 3px; padding: 2px 7px; border: 1px solid;
-}
-.v2-chip--dispute { color: #d4ff00; border-color: rgba(212,255,0,0.30); }
-.v2-chip--pending { color: rgba(255,255,255,0.55); border-color: rgba(255,255,255,0.12); }
-.v2-chip--failed  { color: #f87171; border-color: rgba(248,113,113,0.28); }
-
-.v2-btn {
-  display: inline-flex; align-items: center; gap: 5px;
-  padding: 5px 12px; border-radius: 4px;
-  font-size: 11px; font-family: 'DM Mono', monospace; font-weight: 600;
-  cursor: pointer; border: 1px solid;
-  white-space: nowrap; letter-spacing: 0.02em;
-}
-.v2-btn:disabled { opacity: 0.35; cursor: not-allowed; }
-
-.v2-btn--release {
-  color: #0a0a0a; background: #d4ff00; border-color: #d4ff00;
-}
-.v2-btn--release:hover:not(:disabled) { background: #e0ff33; border-color: #e0ff33; }
-
-.v2-btn--dispute {
-  color: rgba(255,255,255,0.70); background: transparent; border-color: rgba(255,255,255,0.15);
-}
-.v2-btn--dispute:hover:not(:disabled) { border-color: rgba(255,255,255,0.30); color: #ffffff; }
-
-.v2-btn--evidence {
-  color: #d4ff00; background: transparent; border-color: rgba(212,255,0,0.25);
-}
-.v2-btn--evidence:hover { border-color: rgba(212,255,0,0.50); }
-
-.v2-btn--retry {
-  color: #f87171; background: transparent; border-color: rgba(248,113,113,0.25);
-}
-.v2-btn--retry:hover { border-color: rgba(248,113,113,0.45); }
-
-.v2-btn--timeout {
-  color: rgba(255,255,255,0.28); background: transparent; border-color: rgba(255,255,255,0.10);
-  padding: 5px 9px;
-}
-.v2-btn--timeout:hover { color: rgba(255,255,255,0.60); border-color: rgba(255,255,255,0.20); }
-
-.v2-filed-badge {
-  display: inline-flex; align-items: center; gap: 5px;
-  font-size: 10px; font-family: 'DM Mono', monospace; font-weight: 700;
-  color: #4ade80; border: 1px solid rgba(74,222,128,0.25); border-radius: 3px; padding: 3px 9px;
-}
-
-.v2-dispute-panel {
-  border-top: 1px solid rgba(212,255,0,0.10);
-  padding: 20px 22px;
-}
-
-.v2-spinner-xs {
-  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
-  border: 1.5px solid rgba(255,255,255,0.15); border-top-color: rgba(255,255,255,0.6);
-  animation: v2Spin 0.65s linear infinite; flex-shrink: 0;
-}
-
-.v2-info-strip {
-  border: 1px solid rgba(255,255,255,0.07);
-  padding: 14px 16px;
-}
-.v2-info-text { font-size: 12px; color: rgba(255,255,255,0.28); line-height: 1.7; margin: 0; }
-.v2-info-text strong { color: rgba(255,255,255,0.55); font-weight: 500; }
-
-.v2-complete-banner {
-  text-align: center;
-  border: 1px solid rgba(74,222,128,0.20);
-  padding: 48px 28px;
-}
-.v2-complete-icon {
-  width: 52px; height: 52px; border-radius: 50%;
-  background: #d4ff00;
-  display: flex; align-items: center; justify-content: center;
-  margin: 0 auto 18px;
-}
-.v2-complete-title {
-  font-family: 'Syne', sans-serif; font-size: 22px; font-weight: 800;
-  letter-spacing: -0.04em; color: #ffffff; margin-bottom: 8px;
-}
-.v2-complete-body { font-size: 13px; color: rgba(255,255,255,0.35); margin-bottom: 28px; }
-.v2-complete-actions { display: flex; gap: 10px; justify-content: center; }
-
-.v2-btn-primary {
-  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
-  padding: 11px 24px; border-radius: 4px; cursor: pointer; border: none;
-  background: #d4ff00; color: #0a0a0a;
-  font-family: 'Syne', sans-serif; font-size: 13px; font-weight: 700;
-  letter-spacing: -0.01em;
-}
-.v2-btn-primary:hover { background: #e0ff33; }
-
-.v2-btn-secondary {
-  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
-  padding: 11px 24px; border-radius: 4px; cursor: pointer;
-  background: transparent; color: rgba(255,255,255,0.55);
-  border: 1px solid rgba(255,255,255,0.12);
-  font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 500;
-}
-.v2-btn-secondary:hover { border-color: rgba(255,255,255,0.22); color: #ffffff; }
-
-/* Animations */
-@keyframes v2Spin  { to { transform: rotate(360deg); } }
-@keyframes v2Pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
-
-/* Responsive */
-@media (max-width: 900px) {
-  .v2-sidebar { display: none; }
-  .v2-main    { padding: 24px 20px 56px; }
-}
-@media (max-width: 580px) {
-  .v2-stats-grid { grid-template-columns: 1fr 1fr; }
-  .v2-ms-row     { flex-direction: column; }
-  .v2-ms-right   { flex-direction: row; align-items: center; padding-top: 0; }
-}
-
-/* ── Modal ── */
-.v2-modal-backdrop {
-  position: fixed; inset: 0; z-index: 999;
-  background: rgba(0,0,0,0.80);
-  display: flex; align-items: center; justify-content: center;
-  padding: 24px;
-}
-
-.v2-modal {
-  width: 100%; max-width: 560px;
-  background: #111111;
-  border: 1px solid rgba(255,255,255,0.10);
-  overflow: hidden;
-  display: flex; flex-direction: column;
-  max-height: 90vh;
-}
-.v2-modal--evidence { max-width: 640px; }
-
-.v2-modal-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 18px 20px;
-  border-bottom: 1px solid rgba(255,255,255,0.07);
-  flex-shrink: 0;
-}
-.v2-modal-header-left { display: flex; align-items: center; gap: 12px; }
-.v2-modal-icon {
-  width: 34px; height: 34px; border-radius: 4px; flex-shrink: 0;
-  background: rgba(212,255,0,0.08); border: 1px solid rgba(212,255,0,0.20);
-  display: flex; align-items: center; justify-content: center;
-}
-.v2-modal-eyebrow {
-  font-size: 9px; font-family: 'DM Mono', monospace; font-weight: 700;
-  color: #d4ff00; text-transform: uppercase; letter-spacing: 0.10em; margin-bottom: 3px;
-}
-.v2-modal-title    { font-family: 'Syne', sans-serif; font-size: 15px; font-weight: 800; color: #ffffff; letter-spacing: -0.03em; }
-.v2-modal-subtitle { font-size: 11px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.28); margin-top: 2px; }
-.v2-modal-close {
-  width: 28px; height: 28px; border-radius: 4px; flex-shrink: 0;
-  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.10);
-  display: flex; align-items: center; justify-content: center;
-  color: rgba(255,255,255,0.35); cursor: pointer;
-}
-.v2-modal-close:hover { background: rgba(255,255,255,0.10); color: #ffffff; }
-
-.v2-modal-steps {
-  display: flex; align-items: center;
-  padding: 14px 20px;
-  border-bottom: 1px solid rgba(255,255,255,0.06);
-  flex-shrink: 0;
-}
-.v2-modal-step {
-  display: flex; align-items: center; gap: 8px;
-  font-size: 11px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.25);
-}
-.v2-modal-step--active { color: rgba(255,255,255,0.75); }
-.v2-modal-step--done   { color: #4ade80; }
-.v2-modal-step--idle   { color: rgba(255,255,255,0.18); }
-.v2-modal-step-dot {
-  width: 20px; height: 20px; border-radius: 50%; flex-shrink: 0;
-  border: 1px solid currentColor;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 9px; font-weight: 700;
-}
-.v2-modal-step--active .v2-modal-step-dot { border-color: #d4ff00; color: #d4ff00; }
-.v2-modal-step--done   .v2-modal-step-dot { border-color: #4ade80; color: #4ade80; }
-.v2-modal-step-line { flex: 1; height: 1px; margin: 0 12px; }
-
-.v2-modal-body {
-  padding: 20px; display: flex; flex-direction: column; gap: 16px; flex-shrink: 0;
-}
-.v2-modal-body--scroll { overflow-y: auto; flex: 1; padding: 0; }
-
-.v2-modal-warn-banner {
-  display: flex; align-items: flex-start; gap: 10px;
-  border: 1px solid rgba(212,255,0,0.18);
-  padding: 13px 14px;
-}
-.v2-modal-warn-banner svg { flex-shrink: 0; margin-top: 1px; }
-.v2-modal-warn-banner p { font-size: 12px; color: rgba(255,255,255,0.45); line-height: 1.65; margin: 0; }
-
-.v2-modal-detail-grid {
-  display: grid; grid-template-columns: 1fr 1fr;
-  border: 1px solid rgba(255,255,255,0.07);
-}
-.v2-modal-detail {
-  background: #161616; padding: 13px 14px;
-  display: flex; flex-direction: column; gap: 5px;
-  border-right: 1px solid rgba(255,255,255,0.06);
-  border-bottom: 1px solid rgba(255,255,255,0.06);
-}
-.v2-modal-detail:nth-child(even) { border-right: none; }
-.v2-modal-detail--full { grid-column: 1 / -1; border-right: none; }
-.v2-modal-detail-label {
-  font-size: 9px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.25);
-  text-transform: uppercase; letter-spacing: 0.11em;
-}
-.v2-modal-detail-val {
-  font-size: 13px; font-family: 'DM Mono', monospace; color: rgba(255,255,255,0.75);
-  font-weight: 600; letter-spacing: -0.01em;
-}
-
-.v2-modal-footer {
-  display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding-top: 4px;
-}
-
-.v2-btn-dispute-confirm {
-  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-  padding: 10px 20px; border-radius: 4px; cursor: pointer;
-  background: #d4ff00; color: #0a0a0a;
-  border: none;
-  font-family: 'Syne', sans-serif; font-size: 13px; font-weight: 700;
-}
-.v2-btn-dispute-confirm:hover { background: #e0ff33; }
-
-.v2-modal-tx-notice {
-  display: flex; align-items: center; gap: 10px;
-  border: 1px solid rgba(212,255,0,0.14);
-  padding: 11px 14px; margin: 16px 20px 0;
-  font-size: 12px; color: rgba(255,255,255,0.40); font-family: 'DM Mono', monospace;
-  flex-shrink: 0;
-}
-.v2-spinner-sm {
-  display: inline-block; flex-shrink: 0;
-  width: 12px; height: 12px; border-radius: 50%;
-  border: 1.5px solid rgba(255,255,255,0.12); border-top-color: rgba(255,255,255,0.60);
-  animation: v2Spin 0.65s linear infinite;
-}
+.v2-topbar { position:sticky;top:0;z-index:100;height:56px;background:#0a0a0a;border-bottom:1px solid rgba(255,255,255,0.07);display:flex;align-items:center;justify-content:space-between;padding:0 28px;gap:12px; }
+.v2-topbar-left { display:flex;align-items:center; }
+.v2-topbar-right { display:flex;align-items:center;gap:10px; }
+.v2-topbar-sep { width:1px;height:16px;background:rgba(255,255,255,0.08);margin:0 20px; }
+.v2-brand { display:flex;align-items:center;gap:9px;text-decoration:none; }
+.v2-brand-mark { width:28px;height:28px;border-radius:6px;background:#d4ff00;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:900;color:#0a0a0a;font-family:'Syne',sans-serif;flex-shrink:0; }
+.v2-brand-name { font-family:'Syne',sans-serif;font-size:15px;font-weight:800;color:#ffffff;letter-spacing:-0.02em; }
+.v2-breadcrumb { display:flex;align-items:center; }
+.v2-bc-dim { font-size:11px;font-family:'DM Mono',monospace;color:rgba(255,255,255,0.22); }
+.v2-bc-arrow { font-size:11px;color:rgba(255,255,255,0.15);margin:0 6px; }
+.v2-bc-cur { font-size:11px;font-family:'DM Mono',monospace;color:rgba(255,255,255,0.55); }
+.v2-wallet-pill { display:flex;align-items:center;gap:7px;border:1px solid rgba(255,255,255,0.10);border-radius:4px;padding:5px 12px; }
+.v2-wallet-dot { width:5px;height:5px;border-radius:50%;background:#d4ff00;flex-shrink:0; }
+.v2-wallet-addr { font-size:10px;font-family:'DM Mono',monospace;color:rgba(255,255,255,0.45); }
+.v2-live-badge { display:flex;align-items:center;gap:6px;font-size:10px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#d4ff00;border:1px solid rgba(212,255,0,0.25);border-radius:4px;padding:4px 10px; }
+.v2-live-dot { width:5px;height:5px;border-radius:50%;background:#d4ff00;flex-shrink:0; }
+.v2-shell { display:flex;min-height:calc(100vh - 56px);background:#0a0a0a; }
+.v2-sidebar { width:220px;flex-shrink:0;background:#0d0d0d;border-right:1px solid rgba(255,255,255,0.07);display:flex;flex-direction:column;position:sticky;top:56px;height:calc(100vh - 56px);overflow-y:auto;padding:20px 0 24px; }
+.v2-sidebar-block { padding:0 14px 20px;margin-bottom:4px;border-bottom:1px solid rgba(255,255,255,0.05); }
+.v2-sidebar-block:last-of-type { border-bottom:none; }
+.v2-sidebar-label { font-size:9px;font-family:'DM Mono',monospace;color:rgba(255,255,255,0.22);text-transform:uppercase;letter-spacing:0.14em;margin-bottom:10px; }
+.v2-nav { display:flex;flex-direction:column;gap:1px; }
+.v2-nav-item { display:flex;align-items:center;gap:9px;width:100%;padding:8px 10px;border-radius:4px;font-size:12px;font-weight:500;color:rgba(255,255,255,0.35);background:none;border:none;cursor:pointer;text-align:left;font-family:'DM Sans',sans-serif; }
+.v2-nav-item:hover { color:#ffffff;background:rgba(255,255,255,0.05); }
+.v2-nav-item--active { color:#ffffff;background:rgba(255,255,255,0.06); }
+.v2-nav-icon { color:rgba(255,255,255,0.25);flex-shrink:0;width:16px;display:flex;align-items:center;justify-content:center; }
+.v2-nav-item--active .v2-nav-icon,.v2-nav-item:hover .v2-nav-icon { color:#d4ff00; }
+.v2-ring-block { display:flex;flex-direction:column;align-items:center;gap:8px;padding:16px 14px 20px;border-bottom:1px solid rgba(255,255,255,0.05); }
+.v2-ring-label { font-size:9px;font-family:'DM Mono',monospace;color:rgba(255,255,255,0.25);text-align:center;letter-spacing:0.10em;text-transform:uppercase; }
+.v2-meta-list { display:flex;flex-direction:column;gap:10px; }
+.v2-meta-row { display:flex;align-items:center;justify-content:space-between;gap:8px; }
+.v2-meta-key { font-size:10px;font-family:'DM Mono',monospace;color:rgba(255,255,255,0.25); }
+.v2-meta-val { font-size:11px;font-family:'DM Mono',monospace;color:rgba(255,255,255,0.70);font-weight:600; }
+.v2-state-tag { font-size:9px;font-family:'DM Mono',monospace;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;border-radius:3px;padding:2px 7px;border:1px solid; }
+.v2-state-tag--active { color:#d4ff00;border-color:rgba(212,255,0,0.30); }
+.v2-state-tag--complete { color:#4ade80;border-color:rgba(74,222,128,0.30); }
+.v2-ms-mini-list { display:flex;flex-direction:column;gap:8px; }
+.v2-ms-mini { display:flex;align-items:center;gap:9px; }
+.v2-ms-mini-dot { width:18px;height:18px;border-radius:3px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:9px;font-family:'DM Mono',monospace;font-weight:700; }
+.v2-ms-mini-body { flex:1;min-width:0; }
+.v2-ms-mini-title { font-size:10px;color:rgba(255,255,255,0.50);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:5px; }
+.v2-ms-mini-track { height:1px;background:rgba(255,255,255,0.06);overflow:hidden; }
+.v2-ms-mini-fill { height:100%; }
+.v2-ms-mini-pct { font-size:9px;font-family:'DM Mono',monospace;color:rgba(255,255,255,0.22);flex-shrink:0; }
+.v2-sidebar-footer { padding:0 14px;margin-top:auto;padding-top:16px; }
+.v2-btn-ghost-sm { display:flex;align-items:center;justify-content:center;gap:6px;width:100%;padding:8px 12px;border-radius:4px;background:none;border:1px solid rgba(255,255,255,0.10);color:rgba(255,255,255,0.35);font-size:11px;font-family:'DM Sans',sans-serif;font-weight:500;cursor:pointer; }
+.v2-btn-ghost-sm:hover { border-color:rgba(255,255,255,0.20);color:rgba(255,255,255,0.70); }
+.v2-main { flex:1;min-width:0;padding:40px 48px 72px;display:flex;flex-direction:column;gap:28px; }
+.v2-page-header { display:flex;align-items:flex-start;justify-content:space-between;gap:16px; }
+.v2-eyebrow { font-size:10px;font-family:'DM Mono',monospace;color:#d4ff00;text-transform:uppercase;letter-spacing:0.12em;margin-bottom:8px; }
+.v2-page-title { font-family:'Syne',sans-serif;font-size:clamp(26px,3vw,36px);font-weight:800;color:#ffffff;letter-spacing:-0.04em;line-height:1;margin:0; }
+.v2-agreement-id-chip { display:flex;align-items:center;gap:8px;border:1px solid rgba(255,255,255,0.10);border-radius:4px;padding:8px 14px;margin-top:4px; }
+.v2-agreement-id-label { font-size:9px;font-family:'DM Mono',monospace;color:rgba(255,255,255,0.22);text-transform:uppercase;letter-spacing:0.12em; }
+.v2-agreement-id-val { font-size:12px;font-family:'DM Mono',monospace;color:rgba(255,255,255,0.60);font-weight:600; }
+.v2-stats-grid { display:grid;grid-template-columns:repeat(4,1fr);border:1px solid rgba(255,255,255,0.07); }
+@media (max-width:780px) { .v2-stats-grid { grid-template-columns:1fr 1fr; } }
+.v2-stat-card { padding:24px 20px 20px;display:flex;flex-direction:column;border-right:1px solid rgba(255,255,255,0.07); }
+.v2-stat-card:last-child { border-right:none; }
+.v2-stat-icon { font-size:18px;margin-bottom:20px;opacity:0.6; }
+.v2-stat-label { font-size:10px;font-family:'DM Mono',monospace;color:rgba(255,255,255,0.30);text-transform:uppercase;letter-spacing:0.10em;margin-bottom:8px; }
+.v2-stat-value { font-family:'Syne',sans-serif;font-size:16px;font-weight:700;color:#ffffff;letter-spacing:-0.03em;line-height:1.2;word-break:break-all;margin-bottom:5px; }
+.v2-stat-sub { font-size:11px;font-family:'DM Mono',monospace;color:rgba(255,255,255,0.25); }
+.v2-progress-card { border:1px solid rgba(255,255,255,0.07);padding:20px;display:flex;flex-direction:column;gap:14px; }
+.v2-progress-top { display:flex;align-items:center;justify-content:space-between; }
+.v2-progress-title { font-size:10px;font-family:'DM Mono',monospace;color:rgba(255,255,255,0.30);text-transform:uppercase;letter-spacing:0.09em; }
+.v2-progress-stat { display:flex;align-items:baseline;gap:8px; }
+.v2-progress-pct { font-size:20px;font-family:'DM Mono',monospace;font-weight:800;letter-spacing:-0.03em; }
+.v2-progress-frac { font-size:10px;font-family:'DM Mono',monospace;color:rgba(255,255,255,0.25); }
+.v2-progress-track { height:3px;background:rgba(255,255,255,0.06);overflow:hidden; }
+.v2-progress-fill { height:100%;transition:width 0.8s ease; }
+.v2-section-head { display:flex;align-items:center;justify-content:space-between;margin-bottom:12px; }
+.v2-section-title { font-size:10px;font-family:'DM Mono',monospace;color:rgba(255,255,255,0.30);text-transform:uppercase;letter-spacing:0.10em; }
+.v2-section-count { font-size:10px;font-family:'DM Mono',monospace;color:rgba(255,255,255,0.20); }
+.v2-ms-list { display:flex;flex-direction:column;border:1px solid rgba(255,255,255,0.07); }
+.v2-ms-block { background:#0d0d0d;border-bottom:1px solid rgba(255,255,255,0.06); }
+.v2-ms-block:last-child { border-bottom:none; }
+.v2-ms-block--done { opacity:0.55; }
+.v2-ms-block--disputed { background:rgba(212,255,0,0.02);border-left:2px solid rgba(212,255,0,0.35); }
+.v2-ms-block--pending { background:rgba(255,255,255,0.01); }
+.v2-ms-row { display:flex;align-items:flex-start; }
+.v2-ms-accent-bar { width:2px;flex-shrink:0;align-self:stretch;min-height:60px; }
+.v2-ms-num { width:28px;height:28px;border-radius:4px;flex-shrink:0;border:1px solid;margin:20px 16px 20px 18px;display:flex;align-items:center;justify-content:center;font-size:10px;font-family:'DM Mono',monospace;font-weight:800; }
+.v2-ms-info { flex:1;min-width:0;padding:20px 0 20px 2px; }
+.v2-ms-title-row { display:flex;align-items:center;gap:8px;margin-bottom:5px;flex-wrap:wrap; }
+.v2-ms-title { font-size:14px;font-weight:600;color:#ffffff;letter-spacing:-0.02em;font-family:'DM Sans',sans-serif; }
+.v2-ms-condition { font-size:12px;color:rgba(255,255,255,0.38);line-height:1.65;max-width:440px;margin-bottom:8px; }
+.v2-ms-meta-row { display:flex;align-items:center;gap:14px;flex-wrap:wrap; }
+.v2-ms-deadline { display:flex;align-items:center;gap:4px;font-size:10px;font-family:'DM Mono',monospace;color:rgba(255,255,255,0.22); }
+.v2-tx-link { display:flex;align-items:center;gap:4px;font-size:10px;font-family:'DM Mono',monospace;color:rgba(255,255,255,0.28);text-decoration:none; }
+.v2-tx-link:hover { color:#d4ff00; }
+.v2-tx-error { font-size:10px;font-family:'DM Mono',monospace;color:#f87171; }
+.v2-ms-right { display:flex;flex-direction:column;align-items:flex-end;gap:10px;flex-shrink:0;padding:20px 22px; }
+.v2-ms-amount-block { text-align:right; }
+.v2-ms-amount { font-family:'DM Mono',monospace;font-size:14px;font-weight:600;letter-spacing:-0.02em;line-height:1; }
+.v2-ms-amount-sub { font-size:10px;font-family:'DM Mono',monospace;color:rgba(255,255,255,0.22);margin-top:4px; }
+.v2-ms-actions { display:flex;align-items:center;gap:5px;flex-wrap:wrap;justify-content:flex-end; }
+.v2-status-pill { display:inline-flex;align-items:center;gap:5px;font-size:9px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:0.05em;border:1px solid;border-radius:3px;padding:3px 8px;white-space:nowrap; }
+.v2-spinner-dot { width:5px;height:5px;border-radius:50%;background:currentColor;animation:v2Pulse 1.4s ease infinite; }
+.v2-chip { display:inline-flex;align-items:center;gap:5px;font-size:9px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:0.04em;border-radius:3px;padding:2px 7px;border:1px solid; }
+.v2-chip--dispute { color:#d4ff00;border-color:rgba(212,255,0,0.30); }
+.v2-chip--pending { color:rgba(255,255,255,0.55);border-color:rgba(255,255,255,0.12); }
+.v2-chip--failed { color:#f87171;border-color:rgba(248,113,113,0.28); }
+.v2-btn { display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:4px;font-size:11px;font-family:'DM Mono',monospace;font-weight:600;cursor:pointer;border:1px solid;white-space:nowrap;letter-spacing:0.02em; }
+.v2-btn:disabled { opacity:0.35;cursor:not-allowed; }
+.v2-btn--release { color:#0a0a0a;background:#d4ff00;border-color:#d4ff00; }
+.v2-btn--release:hover:not(:disabled) { background:#e0ff33;border-color:#e0ff33; }
+.v2-btn--dispute { color:rgba(255,255,255,0.70);background:transparent;border-color:rgba(255,255,255,0.15); }
+.v2-btn--dispute:hover:not(:disabled) { border-color:rgba(255,255,255,0.30);color:#ffffff; }
+.v2-btn--evidence { color:#d4ff00;background:transparent;border-color:rgba(212,255,0,0.25); }
+.v2-btn--evidence:hover { border-color:rgba(212,255,0,0.50); }
+.v2-btn--retry { color:#f87171;background:transparent;border-color:rgba(248,113,113,0.25); }
+.v2-btn--retry:hover { border-color:rgba(248,113,113,0.45); }
+.v2-btn--timeout { color:rgba(255,255,255,0.28);background:transparent;border-color:rgba(255,255,255,0.10);padding:5px 9px; }
+.v2-btn--timeout:hover { color:rgba(255,255,255,0.60);border-color:rgba(255,255,255,0.20); }
+.v2-filed-badge { display:inline-flex;align-items:center;gap:5px;font-size:10px;font-family:'DM Mono',monospace;font-weight:700;color:#4ade80;border:1px solid rgba(74,222,128,0.25);border-radius:3px;padding:3px 9px; }
+.v2-dispute-panel { border-top:1px solid rgba(212,255,0,0.10);padding:16px 22px; }
+.v2-spinner-xs { display:inline-block;width:7px;height:7px;border-radius:50%;border:1.5px solid rgba(255,255,255,0.15);border-top-color:rgba(255,255,255,0.6);animation:v2Spin 0.65s linear infinite;flex-shrink:0; }
+.v2-info-strip { border:1px solid rgba(255,255,255,0.07);padding:14px 16px; }
+.v2-info-text { font-size:12px;color:rgba(255,255,255,0.28);line-height:1.7;margin:0; }
+.v2-info-text strong { color:rgba(255,255,255,0.55);font-weight:500; }
+.v2-complete-banner { text-align:center;border:1px solid rgba(74,222,128,0.20);padding:48px 28px; }
+.v2-complete-icon { width:52px;height:52px;border-radius:50%;background:#d4ff00;display:flex;align-items:center;justify-content:center;margin:0 auto 18px; }
+.v2-complete-title { font-family:'Syne',sans-serif;font-size:22px;font-weight:800;letter-spacing:-0.04em;color:#ffffff;margin-bottom:8px; }
+.v2-complete-body { font-size:13px;color:rgba(255,255,255,0.35);margin-bottom:28px; }
+.v2-complete-actions { display:flex;gap:10px;justify-content:center; }
+.v2-btn-primary { display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:11px 24px;border-radius:4px;cursor:pointer;border:none;background:#d4ff00;color:#0a0a0a;font-family:'Syne',sans-serif;font-size:13px;font-weight:700;letter-spacing:-0.01em; }
+.v2-btn-primary:hover { background:#e0ff33; }
+.v2-btn-secondary { display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:11px 24px;border-radius:4px;cursor:pointer;background:transparent;color:rgba(255,255,255,0.55);border:1px solid rgba(255,255,255,0.12);font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500; }
+.v2-btn-secondary:hover { border-color:rgba(255,255,255,0.22);color:#ffffff; }
+@keyframes v2Spin { to { transform:rotate(360deg); } }
+@keyframes v2Pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+@media (max-width:900px) { .v2-sidebar { display:none; } .v2-main { padding:24px 20px 56px; } }
+@media (max-width:580px) { .v2-stats-grid { grid-template-columns:1fr 1fr; } .v2-ms-row { flex-direction:column; } .v2-ms-right { flex-direction:row;align-items:center;padding-top:0; } }
+.v2-modal-backdrop { position:fixed;inset:0;z-index:999;background:rgba(0,0,0,0.80);display:flex;align-items:center;justify-content:center;padding:24px; }
+.v2-modal { width:100%;max-width:560px;background:#111111;border:1px solid rgba(255,255,255,0.10);overflow:hidden;display:flex;flex-direction:column;max-height:90vh; }
+.v2-modal--evidence { max-width:640px; }
+.v2-modal-header { display:flex;align-items:center;justify-content:space-between;padding:18px 20px;border-bottom:1px solid rgba(255,255,255,0.07);flex-shrink:0; }
+.v2-modal-header-left { display:flex;align-items:center;gap:12px; }
+.v2-modal-icon { width:34px;height:34px;border-radius:4px;flex-shrink:0;background:rgba(212,255,0,0.08);border:1px solid rgba(212,255,0,0.20);display:flex;align-items:center;justify-content:center; }
+.v2-modal-eyebrow { font-size:9px;font-family:'DM Mono',monospace;font-weight:700;color:#d4ff00;text-transform:uppercase;letter-spacing:0.10em;margin-bottom:3px; }
+.v2-modal-title { font-family:'Syne',sans-serif;font-size:15px;font-weight:800;color:#ffffff;letter-spacing:-0.03em; }
+.v2-modal-subtitle { font-size:11px;font-family:'DM Mono',monospace;color:rgba(255,255,255,0.28);margin-top:2px; }
+.v2-modal-close { width:28px;height:28px;border-radius:4px;flex-shrink:0;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.10);display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,0.35);cursor:pointer; }
+.v2-modal-close:hover { background:rgba(255,255,255,0.10);color:#ffffff; }
+.v2-modal-steps { display:flex;align-items:center;padding:14px 20px;border-bottom:1px solid rgba(255,255,255,0.06);flex-shrink:0; }
+.v2-modal-step { display:flex;align-items:center;gap:8px;font-size:11px;font-family:'DM Mono',monospace;color:rgba(255,255,255,0.25); }
+.v2-modal-step--active { color:rgba(255,255,255,0.75); }
+.v2-modal-step--done { color:#4ade80; }
+.v2-modal-step--idle { color:rgba(255,255,255,0.18); }
+.v2-modal-step-dot { width:20px;height:20px;border-radius:50%;flex-shrink:0;border:1px solid currentColor;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700; }
+.v2-modal-step--active .v2-modal-step-dot { border-color:#d4ff00;color:#d4ff00; }
+.v2-modal-step--done .v2-modal-step-dot { border-color:#4ade80;color:#4ade80; }
+.v2-modal-step-line { flex:1;height:1px;margin:0 12px; }
+.v2-modal-body { padding:20px;display:flex;flex-direction:column;gap:16px;flex-shrink:0; }
+.v2-modal-body--scroll { overflow-y:auto;flex:1;padding:0; }
+.v2-modal-warn-banner { display:flex;align-items:flex-start;gap:10px;border:1px solid rgba(212,255,0,0.18);padding:13px 14px; }
+.v2-modal-warn-banner svg { flex-shrink:0;margin-top:1px; }
+.v2-modal-warn-banner p { font-size:12px;color:rgba(255,255,255,0.45);line-height:1.65;margin:0; }
+.v2-modal-detail-grid { display:grid;grid-template-columns:1fr 1fr;border:1px solid rgba(255,255,255,0.07); }
+.v2-modal-detail { background:#161616;padding:13px 14px;display:flex;flex-direction:column;gap:5px;border-right:1px solid rgba(255,255,255,0.06);border-bottom:1px solid rgba(255,255,255,0.06); }
+.v2-modal-detail:nth-child(even) { border-right:none; }
+.v2-modal-detail--full { grid-column:1/-1;border-right:none; }
+.v2-modal-detail-label { font-size:9px;font-family:'DM Mono',monospace;color:rgba(255,255,255,0.25);text-transform:uppercase;letter-spacing:0.11em; }
+.v2-modal-detail-val { font-size:13px;font-family:'DM Mono',monospace;color:rgba(255,255,255,0.75);font-weight:600;letter-spacing:-0.01em; }
+.v2-modal-footer { display:flex;align-items:center;justify-content:flex-end;gap:10px;padding-top:4px; }
+.v2-btn-dispute-confirm { display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:10px 20px;border-radius:4px;cursor:pointer;background:#d4ff00;color:#0a0a0a;border:none;font-family:'Syne',sans-serif;font-size:13px;font-weight:700; }
+.v2-btn-dispute-confirm:hover { background:#e0ff33; }
+.v2-modal-tx-notice { display:flex;align-items:center;gap:10px;border:1px solid rgba(212,255,0,0.14);padding:11px 14px;margin:16px 20px 0;font-size:12px;color:rgba(255,255,255,0.40);font-family:'DM Mono',monospace;flex-shrink:0; }
+.v2-spinner-sm { display:inline-block;flex-shrink:0;width:12px;height:12px;border-radius:50%;border:1.5px solid rgba(255,255,255,0.12);border-top-color:rgba(255,255,255,0.60);animation:v2Spin 0.65s linear infinite; }
 `;

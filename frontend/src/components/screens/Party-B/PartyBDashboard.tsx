@@ -718,7 +718,24 @@ export default function PartyBDashboard() {
       {/* ── Topbar ── */}
       <div className="db-topbar">
         <div className="db-topbar-left">
-          <a className="db-brand" href="/">
+          <a
+            className="db-brand"
+            href="/"
+            onClick={(e) => {
+              e.preventDefault();
+              const id = agreementId;
+              if (id) {
+                localStorage.removeItem(`pB_screen_${id}`);
+                localStorage.removeItem(`pB_fundsLocked_${id}`);
+                localStorage.removeItem(`pB_amountLocked_${id}`);
+                localStorage.removeItem(`pB_wallet_${id}`);
+              }
+              localStorage.removeItem("pB_agreementId");
+              localStorage.removeItem("pA_screen");
+              localStorage.removeItem("pA_agreementId");
+              window.location.href = "/";
+            }}
+          >
             <span className="db-brand-mark">◈</span>
             <span className="db-brand-name">ClauseAI</span>
           </a>

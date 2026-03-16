@@ -342,7 +342,16 @@ export default function ScreenDashboard() {
       {/* ── Topbar ── */}
       <header className="v2-topbar">
         <div className="v2-topbar-left">
-          <a className="v2-brand" href="/">
+          <a
+            className="v2-brand"
+            href="/"
+            onClick={(e) => {
+              e.preventDefault();
+              localStorage.removeItem("pA_screen");
+              localStorage.removeItem("pA_agreementId");
+              window.location.href = "/";
+            }}
+          >
             <span className="v2-brand-mark">◈</span>
             <span className="v2-brand-name">ClauseAI</span>
           </a>

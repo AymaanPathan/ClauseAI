@@ -3,10 +3,14 @@
 // components/partyA/ScreenShareLink.tsx
 //
 // Party A Step 5: Share link with Party B.
-// SSE watches for:
-//   1. Party B connects + approves  → partyBApproved = true
-//   2. When partyBApproved, Party A sees a notification and CTA
-//      to connect their wallet and lock funds.
+//
+// FIX: Save agreement stub to MongoDB RIGHT HERE, as soon as Party A
+// registers presence. This means Party B's /milestones fetch will
+// always find the document — even before funds are locked.
+//
+// The ScreenLockFunds saveAgreementToDbThunk call still runs later
+// to update milestones + txId (backend uses findOneAndUpdate so
+// there's no conflict — last write wins on those fields).
 // ============================================================
 
 import { useState, useEffect, useRef } from "react";
@@ -15,11 +19,14 @@ import {
   setScreen,
   generateShareLink,
   registerPartyAPresenceThunk,
+  saveAgreementToDbThunk,
   applyApprovalUpdate,
   setPartyBConnected,
 } from "@/store/slices/partyASlice";
 import { subscribeApproval } from "@/api/approvalApi";
 import { hashTerms } from "@/api/PresenceaApi";
+import { isV2, ParsedAgreementV2 } from "@/api/parseApi";
+import { usdToSatsPreview } from "@/lib/contractCalls";
 import { AppDispatch, RootState } from "@/store";
 import { useDispatch, useSelector } from "react-redux";
 
@@ -37,6 +44,8 @@ export default function ScreenShareLink() {
   } = useSelector((s: RootState) => s.partyA);
 
   const [copied, setCopied] = useState(false);
+  // Track whether we've already saved the stub to DB this session
+  const dbSavedRef = useRef(false);
   const unsubRef = useRef<(() => void) | null>(null);
   const receiverName =
     (editedTerms as any)?.receiver ??
@@ -48,16 +57,80 @@ export default function ScreenShareLink() {
     if (!shareLink) dispatch(generateShareLink());
   }, []);
 
-  // Register Party A's presence with terms snapshot
+  // ── Effect 1: Save agreement stub to MongoDB as soon as agreementId + terms
+  //   are available — NO wallet required. This guarantees Party B's
+  //   /milestones fetch never gets a 404, even though wallet connection
+  //   happens at step 6 (after this step 5 screen).
+  //   ScreenLockFunds will call saveAgreementToDbThunk again later to
+  //   overwrite partyA wallet, milestones amounts, and txId — that's fine
+  //   because the backend uses findOneAndUpdate (upsert), so last-write wins.
+  useEffect(() => {
+    if (!agreementId || !editedTerms || dbSavedRef.current) return;
+    dbSavedRef.current = true; // prevent duplicate saves on re-renders
+
+    const terms = editedTerms as unknown as Record<string, unknown>;
+    const amountUsd = parseFloat(
+      String(terms?.total_usd ?? terms?.amount_usd ?? "0"),
+    );
+    const totalSats = usdToSatsPreview(amountUsd);
+
+    // Build milestone stubs from V2 terms if available
+    let milestoneStubs: Array<{
+      index: number;
+      title: string;
+      percentage: number;
+      condition: string;
+      deadline?: string;
+      amountUsd: string;
+      amountSats: number;
+    }> = [];
+
+    if (isV2(editedTerms)) {
+      const v2 = editedTerms as unknown as ParsedAgreementV2;
+      milestoneStubs = (v2.milestones ?? []).map((m, i) => ({
+        index: i,
+        title: m.title || `Milestone ${i + 1}`,
+        percentage: m.percentage ?? 0,
+        condition: m.condition || "",
+        deadline: m.deadline || undefined,
+        amountUsd: ((amountUsd * (m.percentage ?? 0)) / 100).toFixed(2),
+        amountSats: Math.round((totalSats * (m.percentage ?? 0)) / 100),
+      }));
+    }
+
+    // Use walletAddress if already connected, otherwise fall back to the
+    // payer name from terms as a placeholder. The real wallet address will
+    // be written by ScreenLockFunds once the wallet is connected.
+    const partyAIdentifier =
+      walletAddress ?? String(terms?.payer ?? terms?.partyA ?? "pending");
+
+    dispatch(
+      saveAgreementToDbThunk({
+        agreementId: agreementId!,
+        partyA: partyAIdentifier,
+        partyB: String(terms?.receiver ?? terms?.partyB ?? ""),
+        arbitrator: String(terms?.arbitrator ?? ""),
+        totalAmountUsd: amountUsd,
+        totalAmountSats: totalSats,
+        terms: terms,
+        milestones: milestoneStubs,
+      }),
+    );
+  }, [agreementId, editedTerms]);
+
+  // ── Effect 2: Register Party A presence in Redis/SSE once wallet is known.
+  //   Kept separate so it only fires when walletAddress becomes available.
   useEffect(() => {
     if (!agreementId || !walletAddress || presenceRegistered) return;
+
     const termsHash = editedTerms
       ? hashTerms(editedTerms as unknown as Record<string, unknown>)
       : undefined;
+
     dispatch(
       registerPartyAPresenceThunk({
-        agreementId,
-        address: walletAddress,
+        agreementId: agreementId!,
+        address: walletAddress!,
         termsHash,
         termsSnapshot: editedTerms
           ? (editedTerms as unknown as Record<string, unknown>)

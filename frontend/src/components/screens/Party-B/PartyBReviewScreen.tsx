@@ -24,6 +24,34 @@ export default function PartyBReviewScreen() {
     { label: "Total Amount", value: `$${amount} USD` },
     { label: "Arbitrator", value: arbitrator },
   ];
+
+  if (!terms) {
+    return (
+      <div
+        className="page"
+        style={{
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: "60vh",
+        }}
+      >
+        <div style={{ textAlign: "center" }}>
+          <span
+            className="spinner"
+            style={{
+              width: 20,
+              height: 20,
+              display: "block",
+              margin: "0 auto 16px",
+            }}
+          />
+          <p style={{ fontSize: 13, color: "var(--text-3)" }}>
+            Loading agreement details…
+          </p>
+        </div>
+      </div>
+    );
+  }
   if (condition) rows.push({ label: "Condition", value: condition });
 
   return (

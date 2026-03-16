@@ -131,6 +131,24 @@ export const initPartyBThunk = createAsyncThunk(
       }
       const data = await res.json();
 
+      // Fall back to MongoDB if presence store has no termsSnapshot
+      let terms = data.termsSnapshot ?? null;
+      if (!terms) {
+        try {
+          const dbRes = await fetch(
+            `${API_BASE}/api/agreement/${agreementId}/milestones`,
+          );
+          if (dbRes.ok) {
+            const dbData = await dbRes.json();
+            if (dbData.terms && Object.keys(dbData.terms).length > 0) {
+              terms = dbData.terms;
+            }
+          }
+        } catch {
+          // non-fatal, terms stays null
+        }
+      }
+
       const storedAddress =
         typeof window !== "undefined"
           ? localStorage.getItem(`pB_wallet_${agreementId}`)
@@ -138,7 +156,7 @@ export const initPartyBThunk = createAsyncThunk(
 
       return {
         agreementId,
-        terms: data.termsSnapshot ?? null,
+        terms,
         partyAWallet: data.partyA ?? null,
         partyAApproved: data.partyAApproved ?? false,
         partyBApproved: data.partyBApproved ?? false,
@@ -149,9 +167,13 @@ export const initPartyBThunk = createAsyncThunk(
         storedAddress,
         partyBWallet: data.partyB ?? null,
         storedFundsLocked:
-          localStorage.getItem(`pB_fundsLocked_${agreementId}`) === "true",
+          typeof window !== "undefined"
+            ? localStorage.getItem(`pB_fundsLocked_${agreementId}`) === "true"
+            : false,
         storedAmountLocked:
-          localStorage.getItem(`pB_amountLocked_${agreementId}`) ?? null,
+          typeof window !== "undefined"
+            ? (localStorage.getItem(`pB_amountLocked_${agreementId}`) ?? null)
+            : null,
       };
     } catch (err: unknown) {
       return rejectWithValue(

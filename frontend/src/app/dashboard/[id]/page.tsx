@@ -1,12 +1,3 @@
-// ============================================================
-// app/dashboard/[id]/page.tsx
-//
-// Standalone Party B dashboard page.
-// Accessible at /dashboard/{agreementId}
-// Works independently — fetches all data from DB + connects socket.
-// No Redux required (data loaded directly from API).
-// ============================================================
-
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
@@ -16,6 +7,7 @@ import {
   MilestoneUpdatedPayload,
 } from "@/lib/socket";
 import { explorerTxUrl } from "@/lib/stacksConfig";
+import { useParams } from "next/navigation";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -78,8 +70,9 @@ function formatSats(sats: number): string {
 }
 
 // ── Page component ─────────────────────────────────────────────
-export default function DashboardPage({ params }: { params: { id: string } }) {
-  const agreementId = params.id;
+export default function DashboardPage() {
+  const params = useParams();
+  const agreementId = params.id as string;
 
   const [data, setData] = useState<AgreementData | null>(null);
   const [loading, setLoading] = useState(true);

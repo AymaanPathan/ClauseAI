@@ -1,11 +1,5 @@
-// ============================================================
-// store/partyB/partyBSlice.ts — FIXED
-//
-// Key fix: approveAsPartyBThunk now saves agreementId to a
-// pB_agreements JSON array in localStorage so Party B can see
-// their history on any page that reads this list.
-// Also saves partyB wallet address to the Agreement DB record.
-// ============================================================
+import { callDisputeMilestone } from "@/lib/contractCalls";
+import { explorerTxUrl } from "@/lib/stacksConfig";
 
 import { createSlice, createAsyncThunk, PayloadAction } from "@reduxjs/toolkit";
 import { ParsedAgreement, ParsedAgreementV2 } from "@/api/parseApi";
@@ -44,6 +38,10 @@ export interface PartyBState {
   connectError: string | null;
   fundsLocked: boolean;
   amountLocked: string | null;
+  txMilestone: Record<
+    number,
+    { status: string; txId: string | null; error: string | null }
+  >;
 }
 
 const initialState: PartyBState = {
@@ -56,12 +54,14 @@ const initialState: PartyBState = {
   walletAddress: null,
   partyAApproved: false,
   partyBApproved: false,
+
   approving: false,
   approveError: null,
   connecting: false,
   connectError: null,
   fundsLocked: false,
   amountLocked: null,
+  txMilestone: {},
 };
 
 // ── localStorage helpers ──────────────────────────────────────
@@ -76,6 +76,34 @@ export function getPartyBAgreementIds(): string[] {
     return [];
   }
 }
+
+export const disputeMilestoneAsPartyBThunk = createAsyncThunk(
+  "partyB/disputeMilestone",
+  async (
+    payload: {
+      agreementId: string;
+      milestoneIndex: number;
+      callerAddress: string;
+    },
+    { rejectWithValue },
+  ) => {
+    try {
+      const txId = await callDisputeMilestone(
+        payload.agreementId,
+        payload.milestoneIndex,
+      );
+      return {
+        milestoneIndex: payload.milestoneIndex,
+        txId,
+        txUrl: explorerTxUrl(txId),
+      };
+    } catch (err) {
+      return rejectWithValue(
+        err instanceof Error ? err.message : "dispute-milestone failed",
+      );
+    }
+  },
+);
 
 /** Add an agreement ID to Party B's local history (deduped) */
 function savePartyBAgreementId(agreementId: string): void {

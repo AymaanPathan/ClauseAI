@@ -1,15 +1,7 @@
 "use client";
-// ============================================================
-// components/partyB/PartyBDashboard.tsx — 2026 redesign
-// Uses ONLY class names from globals.css + dashboard-additions.css
-//
-// Change from original:
-//   • DisputeSubmitScreen now opens in a fixed modal overlay
-//     instead of an inline db-submit-panel.
-//   • Removed: disputeFormOpen state, db-submit-panel block.
-//   • Added: disputeModalMs state, DisputeModal component.
-//   • Everything else is byte-for-byte identical.
-// ============================================================
+import { disputeMilestoneAsPartyBThunk } from "@/store/slices/partyBSlice";
+import { useDispatch } from "react-redux";
+import type { AppDispatch } from "@/store";
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useSelector } from "react-redux";
@@ -154,6 +146,20 @@ function DisputeModal({
           animation: pbdFadeIn 0.18s ease both;
         }
         @keyframes pbdFadeIn { from { opacity: 0 } to { opacity: 1 } }
+        .db-btn--dispute {
+                  display: inline-flex; align-items: center; gap: 5px;
+                  padding: 4px 11px; border-radius: 4px; cursor: pointer;
+                  font-size: 11px; font-family: var(--mono); font-weight: 600;
+                  color: var(--amber); background: transparent;
+                  border: 1px solid rgba(251,191,36,0.25);
+                  white-space: nowrap;
+                }
+                .db-btn--dispute:hover:not(:disabled) {
+                  border-color: rgba(251,191,36,0.5);
+                  background: rgba(251,191,36,0.06);
+                }
+                .db-btn--dispute:disabled { opacity: 0.4; cursor: not-allowed; }
+
 
         .pbd-sheet {
           width: 100%; max-width: 640px; max-height: 90vh;
@@ -467,7 +473,11 @@ export default function PartyBDashboard() {
   const receiverName = t?.receiver ?? t?.partyB ?? "You";
   const payerName = t?.payer ?? t?.partyA ?? "Payer";
   const reduxAmount = amountLocked ?? t?.total_usd ?? t?.amount_usd;
-
+  const dispatch = useDispatch<AppDispatch>();
+  const [disputeConfirmMs, setDisputeConfirmMs] = useState<DbMilestone | null>(
+    null,
+  );
+  const [disputingIndex, setDisputingIndex] = useState<number | null>(null);
   const [data, setData] = useState<AgreementData | null>(null);
   const [loading, setLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
@@ -504,6 +514,41 @@ export default function PartyBDashboard() {
       };
     });
   }, []);
+
+  async function handlePartyBDispute(ms: DbMilestone) {
+    if (!agreementId || !walletAddress) return;
+    setDisputingIndex(ms.index);
+    try {
+      const result = await dispatch(
+        disputeMilestoneAsPartyBThunk({
+          agreementId,
+          milestoneIndex: ms.index,
+          callerAddress: walletAddress,
+        }),
+      );
+      if (disputeMilestoneAsPartyBThunk.fulfilled.match(result)) {
+        const txId = result.payload.txId;
+        fetch(`${API_BASE}/api/agreement/${agreementId}/milestone`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            milestoneIndex: ms.index,
+            action: "dispute",
+            txId,
+            txUrl: result.payload.txUrl,
+            callerAddress: walletAddress,
+          }),
+        }).catch(console.warn);
+        // Open evidence modal immediately
+        setDisputeConfirmMs(null);
+        setDisputeModalMs(ms);
+      }
+    } catch (err) {
+      console.error("Dispute failed", err);
+    } finally {
+      setDisputingIndex(null);
+    }
+  }
 
   const checkArbitrateDisputes = useCallback(
     async (milestones: DbMilestone[]) => {
@@ -1100,6 +1145,24 @@ export default function PartyBDashboard() {
                                   {statusLabel(ms.status)}
                                 </span>
 
+                                {!isDone && !isPending && !isDisputed && (
+                                  <button
+                                    className="db-btn db-btn--dispute"
+                                    onClick={() => setDisputeConfirmMs(ms)}
+                                    disabled={disputingIndex === ms.index}
+                                  >
+                                    {disputingIndex === ms.index ? (
+                                      <span
+                                        className="spinner"
+                                        style={{ width: 8, height: 8 }}
+                                      />
+                                    ) : (
+                                      "⚑"
+                                    )}{" "}
+                                    Dispute
+                                  </button>
+                                )}
+
                                 {/* Evidence — opens modal instead of inline form */}
                                 {isDisputed && !alreadySub && (
                                   <button
@@ -1210,6 +1273,89 @@ export default function PartyBDashboard() {
             setDisputeModalMs(null);
           }}
         />
+      )}
+
+      {disputeConfirmMs && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 999,
+            background: "rgba(0,0,0,0.75)",
+            backdropFilter: "blur(6px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 24,
+          }}
+          onClick={() => setDisputeConfirmMs(null)}
+        >
+          <div
+            style={{
+              background: "var(--bg-1)",
+              border: "1px solid var(--border-hi)",
+              borderRadius: 14,
+              padding: 28,
+              width: "100%",
+              maxWidth: 420,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              style={{
+                fontSize: 16,
+                fontWeight: 700,
+                color: "var(--text-1)",
+                marginBottom: 8,
+              }}
+            >
+              Open Dispute
+            </div>
+            <div
+              style={{
+                fontSize: 12,
+                color: "var(--text-3)",
+                lineHeight: 1.6,
+                marginBottom: 6,
+              }}
+            >
+              Milestone:{" "}
+              <strong style={{ color: "var(--text-2)" }}>
+                {disputeConfirmMs.title}
+              </strong>
+            </div>
+            <div
+              style={{
+                fontSize: 12,
+                color: "var(--text-3)",
+                lineHeight: 1.6,
+                marginBottom: 20,
+              }}
+            >
+              This will flag the milestone on-chain and lock funds until the
+              arbitrator resolves it. You will then file your evidence
+              statement.
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                className="btn btn-primary"
+                style={{ flex: 1 }}
+                disabled={disputingIndex === disputeConfirmMs.index}
+                onClick={() => handlePartyBDispute(disputeConfirmMs)}
+              >
+                {disputingIndex === disputeConfirmMs.index
+                  ? "Submitting…"
+                  : "Confirm Dispute On-chain →"}
+              </button>
+              <button
+                className="btn btn-ghost"
+                onClick={() => setDisputeConfirmMs(null)}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -30,7 +30,13 @@ export async function initRedis(): Promise<void> {
   }
 
   try {
-    client = createClient({ url }) as RedisClientType;
+    client = createClient({
+      url,
+      socket: {
+        tls: true,
+        reconnectStrategy: (retries) => Math.min(retries * 50, 2000),
+      },
+    }) as RedisClientType;
 
     client.on("error", (err) => {
       console.error("[Redis] Client error:", err.message);

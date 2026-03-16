@@ -222,24 +222,6 @@ export default function ScreenDescribe() {
                 placeholder="Enter name…"
                 autoComplete="off"
               />
-              {payer.trim() && (
-                <div
-                  className="sd-pc-check"
-                  style={{ background: "var(--amber)" }}
-                >
-                  <svg
-                    width="8"
-                    height="8"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="#0b0c0d"
-                    strokeWidth="3"
-                    strokeLinecap="round"
-                  >
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
-                </div>
-              )}
             </div>
 
             <div className="sd-party-arrow">
@@ -280,24 +262,6 @@ export default function ScreenDescribe() {
                 placeholder="Enter name…"
                 autoComplete="off"
               />
-              {receiver.trim() && (
-                <div
-                  className="sd-pc-check"
-                  style={{ background: "var(--green)" }}
-                >
-                  <svg
-                    width="8"
-                    height="8"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="#0b0c0d"
-                    strokeWidth="3"
-                    strokeLinecap="round"
-                  >
-                    <polyline points="20 6 9 17 4 12" />
-                  </svg>
-                </div>
-              )}
             </div>
           </div>
 

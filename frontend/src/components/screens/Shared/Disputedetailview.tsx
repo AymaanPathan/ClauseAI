@@ -1,7 +1,6 @@
 "use client";
 // ============================================================
-// components/screens/Shared/DisputeDetailView.tsx — 2026 redesign
-// Collapsed by default → expand to see full details
+// components/screens/Shared/DisputeDetailView.tsx
 // ============================================================
 
 import { useEffect, useState, useCallback } from "react";
@@ -72,11 +71,10 @@ export interface DisputeDetailViewProps {
   initialData?: DisputeData;
 }
 
-// ── Helpers aligned with globals-2026.css semantic palette ───
 function verdictColor(v?: string) {
-  if (v === "release_to_receiver") return "#4dcd8a"; // --green
-  if (v === "refund_to_payer") return "#e06c6c"; // --red
-  if (v === "split") return "#d4a23a"; // --amber
+  if (v === "release_to_receiver") return "#4dcd8a";
+  if (v === "refund_to_payer") return "#e06c6c";
+  if (v === "split") return "#d4a23a";
   return "rgba(238,240,243,0.35)";
 }
 function verdictLabel(v?: string) {
@@ -137,6 +135,31 @@ function statusSummary(status: DisputeStatus, viewerRole: string): string {
   if (status === "resolved" || status === "auto_refunded")
     return "Dispute resolved";
   return "In dispute";
+}
+
+// ── Resolved narrative — plain-English per role + outcome ──────────────────
+function resolvedNarrative(
+  outcome: string,
+  viewerRole: "A" | "B" | "arbitrator",
+  splitPct?: number,
+): string {
+  if (outcome === "release_to_receiver") {
+    return viewerRole === "B"
+      ? "The arbitrator reviewed both statements and decided to release the escrowed funds to you. The sBTC transfer will be reflected on-chain shortly."
+      : "The arbitrator reviewed both statements and ruled in favour of the receiver. The escrowed funds have been released to them.";
+  }
+  if (outcome === "refund_to_payer") {
+    return viewerRole === "A"
+      ? "The arbitrator reviewed both statements and decided to refund the escrowed funds back to you. The sBTC transfer will be reflected on-chain shortly."
+      : "The arbitrator reviewed both statements and ruled in favour of the payer. The escrowed funds have been returned to them.";
+  }
+  if (outcome === "split") {
+    const pct = splitPct ?? 50;
+    return viewerRole === "B"
+      ? `The arbitrator ordered a split: you receive ${pct}% of the escrowed amount, the payer receives ${100 - pct}%.`
+      : `The arbitrator ordered a split: the receiver gets ${pct}%, you get ${100 - pct}% of the escrowed amount back.`;
+  }
+  return "The arbitrator has issued a final decision. The on-chain transaction will reflect this outcome.";
 }
 
 export default function DisputeDetailView({
@@ -251,7 +274,6 @@ export default function DisputeDetailView({
               {statusSummary(dispute.status, viewerRole)}
             </span>
           </div>
-
           <div className="ddv2-strip-right">
             <div className="ddv2-parties">
               <span
@@ -337,11 +359,7 @@ export default function DisputeDetailView({
                 },
                 {
                   k: "Milestone Value",
-                  v: `${dispute.contract_terms.milestone_percentage}% · ${(
-                    (dispute.contract_terms.total_amount *
-                      dispute.contract_terms.milestone_percentage) /
-                    100
-                  ).toFixed(6)} sBTC`,
+                  v: `${dispute.contract_terms.milestone_percentage}% · ${((dispute.contract_terms.total_amount * dispute.contract_terms.milestone_percentage) / 100).toFixed(6)} sBTC`,
                 },
                 { k: "Opened", v: formatDate(dispute.opened_at) },
               ].map(({ k, v }) => (
@@ -469,7 +487,7 @@ export default function DisputeDetailView({
               </div>
             )}
 
-            {/* Party: resolved */}
+            {/* ── Party: RESOLVED — rich detail ── */}
             {viewerRole !== "arbitrator" &&
               isResolved &&
               dispute.arbitrator_decision && (
@@ -477,13 +495,84 @@ export default function DisputeDetailView({
                   className="ddv2-resolved"
                   style={{ borderColor: vc + "30", background: vc + "05" }}
                 >
-                  <div className="ddv2-resolved-title">⚖️ Dispute Resolved</div>
-                  <div className="ddv2-resolved-verdict" style={{ color: vc }}>
-                    {verdictLabel(dispute.arbitrator_decision.outcome)}
+                  {/* Header */}
+                  <div className="ddv2-resolved-header">
+                    <div className="ddv2-resolved-icon">⚖️</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div className="ddv2-resolved-eyebrow">
+                        Dispute Resolved
+                      </div>
+                      <div
+                        className="ddv2-resolved-verdict"
+                        style={{ color: vc }}
+                      >
+                        {verdictLabel(dispute.arbitrator_decision.outcome)}
+                      </div>
+                    </div>
+                    <span
+                      className={
+                        dispute.arbitrator_decision.followed_ai
+                          ? "ddv2-badge-ai"
+                          : "ddv2-badge-override"
+                      }
+                      style={{ alignSelf: "flex-start", flexShrink: 0 }}
+                    >
+                      {dispute.arbitrator_decision.followed_ai
+                        ? "AI Confirmed"
+                        : "AI Overridden"}
+                    </span>
                   </div>
-                  <div className="ddv2-muted" style={{ fontSize: 11 }}>
-                    The arbitrator has issued a final decision. The on-chain
-                    transaction will reflect this outcome.
+
+                  {/* Plain-English explanation */}
+                  <div className="ddv2-resolved-narrative">
+                    {resolvedNarrative(
+                      dispute.arbitrator_decision.outcome,
+                      viewerRole,
+                      dispute.ai_verdict?.split_percentage,
+                    )}
+                  </div>
+
+                  {/* Override reason — only when arbitrator diverged from AI */}
+                  {!dispute.arbitrator_decision.followed_ai &&
+                    dispute.arbitrator_decision.override_reason && (
+                      <div className="ddv2-resolved-override">
+                        <div
+                          className="ddv2-section-label"
+                          style={{ color: "#d4a23a", marginBottom: 4 }}
+                        >
+                          Why the arbitrator overrode AI
+                        </div>
+                        <div className="ddv2-resolved-override-text">
+                          {dispute.arbitrator_decision.override_reason}
+                        </div>
+                      </div>
+                    )}
+
+                  {/* Meta — arbitrator address + timestamps */}
+                  <div className="ddv2-resolved-meta">
+                    <div className="ddv2-resolved-meta-item">
+                      <span className="ddv2-section-label">Arbitrator</span>
+                      <span className="ddv2-mono">
+                        {dispute.arbitrator_decision.arbitrator_address.length >
+                        18
+                          ? `${dispute.arbitrator_decision.arbitrator_address.slice(0, 10)}…${dispute.arbitrator_decision.arbitrator_address.slice(-6)}`
+                          : dispute.arbitrator_decision.arbitrator_address}
+                      </span>
+                    </div>
+                    <div className="ddv2-resolved-meta-item">
+                      <span className="ddv2-section-label">Decided</span>
+                      <span className="ddv2-mono">
+                        {formatDate(dispute.arbitrator_decision.decided_at)}
+                      </span>
+                    </div>
+                    {dispute.resolved_at && (
+                      <div className="ddv2-resolved-meta-item">
+                        <span className="ddv2-section-label">On-chain</span>
+                        <span className="ddv2-mono">
+                          {formatDate(dispute.resolved_at)}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -519,10 +608,7 @@ function StatementCard({
   submitted: boolean;
   visible: boolean;
 }) {
-  const isA = party === "A";
-  // --blue (#5b9cf6) for payer, --green (#4dcd8a) for receiver
-  const accentColor = isA ? "#5b9cf6" : "#4dcd8a";
-
+  const accentColor = party === "A" ? "#5b9cf6" : "#4dcd8a";
   return (
     <div className="ddv2-stmt" style={{ borderColor: accentColor + "20" }}>
       <div
@@ -551,7 +637,6 @@ function StatementCard({
           <span className="ddv2-badge-pending">Pending</span>
         )}
       </div>
-
       <div className="ddv2-stmt-body">
         {!submitted ? (
           <p className="ddv2-muted ddv2-italic">
@@ -635,7 +720,6 @@ function AIVerdictCard({ verdict }: { verdict: AIVerdict }) {
             : ""}
         </span>
       </div>
-
       <div className="ddv2-verdict-body">
         <div
           style={{
@@ -680,12 +764,10 @@ function AIVerdictCard({ verdict }: { verdict: AIVerdict }) {
             </span>
           </div>
         </div>
-
         <div>
           <div className="ddv2-section-label">Reasoning</div>
           <p className="ddv2-reasoning">{verdict.reasoning}</p>
         </div>
-
         {verdict.key_factors.length > 0 && (
           <div>
             <div className="ddv2-section-label">Key Factors</div>
@@ -700,7 +782,6 @@ function AIVerdictCard({ verdict }: { verdict: AIVerdict }) {
             ))}
           </div>
         )}
-
         {verdict.warnings.length > 0 && (
           <div>
             <div className="ddv2-section-label" style={{ color: "#d4a23a" }}>
@@ -713,7 +794,6 @@ function AIVerdictCard({ verdict }: { verdict: AIVerdict }) {
             ))}
           </div>
         )}
-
         <span className="ddv2-muted" style={{ fontSize: 9 }}>
           Generated {formatDate(verdict.generated_at)}
         </span>
@@ -746,7 +826,6 @@ function ArbitratorDecisionCard({
           {decision.followed_ai ? "Confirmed AI" : "Overrode AI"}
         </span>
       </div>
-
       <div className="ddv2-verdict-body">
         <span
           className="ddv2-verdict-pill"
@@ -754,7 +833,6 @@ function ArbitratorDecisionCard({
         >
           {verdictLabel(decision.outcome)}
         </span>
-
         {decision.override_reason && (
           <div>
             <div className="ddv2-section-label" style={{ color: "#d4a23a" }}>
@@ -763,7 +841,6 @@ function ArbitratorDecisionCard({
             <div className="ddv2-override">{decision.override_reason}</div>
           </div>
         )}
-
         <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
           <div>
             <div className="ddv2-section-label">Arbitrator</div>
@@ -783,7 +860,7 @@ function ArbitratorDecisionCard({
   );
 }
 
-// ── Inline styles (loading state only — rest uses CSS class) ──
+// ── Inline styles (loading state only) ───────────────────────
 const styles = {
   loadingRow: {
     display: "flex",
@@ -806,591 +883,170 @@ const styles = {
     color: "rgba(238,240,243,0.30)",
   } as React.CSSProperties,
 };
-// ── Drop this in as the `css` const at the bottom of DisputeDetailView.tsx ──
-// Only the CSS changes — all JSX/logic is identical to your current file.
 
+// ── CSS ───────────────────────────────────────────────────────
 const css = `
 @keyframes ddv2Spin  { to { transform: rotate(360deg); } }
-@keyframes ddv2Pulse {
-  0%, 100% { opacity: 1;   transform: scale(1);    }
-  50%       { opacity: 0.5; transform: scale(0.84); }
-}
-@keyframes ddv2SlideDown {
-  from { opacity: 0; transform: translateY(-4px); }
-  to   { opacity: 1; transform: translateY(0);    }
-}
+@keyframes ddv2Pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(0.84)} }
+@keyframes ddv2SlideDown { from{opacity:0;transform:translateY(-4px)} to{opacity:1;transform:translateY(0)} }
 
-/* ── Outer wrap ── */
-.ddv2-wrap {
-  border-top: 1px solid rgba(212,162,58,0.10);
-  transition: background 0.28s;
-}
-.ddv2-flash { background: rgba(212,162,58,0.03); }
+.ddv2-wrap { border-top:1px solid rgba(212,162,58,0.10); transition:background 0.28s; }
+.ddv2-flash { background:rgba(212,162,58,0.03); }
 
-/* ════════════════════════════════════
-   COMPACT STRIP
-   ════════════════════════════════════ */
+/* ── Strip ── */
 .ddv2-strip {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 18px;
-  gap: 16px;
-  cursor: pointer;
-  background: none;
-  border: none;
-  text-align: left;
-  transition: background 0.14s;
+  width:100%; display:flex; align-items:center; justify-content:space-between;
+  padding:10px 18px; gap:16px; cursor:pointer; background:none; border:none;
+  text-align:left; transition:background 0.14s;
 }
-.ddv2-strip:hover { background: rgba(238,240,243,0.02); }
+.ddv2-strip:hover { background:rgba(238,240,243,0.02); }
+.ddv2-strip-left  { display:flex; align-items:center; gap:10px; min-width:0; flex:1; }
+.ddv2-strip-right { display:flex; align-items:center; gap:10px; flex-shrink:0; }
 
-/* Left side — dot + pips + label + sep + summary */
-.ddv2-strip-left {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  flex: 1;
-}
+.ddv2-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+.ddv2-dot--active  { background:#d4a23a; box-shadow:0 0 6px rgba(212,162,58,0.45); animation:ddv2Pulse 2s ease infinite; }
+.ddv2-dot--resolved{ background:#4dcd8a; }
 
-/* Right side — party dots + time + chevron */
-.ddv2-strip-right {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-shrink: 0;
-}
+.ddv2-pips { display:flex; align-items:center; gap:3px; flex-shrink:0; }
+.ddv2-pip  { width:16px; height:2px; border-radius:1px; background:rgba(238,240,243,0.08); transition:background 0.3s; }
+.ddv2-pip--done    { background:rgba(77,205,138,0.50); }
+.ddv2-pip--current { background:#d4a23a; }
 
-/* Status dot */
-.ddv2-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-.ddv2-dot--active {
-  background: #d4a23a;
-  box-shadow: 0 0 6px rgba(212,162,58,0.45);
-  animation: ddv2Pulse 2s ease infinite;
-}
-.ddv2-dot--resolved { background: #4dcd8a; }
+.ddv2-step-label { font-size:9px; font-family:'DM Mono',monospace; font-weight:700; color:#d4a23a; text-transform:uppercase; letter-spacing:0.09em; flex-shrink:0; white-space:nowrap; }
+.ddv2-sep        { font-size:10px; color:rgba(238,240,243,0.14); flex-shrink:0; }
+.ddv2-summary    { font-size:11px; color:rgba(238,240,243,0.38); font-family:'DM Sans',sans-serif; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
 
-/* Progress pips */
-.ddv2-pips {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  flex-shrink: 0;
-}
-.ddv2-pip {
-  width: 16px;
-  height: 2px;
-  border-radius: 1px;
-  background: rgba(238,240,243,0.08);
-  transition: background 0.3s;
-}
-.ddv2-pip--done    { background: rgba(77,205,138,0.50); }
-.ddv2-pip--current { background: #d4a23a; }
-
-/* Step label */
-.ddv2-step-label {
-  font-size: 9px;
-  font-family: 'DM Mono', monospace;
-  font-weight: 700;
-  color: #d4a23a;
-  text-transform: uppercase;
-  letter-spacing: 0.09em;
-  flex-shrink: 0;
-  white-space: nowrap;
-}
-
-/* Separator */
-.ddv2-sep {
-  font-size: 10px;
-  color: rgba(238,240,243,0.14);
-  flex-shrink: 0;
-}
-
-/* Summary text — truncates gracefully */
-.ddv2-summary {
-  font-size: 11px;
-  color: rgba(238,240,243,0.38);
-  font-family: 'DM Sans', sans-serif;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-}
-
-/* Party A / B filing indicators */
-.ddv2-parties {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
+.ddv2-parties { display:flex; align-items:center; gap:4px; }
 .ddv2-party-dot {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 8px;
-  font-family: 'DM Mono', monospace;
-  font-weight: 700;
-  background: rgba(238,240,243,0.04);
-  border: 1px solid rgba(238,240,243,0.09);
-  color: rgba(238,240,243,0.22);
-  transition: all 0.2s;
+  width:18px; height:18px; border-radius:50%; flex-shrink:0;
+  display:flex; align-items:center; justify-content:center;
+  font-size:8px; font-family:'DM Mono',monospace; font-weight:700;
+  background:rgba(238,240,243,0.04); border:1px solid rgba(238,240,243,0.09);
+  color:rgba(238,240,243,0.22); transition:all 0.2s;
 }
-.ddv2-party-dot--filed {
-  background: rgba(77,205,138,0.10);
-  border-color: rgba(77,205,138,0.28);
-  color: #4dcd8a;
-}
+.ddv2-party-dot--filed { background:rgba(77,205,138,0.10); border-color:rgba(77,205,138,0.28); color:#4dcd8a; }
 
-/* Timestamp */
-.ddv2-ts {
-  font-size: 9px;
-  font-family: 'DM Mono', monospace;
-  color: rgba(238,240,243,0.22);
-  flex-shrink: 0;
-}
+.ddv2-ts      { font-size:9px; font-family:'DM Mono',monospace; color:rgba(238,240,243,0.22); flex-shrink:0; }
+.ddv2-chevron { color:rgba(238,240,243,0.22); flex-shrink:0; transition:transform 0.22s cubic-bezier(0.16,1,0.3,1); }
+.ddv2-chevron--open { transform:rotate(180deg); }
 
-/* Chevron */
-.ddv2-chevron {
-  color: rgba(238,240,243,0.22);
-  flex-shrink: 0;
-  transition: transform 0.22s cubic-bezier(0.16,1,0.3,1);
-}
-.ddv2-chevron--open { transform: rotate(180deg); }
-
-/* ════════════════════════════════════
-   EXPANDED PANEL
-   ════════════════════════════════════ */
+/* ── Panel ── */
 .ddv2-panel {
-  padding: 16px 18px 18px;
-  border-top: 1px solid rgba(238,240,243,0.06);
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  animation: ddv2SlideDown 0.20s cubic-bezier(0.16,1,0.3,1) both;
+  padding:16px 18px 18px; border-top:1px solid rgba(238,240,243,0.06);
+  display:flex; flex-direction:column; gap:14px;
+  animation:ddv2SlideDown 0.20s cubic-bezier(0.16,1,0.3,1) both;
 }
 
-/* ── Timeline ──
-   Each step is flex column (dot on top, label below).
-   The connecting line sits between the dot centres.  */
-.ddv2-timeline {
-  display: flex;
-  align-items: flex-start;
-  padding: 4px 0 2px;
-}
+/* ── Timeline ── */
+.ddv2-timeline { display:flex; align-items:flex-start; padding:4px 0 2px; }
+.ddv2-tl-step  { flex:1; display:flex; flex-direction:column; align-items:center; position:relative; }
+.ddv2-tl-line  { position:absolute; top:4px; left:calc(50% + 5px); right:calc(-50% + 5px); height:1px; z-index:0; transition:background 0.3s; }
+.ddv2-tl-dot   { width:10px; height:10px; border-radius:50%; flex-shrink:0; z-index:1; position:relative; border:1.5px solid rgba(238,240,243,0.14); background:#0f1011; transition:all 0.25s; }
+.ddv2-tl-dot--done   { background:rgba(77,205,138,0.45); border-color:#4dcd8a; }
+.ddv2-tl-dot--active { background:#0f1011; border-color:#d4a23a; box-shadow:0 0 0 3px rgba(212,162,58,0.16),0 0 7px rgba(212,162,58,0.30); animation:ddv2Pulse 2s ease infinite; }
+.ddv2-tl-dot--active::after { content:''; position:absolute; inset:2px; border-radius:50%; background:#d4a23a; }
+.ddv2-tl-label        { font-size:8px; font-family:'DM Mono',monospace; color:rgba(238,240,243,0.24); text-align:center; margin-top:7px; line-height:1.35; white-space:nowrap; }
+.ddv2-tl-label--active{ color:#d4a23a; font-weight:600; }
 
-.ddv2-tl-step {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  position: relative;
-}
+/* ── Meta pills ── */
+.ddv2-meta-row  { display:flex; flex-wrap:wrap; gap:6px; }
+.ddv2-meta-pill { padding:6px 10px; border-radius:6px; background:rgba(238,240,243,0.03); border:1px solid rgba(238,240,243,0.07); min-width:0; }
+.ddv2-meta-pill-label { font-size:8px; font-family:'DM Mono',monospace; color:rgba(238,240,243,0.24); text-transform:uppercase; letter-spacing:0.09em; margin-bottom:3px; white-space:nowrap; }
+.ddv2-meta-pill-val   { font-size:11px; font-family:'DM Mono',monospace; color:rgba(238,240,243,0.72); font-weight:500; white-space:nowrap; }
 
-/* Connecting line — runs from this step's dot centre to the next */
-.ddv2-tl-line {
-  position: absolute;
-  /* vertically centred on the 10px dot = top offset 4px (10/2 - 1/2) */
-  top: 4px;
-  /* start just after this dot's centre (50% + half dot width 5px) */
-  left: calc(50% + 5px);
-  /* end at the next dot's centre (100% - 50% - 5px) */
-  right: calc(-50% + 5px);
-  height: 1px;
-  z-index: 0;
-  transition: background 0.3s;
-}
+/* ── Statements ── */
+.ddv2-stmts { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+@media (max-width:640px) { .ddv2-stmts { grid-template-columns:1fr; } }
+.ddv2-stmt { border-radius:8px; border:1px solid; overflow:hidden; background:rgba(238,240,243,0.015); display:flex; flex-direction:column; }
+.ddv2-stmt-head { display:flex; align-items:center; justify-content:space-between; padding:10px 12px; border-bottom:1px solid; gap:8px; min-height:42px; }
+.ddv2-stmt-party { display:flex; align-items:center; gap:8px; min-width:0; flex:1; }
+.ddv2-stmt-avatar { width:22px; height:22px; border-radius:50%; flex-shrink:0; border:1px solid; display:flex; align-items:center; justify-content:center; font-size:8px; font-family:'DM Mono',monospace; font-weight:800; }
+.ddv2-stmt-name { font-size:12px; font-weight:600; color:rgba(238,240,243,0.80); font-family:'DM Sans',sans-serif; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ddv2-stmt-body { padding:12px; flex:1; }
+.ddv2-stmt-text { font-size:12px; color:rgba(238,240,243,0.58); line-height:1.68; margin:0 0 8px; }
 
-.ddv2-tl-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  z-index: 1;
-  position: relative;
-  border: 1.5px solid rgba(238,240,243,0.14);
-  background: #0f1011;
-  transition: all 0.25s;
-}
-.ddv2-tl-dot--done {
-  background: rgba(77,205,138,0.45);
-  border-color: #4dcd8a;
-}
-.ddv2-tl-dot--active {
-  background: #0f1011;
-  border-color: #d4a23a;
-  box-shadow: 0 0 0 3px rgba(212,162,58,0.16), 0 0 7px rgba(212,162,58,0.30);
-  animation: ddv2Pulse 2s ease infinite;
-}
-/* Inner fill for active dot */
-.ddv2-tl-dot--active::after {
-  content: '';
-  position: absolute;
-  inset: 2px;
-  border-radius: 50%;
-  background: #d4a23a;
-}
+.ddv2-badge-submitted { font-size:9px; font-family:'DM Mono',monospace; font-weight:600; color:#4dcd8a; background:rgba(77,205,138,0.08); border:1px solid rgba(77,205,138,0.22); border-radius:4px; padding:2px 7px; flex-shrink:0; white-space:nowrap; }
+.ddv2-badge-pending   { font-size:9px; font-family:'DM Mono',monospace; font-weight:500; color:rgba(238,240,243,0.28); background:rgba(238,240,243,0.04); border:1px solid rgba(238,240,243,0.08); border-radius:4px; padding:2px 7px; flex-shrink:0; white-space:nowrap; }
 
-.ddv2-tl-label {
-  font-size: 8px;
-  font-family: 'DM Mono', monospace;
-  color: rgba(238,240,243,0.24);
-  text-align: center;
-  margin-top: 7px;
-  line-height: 1.35;
-  white-space: nowrap;
-  letter-spacing: 0.01em;
-}
-.ddv2-tl-label--active {
-  color: #d4a23a;
-  font-weight: 600;
-}
+.ddv2-locked       { display:flex; align-items:flex-start; gap:10px; padding:2px 0; }
+.ddv2-locked-icon  { font-size:15px; flex-shrink:0; margin-top:1px; }
+.ddv2-locked-title { font-size:11px; font-weight:600; color:rgba(238,240,243,0.48); margin-bottom:3px; font-family:'DM Sans',sans-serif; }
+.ddv2-locked-body  { font-size:10px; color:rgba(238,240,243,0.28); line-height:1.65; }
 
-/* ── Meta pills ──
-   Displayed as a wrapping row of small info chips  */
-.ddv2-meta-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.ddv2-meta-pill {
-  padding: 6px 10px;
-  border-radius: 6px;
-  background: rgba(238,240,243,0.03);
-  border: 1px solid rgba(238,240,243,0.07);
-  min-width: 0;
-}
-.ddv2-meta-pill-label {
-  font-size: 8px;
-  font-family: 'DM Mono', monospace;
-  color: rgba(238,240,243,0.24);
-  text-transform: uppercase;
-  letter-spacing: 0.09em;
-  margin-bottom: 3px;
-  white-space: nowrap;
-}
-.ddv2-meta-pill-val {
-  font-size: 11px;
-  font-family: 'DM Mono', monospace;
-  color: rgba(238,240,243,0.72);
-  font-weight: 500;
-  white-space: nowrap;
-}
+.ddv2-evidence       { margin-top:8px; }
+.ddv2-evidence-label { font-size:8px; font-family:'DM Mono',monospace; color:rgba(238,240,243,0.26); text-transform:uppercase; letter-spacing:0.09em; margin-bottom:5px; }
+.ddv2-evidence-item  { display:flex; align-items:center; gap:6px; padding:5px 9px; border-radius:5px; border:1px solid; background:rgba(238,240,243,0.02); text-decoration:none; margin-bottom:3px; transition:background 0.14s; }
+.ddv2-evidence-item:hover { background:rgba(238,240,243,0.05); }
+.ddv2-evidence-name  { font-size:9px; font-family:'DM Mono',monospace; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
-/* ── Statement grid ── */
-.ddv2-stmts {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-@media (max-width: 640px) { .ddv2-stmts { grid-template-columns: 1fr; } }
+/* ── Notice / Awaiting ── */
+.ddv2-notice { display:flex; align-items:flex-start; gap:8px; background:rgba(212,162,58,0.03); border:1px solid rgba(212,162,58,0.12); border-radius:7px; padding:10px 12px; font-size:11px; color:rgba(238,240,243,0.38); line-height:1.65; }
+.ddv2-notice svg { flex-shrink:0; margin-top:2px; }
+.ddv2-awaiting       { background:rgba(212,162,58,0.02); border:1px solid rgba(212,162,58,0.12); border-radius:8px; padding:13px 15px; }
+.ddv2-awaiting-title { font-size:12px; font-weight:600; color:rgba(238,240,243,0.70); margin-bottom:5px; font-family:'DM Sans',sans-serif; }
+.ddv2-awaiting-body  { font-size:11px; color:rgba(238,240,243,0.36); line-height:1.65; }
 
-.ddv2-stmt {
-  border-radius: 8px;
-  border: 1px solid;
-  overflow: hidden;
-  background: rgba(238,240,243,0.015);
-  display: flex;
-  flex-direction: column;
-}
+/* ── Resolved — rich layout ── */
+.ddv2-resolved { border-radius:8px; border:1px solid; padding:14px 15px; display:flex; flex-direction:column; gap:10px; }
 
-/* Statement card header */
-.ddv2-stmt-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 12px;
-  border-bottom: 1px solid;
-  gap: 8px;
-  min-height: 42px;
+.ddv2-resolved-header {
+  display:flex; align-items:flex-start; gap:10px;
 }
-.ddv2-stmt-party {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  flex: 1;
+.ddv2-resolved-icon   { font-size:18px; flex-shrink:0; margin-top:1px; }
+.ddv2-resolved-eyebrow {
+  font-size:9px; font-family:'DM Mono',monospace; color:rgba(238,240,243,0.30);
+  text-transform:uppercase; letter-spacing:0.09em; margin-bottom:3px;
 }
-.ddv2-stmt-avatar {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  border: 1px solid;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 8px;
-  font-family: 'DM Mono', monospace;
-  font-weight: 800;
+.ddv2-resolved-verdict {
+  font-size:15px; font-weight:700; font-family:'DM Mono',monospace;
+  letter-spacing:-0.01em; line-height:1.2;
 }
-.ddv2-stmt-name {
-  font-size: 12px;
-  font-weight: 600;
-  color: rgba(238,240,243,0.80);
-  font-family: 'DM Sans', sans-serif;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.ddv2-resolved-narrative {
+  font-size:12px; color:rgba(238,240,243,0.55); line-height:1.70;
+  padding:10px 12px;
+  background:rgba(238,240,243,0.02); border:1px solid rgba(238,240,243,0.06);
+  border-radius:6px;
 }
+.ddv2-resolved-override {
+  padding:9px 12px;
+  background:rgba(212,162,58,0.04); border:1px solid rgba(212,162,58,0.14);
+  border-radius:6px;
+}
+.ddv2-resolved-override-text { font-size:11px; color:rgba(238,240,243,0.50); line-height:1.65; }
 
-/* Statement body */
-.ddv2-stmt-body {
-  padding: 12px;
-  flex: 1;
+.ddv2-resolved-meta {
+  display:flex; gap:16px; flex-wrap:wrap;
+  padding-top:8px; border-top:1px solid rgba(238,240,243,0.06);
 }
-.ddv2-stmt-text {
-  font-size: 12px;
-  color: rgba(238,240,243,0.58);
-  line-height: 1.68;
-  margin: 0 0 8px;
-}
-
-/* Filed / pending badges */
-.ddv2-badge-submitted {
-  font-size: 9px;
-  font-family: 'DM Mono', monospace;
-  font-weight: 600;
-  color: #4dcd8a;
-  background: rgba(77,205,138,0.08);
-  border: 1px solid rgba(77,205,138,0.22);
-  border-radius: 4px;
-  padding: 2px 7px;
-  flex-shrink: 0;
-  white-space: nowrap;
-}
-.ddv2-badge-pending {
-  font-size: 9px;
-  font-family: 'DM Mono', monospace;
-  font-weight: 500;
-  color: rgba(238,240,243,0.28);
-  background: rgba(238,240,243,0.04);
-  border: 1px solid rgba(238,240,243,0.08);
-  border-radius: 4px;
-  padding: 2px 7px;
-  flex-shrink: 0;
-  white-space: nowrap;
-}
-
-/* Locked state */
-.ddv2-locked {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 2px 0;
-}
-.ddv2-locked-icon  { font-size: 15px; flex-shrink: 0; margin-top: 1px; }
-.ddv2-locked-title { font-size: 11px; font-weight: 600; color: rgba(238,240,243,0.48); margin-bottom: 3px; font-family: 'DM Sans', sans-serif; }
-.ddv2-locked-body  { font-size: 10px; color: rgba(238,240,243,0.28); line-height: 1.65; }
-
-/* ── Evidence ── */
-.ddv2-evidence       { margin-top: 8px; }
-.ddv2-evidence-label {
-  font-size: 8px;
-  font-family: 'DM Mono', monospace;
-  color: rgba(238,240,243,0.26);
-  text-transform: uppercase;
-  letter-spacing: 0.09em;
-  margin-bottom: 5px;
-}
-.ddv2-evidence-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 9px;
-  border-radius: 5px;
-  border: 1px solid;
-  background: rgba(238,240,243,0.02);
-  text-decoration: none;
-  margin-bottom: 3px;
-  transition: background 0.14s;
-}
-.ddv2-evidence-item:hover { background: rgba(238,240,243,0.05); }
-.ddv2-evidence-name {
-  font-size: 9px;
-  font-family: 'DM Mono', monospace;
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* ── Notice (blind submission) ── */
-.ddv2-notice {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  background: rgba(212,162,58,0.03);
-  border: 1px solid rgba(212,162,58,0.12);
-  border-radius: 7px;
-  padding: 10px 12px;
-  font-size: 11px;
-  color: rgba(238,240,243,0.38);
-  line-height: 1.65;
-}
-.ddv2-notice svg { flex-shrink: 0; margin-top: 2px; }
-
-/* ── Awaiting box ── */
-.ddv2-awaiting {
-  background: rgba(212,162,58,0.02);
-  border: 1px solid rgba(212,162,58,0.12);
-  border-radius: 8px;
-  padding: 13px 15px;
-}
-.ddv2-awaiting-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: rgba(238,240,243,0.70);
-  margin-bottom: 5px;
-  font-family: 'DM Sans', sans-serif;
-}
-.ddv2-awaiting-body {
-  font-size: 11px;
-  color: rgba(238,240,243,0.36);
-  line-height: 1.65;
-}
-
-/* ── Resolved box ── */
-.ddv2-resolved {
-  border-radius: 8px;
-  border: 1px solid;
-  padding: 13px 15px;
-}
-.ddv2-resolved-title   { font-size: 11px; font-weight: 600; color: rgba(238,240,243,0.52); margin-bottom: 5px; }
-.ddv2-resolved-verdict { font-size: 14px; font-weight: 700; font-family: 'DM Mono', monospace; letter-spacing: -0.01em; margin-bottom: 6px; }
+.ddv2-resolved-meta-item { display:flex; flex-direction:column; gap:3px; }
 
 /* ── AI Pending ── */
-.ddv2-ai-pending {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 11px;
-  color: rgba(238,240,243,0.44);
-  padding: 12px 14px;
-  background: rgba(212,162,58,0.03);
-  border: 1px solid rgba(212,162,58,0.10);
-  border-radius: 7px;
-}
-.ddv2-muted {
-  color: rgba(238,240,243,0.28);
-  font-family: 'DM Mono', monospace;
-}
+.ddv2-ai-pending { display:flex; align-items:center; gap:10px; font-size:11px; color:rgba(238,240,243,0.44); padding:12px 14px; background:rgba(212,162,58,0.03); border:1px solid rgba(212,162,58,0.10); border-radius:7px; }
 
 /* ── Verdict / Decision cards ── */
-.ddv2-verdict,
-.ddv2-decision {
-  border-radius: 8px;
-  border: 1px solid;
-  overflow: hidden;
-}
-.ddv2-verdict-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 10px 13px;
-  border-bottom: 1px solid;
-  gap: 8px;
-}
-.ddv2-verdict-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: rgba(238,240,243,0.72);
-  font-family: 'DM Sans', sans-serif;
-}
-.ddv2-verdict-body {
-  padding: 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.ddv2-verdict-pill {
-  display: inline-flex;
-  align-items: center;
-  font-size: 11px;
-  font-family: 'DM Mono', monospace;
-  font-weight: 600;
-  border: 1px solid;
-  border-radius: 5px;
-  padding: 3px 10px;
-}
+.ddv2-verdict,.ddv2-decision { border-radius:8px; border:1px solid; overflow:hidden; }
+.ddv2-verdict-head  { display:flex; align-items:center; justify-content:space-between; padding:10px 13px; border-bottom:1px solid; gap:8px; }
+.ddv2-verdict-title { font-size:12px; font-weight:600; color:rgba(238,240,243,0.72); font-family:'DM Sans',sans-serif; }
+.ddv2-verdict-body  { padding:14px; display:flex; flex-direction:column; gap:12px; }
+.ddv2-verdict-pill  { display:inline-flex; align-items:center; font-size:11px; font-family:'DM Mono',monospace; font-weight:600; border:1px solid; border-radius:5px; padding:3px 10px; }
 
-/* Confidence bar */
-.ddv2-conf-row  { display: flex; align-items: center; gap: 7px; }
-.ddv2-conf-bar  { width: 60px; height: 2px; background: rgba(238,240,243,0.07); border-radius: 1px; overflow: hidden; }
-.ddv2-conf-fill { height: 100%; border-radius: 1px; transition: width 0.8s cubic-bezier(0.16,1,0.3,1); }
+.ddv2-conf-row { display:flex; align-items:center; gap:7px; }
+.ddv2-conf-bar { width:60px; height:2px; background:rgba(238,240,243,0.07); border-radius:1px; overflow:hidden; }
+.ddv2-conf-fill{ height:100%; border-radius:1px; transition:width 0.8s cubic-bezier(0.16,1,0.3,1); }
 
-/* Text helpers */
-.ddv2-reasoning {
-  font-size: 11px;
-  color: rgba(238,240,243,0.50);
-  line-height: 1.70;
-  margin: 3px 0 0;
-}
-.ddv2-section-label {
-  font-size: 8px;
-  font-family: 'DM Mono', monospace;
-  color: rgba(238,240,243,0.26);
-  text-transform: uppercase;
-  letter-spacing: 0.10em;
-  margin-bottom: 5px;
-}
-.ddv2-factor {
-  font-size: 11px;
-  line-height: 1.6;
-  display: flex;
-  gap: 6px;
-  margin-bottom: 3px;
-}
-.ddv2-warning { color: rgba(212,162,58,0.68); }
-.ddv2-override {
-  font-size: 11px;
-  color: rgba(238,240,243,0.50);
-  background: rgba(212,162,58,0.05);
-  border: 1px solid rgba(212,162,58,0.14);
-  border-radius: 6px;
-  padding: 9px 12px;
-  line-height: 1.65;
-}
+.ddv2-reasoning    { font-size:11px; color:rgba(238,240,243,0.50); line-height:1.70; margin:3px 0 0; }
+.ddv2-section-label{ font-size:8px; font-family:'DM Mono',monospace; color:rgba(238,240,243,0.26); text-transform:uppercase; letter-spacing:0.10em; margin-bottom:5px; }
+.ddv2-factor       { font-size:11px; line-height:1.6; display:flex; gap:6px; margin-bottom:3px; }
+.ddv2-warning      { color:rgba(212,162,58,0.68); }
+.ddv2-override     { font-size:11px; color:rgba(238,240,243,0.50); background:rgba(212,162,58,0.05); border:1px solid rgba(212,162,58,0.14); border-radius:6px; padding:9px 12px; line-height:1.65; }
 
-/* Badges */
-.ddv2-badge-ai {
-  font-size: 8px; font-family: 'DM Mono', monospace; font-weight: 600;
-  color: #4dcd8a; background: rgba(77,205,138,0.08);
-  border: 1px solid rgba(77,205,138,0.20); border-radius: 4px; padding: 2px 7px;
-}
-.ddv2-badge-override {
-  font-size: 8px; font-family: 'DM Mono', monospace; font-weight: 600;
-  color: #d4a23a; background: rgba(212,162,58,0.08);
-  border: 1px solid rgba(212,162,58,0.20); border-radius: 4px; padding: 2px 7px;
-}
+.ddv2-badge-ai       { font-size:8px; font-family:'DM Mono',monospace; font-weight:600; color:#4dcd8a; background:rgba(77,205,138,0.08); border:1px solid rgba(77,205,138,0.20); border-radius:4px; padding:2px 7px; }
+.ddv2-badge-override { font-size:8px; font-family:'DM Mono',monospace; font-weight:600; color:#d4a23a; background:rgba(212,162,58,0.08); border:1px solid rgba(212,162,58,0.20); border-radius:4px; padding:2px 7px; }
 
-/* Amber spinner */
-.ddv2-spinner-amber {
-  display: inline-block; width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0;
-  border: 1.5px solid rgba(212,162,58,0.18); border-top-color: #d4a23a;
-  animation: ddv2Spin 0.65s linear infinite;
-}
+.ddv2-spinner-amber { display:inline-block; width:11px; height:11px; border-radius:50%; flex-shrink:0; border:1.5px solid rgba(212,162,58,0.18); border-top-color:#d4a23a; animation:ddv2Spin 0.65s linear infinite; }
 
-/* Footer */
-.ddv2-footer {
-  font-size: 9px;
-  font-family: 'DM Mono', monospace;
-  color: rgba(238,240,243,0.20);
-  text-align: right;
-  padding-top: 2px;
-}
-
-/* Misc */
-.ddv2-italic { font-style: italic; }
-.ddv2-mono   { font-size: 10px; font-family: 'DM Mono', monospace; color: rgba(238,240,243,0.58); }
+.ddv2-footer { font-size:9px; font-family:'DM Mono',monospace; color:rgba(238,240,243,0.20); text-align:right; padding-top:2px; }
+.ddv2-muted  { color:rgba(238,240,243,0.28); font-family:'DM Mono',monospace; }
+.ddv2-italic { font-style:italic; }
+.ddv2-mono   { font-size:10px; font-family:'DM Mono',monospace; color:rgba(238,240,243,0.58); }
 `;

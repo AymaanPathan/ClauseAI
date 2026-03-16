@@ -81,6 +81,11 @@ function fundStateLabel(s: string) {
   return "Pending";
 }
 
+// ── FIX: count both "complete" AND "refunded" as settled/done ──
+function isSettled(s: MsStatus) {
+  return s === "complete" || s === "refunded";
+}
+
 const OPEN_DISPUTE_STATUSES = new Set([
   "awaiting_statements",
   "party_a_submitted",
@@ -146,21 +151,6 @@ function DisputeModal({
           animation: pbdFadeIn 0.18s ease both;
         }
         @keyframes pbdFadeIn { from { opacity: 0 } to { opacity: 1 } }
-        .db-btn--dispute {
-                  display: inline-flex; align-items: center; gap: 5px;
-                  padding: 4px 11px; border-radius: 4px; cursor: pointer;
-                  font-size: 11px; font-family: var(--mono); font-weight: 600;
-                  color: var(--amber); background: transparent;
-                  border: 1px solid rgba(251,191,36,0.25);
-                  white-space: nowrap;
-                }
-                .db-btn--dispute:hover:not(:disabled) {
-                  border-color: rgba(251,191,36,0.5);
-                  background: rgba(251,191,36,0.06);
-                }
-                .db-btn--dispute:disabled { opacity: 0.4; cursor: not-allowed; }
-
-
         .pbd-sheet {
           width: 100%; max-width: 640px; max-height: 90vh;
           background: var(--bg-1); border: 1px solid var(--border-hi);
@@ -174,7 +164,6 @@ function DisputeModal({
           from { opacity: 0; transform: translateY(28px) scale(0.97) }
           to   { opacity: 1; transform: translateY(0)    scale(1)    }
         }
-
         .pbd-header {
           display: flex; align-items: center; justify-content: space-between;
           padding: 20px 24px; flex-shrink: 0;
@@ -183,7 +172,7 @@ function DisputeModal({
         .pbd-header-left { display: flex; align-items: center; gap: 14px; }
         .pbd-header-icon {
           width: 40px; height: 40px; border-radius: 11px; flex-shrink: 0;
-          background: rgba(251,191,36,0.10); border: 1px solid rgba(251,191,36,0.26);
+          background: rgba(212,162,58,0.10); border: 1px solid rgba(212,162,58,0.26);
           display: flex; align-items: center; justify-content: center;
         }
         .pbd-header-eyebrow {
@@ -203,12 +192,8 @@ function DisputeModal({
           transition: background 0.14s, border-color 0.14s, color 0.14s;
           font-family: var(--font);
         }
-        .pbd-close-btn:hover {
-          background: var(--bg-4); border-color: var(--border-hi); color: var(--text-1);
-        }
-        .pbd-body {
-          flex: 1; overflow-y: auto; padding: 24px;
-        }
+        .pbd-close-btn:hover { background: var(--bg-4); border-color: var(--border-hi); color: var(--text-1); }
+        .pbd-body { flex: 1; overflow-y: auto; padding: 24px; }
         .pbd-body::-webkit-scrollbar { width: 4px; }
         .pbd-body::-webkit-scrollbar-thumb { background: var(--bg-5); border-radius: 2px; }
       `}</style>
@@ -221,7 +206,6 @@ function DisputeModal({
         }}
       >
         <div className="pbd-sheet" role="dialog" aria-modal="true">
-          {/* Header */}
           <div className="pbd-header">
             <div className="pbd-header-left">
               <div className="pbd-header-icon">
@@ -265,8 +249,6 @@ function DisputeModal({
               </svg>
             </button>
           </div>
-
-          {/* Body */}
           <div className="pbd-body">
             <DisputeSubmitScreen
               agreementId={agreementId}
@@ -320,9 +302,7 @@ function HistoryCard({ agreementId }: { agreementId: string }) {
       </div>
     );
 
-  const completedMs = data.milestones.filter((m) =>
-    ["complete", "refunded"].includes(m.status),
-  ).length;
+  const completedMs = data.milestones.filter((m) => isSettled(m.status)).length;
   const pct =
     data.milestones.length > 0
       ? Math.round((completedMs / data.milestones.length) * 100)
@@ -338,7 +318,6 @@ function HistoryCard({ agreementId }: { agreementId: string }) {
       className={`db-hist-row${expanded ? " db-hist-row--open" : ""}`}
       onClick={() => setExpanded(!expanded)}
     >
-      {/* Left */}
       <div
         style={{
           display: "flex",
@@ -354,7 +333,6 @@ function HistoryCard({ agreementId }: { agreementId: string }) {
           <div className="db-hist-amount">${displayAmt} USD</div>
         </div>
       </div>
-      {/* Right */}
       <div
         style={{
           display: "flex",
@@ -393,7 +371,6 @@ function HistoryCard({ agreementId }: { agreementId: string }) {
         </svg>
       </div>
 
-      {/* Expanded */}
       {expanded && (
         <div className="db-hist-expanded" onClick={(e) => e.stopPropagation()}>
           {data.milestones.map((ms) => (
@@ -474,6 +451,7 @@ export default function PartyBDashboard() {
   const payerName = t?.payer ?? t?.partyA ?? "Payer";
   const reduxAmount = amountLocked ?? t?.total_usd ?? t?.amount_usd;
   const dispatch = useDispatch<AppDispatch>();
+
   const [disputeConfirmMs, setDisputeConfirmMs] = useState<DbMilestone | null>(
     null,
   );
@@ -485,8 +463,6 @@ export default function PartyBDashboard() {
   const [connected, setConnected] = useState(false);
   const [activeTab, setActiveTab] = useState<"current" | "history">("current");
   const [historyIds, setHistoryIds] = useState<string[]>([]);
-
-  // Replaces disputeFormOpen — stores which ms is open in the modal (null = closed)
   const [disputeModalMs, setDisputeModalMs] = useState<DbMilestone | null>(
     null,
   );
@@ -539,7 +515,6 @@ export default function PartyBDashboard() {
             callerAddress: walletAddress,
           }),
         }).catch(console.warn);
-        // Open evidence modal immediately
         setDisputeConfirmMs(null);
         setDisputeModalMs(ms);
       }
@@ -724,17 +699,21 @@ export default function PartyBDashboard() {
   }, [agreementId, fetchData, markMilestoneDisputed, joinedDisputeRooms]);
 
   const milestones = data?.milestones ?? [];
-  const completedCount = milestones.filter((m) =>
-    ["complete", "refunded"].includes(m.status),
-  ).length;
+
+  // ── FIX: consistent settled count — complete OR refunded both count ──
+  const completedCount = milestones.filter((m) => isSettled(m.status)).length;
   const progressPct =
     milestones.length > 0
       ? Math.round((completedCount / milestones.length) * 100)
       : 0;
+
   const totalSats = data?.totalAmountSats ?? 0;
+  // Earned = only "complete" milestones (actually paid out to receiver)
   const earnedSats = milestones
     .filter((m) => m.status === "complete")
     .reduce((s, m) => s + m.amountSats, 0);
+  const earnedCount = milestones.filter((m) => m.status === "complete").length;
+
   const displayAmount =
     data?.amountLocked ??
     reduxAmount ??
@@ -759,10 +738,11 @@ export default function PartyBDashboard() {
         : "Receiver",
       icon: "◉",
     },
+    // ── FIX: show earned count accurately ──
     {
       label: "Earned",
       value: earnedSats > 0 ? formatSats(earnedSats) : "—",
-      sub: `${completedCount} milestone${completedCount !== 1 ? "s" : ""} released`,
+      sub: `${earnedCount} milestone${earnedCount !== 1 ? "s" : ""} released`,
       icon: "◈",
     },
     { label: "Payer", value: displayPayer, sub: "counterparty", icon: "◎" },
@@ -877,7 +857,7 @@ export default function PartyBDashboard() {
             </div>
           </div>
 
-          {/* Progress ring */}
+          {/* Progress ring — FIX: use green when 100%, accent otherwise (matches Party A) */}
           <div className="db-ring-wrap">
             <svg width="72" height="72" viewBox="0 0 72 72">
               <circle
@@ -893,7 +873,7 @@ export default function PartyBDashboard() {
                 cy="36"
                 r="28"
                 fill="none"
-                stroke={progressPct === 100 ? "var(--green)" : "var(--amber)"}
+                stroke={progressPct === 100 ? "var(--green)" : "var(--accent)"}
                 strokeWidth="4"
                 strokeDasharray={`${2 * Math.PI * 28}`}
                 strokeDashoffset={`${2 * Math.PI * 28 * (1 - progressPct / 100)}`}
@@ -947,7 +927,6 @@ export default function PartyBDashboard() {
           {/* ── CURRENT TAB ── */}
           {activeTab === "current" && (
             <>
-              {/* Page header */}
               <div className="db-page-header fade-up">
                 <div>
                   <div className="db-eyebrow">Receiver Dashboard</div>
@@ -963,7 +942,6 @@ export default function PartyBDashboard() {
                 )}
               </div>
 
-              {/* Stats grid */}
               <div className="db-stats-grid fade-up d1">
                 {statsCards.map(({ label, value, sub, icon }) => (
                   <div key={label} className="db-stat-card">
@@ -975,7 +953,6 @@ export default function PartyBDashboard() {
                 ))}
               </div>
 
-              {/* Progress bar */}
               <div className="db-progress-wrap fade-up d2">
                 <div className="db-progress-header">
                   <span className="label">Completion</span>
@@ -990,14 +967,14 @@ export default function PartyBDashboard() {
                     className="db-progress-fill"
                     style={{
                       width: `${progressPct > 0 ? progressPct : 0.5}%`,
+                      // ── FIX: matches Party A color logic ──
                       background:
-                        progressPct === 100 ? "var(--green)" : "var(--text-1)",
+                        progressPct === 100 ? "var(--green)" : "var(--accent)",
                     }}
                   />
                 </div>
               </div>
 
-              {/* Loading */}
               {loading && (
                 <div className="db-loading fade-in">
                   <span className="spinner" style={{ width: 16, height: 16 }} />
@@ -1007,7 +984,6 @@ export default function PartyBDashboard() {
                 </div>
               )}
 
-              {/* Empty state */}
               {!loading && milestones.length === 0 && (
                 <div className="db-empty-state fade-up d3">
                   <div className="db-empty-icon">
@@ -1035,7 +1011,6 @@ export default function PartyBDashboard() {
                 </div>
               )}
 
-              {/* Milestones */}
               {!loading && milestones.length > 0 && (
                 <div className="fade-up d3">
                   <div className="db-section-head">
@@ -1046,8 +1021,7 @@ export default function PartyBDashboard() {
                   </div>
                   <div className="db-ms-list">
                     {milestones.map((ms) => {
-                      const isDone =
-                        ms.status === "complete" || ms.status === "refunded";
+                      const isDone = isSettled(ms.status);
                       const isPending = ms.status === "pending";
                       const isDisputed = ms.status === "disputed";
                       const isFlashing = flashIndex === ms.index;
@@ -1066,7 +1040,6 @@ export default function PartyBDashboard() {
                               .filter(Boolean)
                               .join(" ")}
                           >
-                            {/* Index dot */}
                             <div
                               className={[
                                 "db-ms-num",
@@ -1079,7 +1052,6 @@ export default function PartyBDashboard() {
                               {isDone ? "✓" : ms.index + 1}
                             </div>
 
-                            {/* Info */}
                             <div className="db-ms-info">
                               <div className="db-ms-title-row">
                                 <span className="db-ms-title">{ms.title}</span>
@@ -1123,13 +1095,14 @@ export default function PartyBDashboard() {
                               )}
                               {ms.completedAt && (
                                 <div className="db-ms-released">
-                                  Released{" "}
+                                  {ms.status === "complete"
+                                    ? "Released"
+                                    : "Settled"}{" "}
                                   {new Date(ms.completedAt).toLocaleString()}
                                 </div>
                               )}
                             </div>
 
-                            {/* Right */}
                             <div className="db-ms-right">
                               <div>
                                 <div
@@ -1173,7 +1146,6 @@ export default function PartyBDashboard() {
                                   </button>
                                 )}
 
-                                {/* Evidence — opens modal instead of inline form */}
                                 {isDisputed && !alreadySub && (
                                   <button
                                     className="db-btn db-btn--evidence"
@@ -1191,7 +1163,6 @@ export default function PartyBDashboard() {
                             </div>
                           </div>
 
-                          {/* Dispute detail panel — unchanged */}
                           {isDisputed && agreementId && (
                             <div className="db-dispute-panel">
                               <DisputeDetailView
@@ -1201,8 +1172,6 @@ export default function PartyBDashboard() {
                               />
                             </div>
                           )}
-
-                          {/* db-submit-panel removed — DisputeSubmitScreen now in modal */}
                         </div>
                       );
                     })}
@@ -1210,7 +1179,6 @@ export default function PartyBDashboard() {
                 </div>
               )}
 
-              {/* Complete banner */}
               {progressPct === 100 && milestones.length > 0 && (
                 <div className="db-complete-banner fade-up">
                   <div style={{ fontSize: 28, marginBottom: 8 }}>🎉</div>
@@ -1238,7 +1206,6 @@ export default function PartyBDashboard() {
                 </div>
               )}
 
-              {/* Info strip */}
               <div className="db-info-strip fade-up">
                 <svg
                   width="12"
@@ -1267,7 +1234,7 @@ export default function PartyBDashboard() {
         </main>
       </div>
 
-      {/* ── Dispute Modal — portalled outside db-shell so it covers everything ── */}
+      {/* ── Dispute Modal ── */}
       {disputeModalMs && agreementId && data && (
         <DisputeModal
           ms={disputeModalMs}
@@ -1285,6 +1252,7 @@ export default function PartyBDashboard() {
         />
       )}
 
+      {/* ── Dispute Confirm ── */}
       {disputeConfirmMs && (
         <div
           style={{
@@ -1313,13 +1281,48 @@ export default function PartyBDashboard() {
           >
             <div
               style={{
-                fontSize: 16,
-                fontWeight: 700,
-                color: "var(--text-1)",
-                marginBottom: 8,
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                marginBottom: 14,
               }}
             >
-              Open Dispute
+              <div
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: 8,
+                  background: "var(--amber-dim)",
+                  border: "1px solid rgba(212,162,58,0.28)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexShrink: 0,
+                }}
+              >
+                <svg
+                  width="13"
+                  height="13"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="var(--amber)"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                >
+                  <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                  <line x1="12" y1="9" x2="12" y2="13" />
+                  <line x1="12" y1="17" x2="12.01" y2="17" />
+                </svg>
+              </div>
+              <div
+                style={{
+                  fontSize: 15,
+                  fontWeight: 600,
+                  color: "var(--text-1)",
+                }}
+              >
+                Open Dispute
+              </div>
             </div>
             <div
               style={{

@@ -181,15 +181,23 @@ export default function ScreenLockFunds() {
         totalAmountUsd: amountUsd,
         totalAmountSats: totalSats,
         terms: terms as Record<string, unknown>,
-        milestones: rows.map((r, i) => ({
-          index: i,
-          title: r.label,
-          percentage: r.percentage,
-          condition: r.condition,
-          deadline: r.deadlineDays > 0 ? `${r.deadlineDays} days` : undefined,
-          amountUsd: ((amountUsd * r.percentage) / 100).toFixed(2),
-          amountSats: Math.round((totalSats * r.percentage) / 100),
-        })),
+        milestones: rows.map((r, i) => {
+          const deadlineDate =
+            r.deadlineDays > 0
+              ? new Date(Date.now() + r.deadlineDays * 24 * 60 * 60 * 1000)
+              : null;
+
+          return {
+            index: i,
+            title: r.label,
+            percentage: r.percentage,
+            condition: r.condition,
+            deadline: r.deadlineDays > 0 ? `${r.deadlineDays} days` : undefined,
+            deadline_dt: deadlineDate ? deadlineDate.toISOString() : "", // ✅ FIX
+            amountUsd: ((amountUsd * r.percentage) / 100).toFixed(2),
+            amountSats: Math.round((totalSats * r.percentage) / 100),
+          };
+        }),
         onChainCreateTxId: txCreate.txId ?? undefined,
       }),
     );

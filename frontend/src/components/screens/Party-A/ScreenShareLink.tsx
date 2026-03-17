@@ -275,13 +275,10 @@ export default function ScreenShareLink() {
               </div>
             </div>
             <button
-              className="btn btn-primary btn-lg"
+              className="btn btn-yellow btn-lg"
               onClick={() => dispatch(setScreen("connect-wallet"))}
               style={{
                 width: "100%",
-                background: "var(--green)",
-                borderColor: "var(--green)",
-                color: "#0a0a0a",
               }}
             >
               Connect Wallet & Lock Funds →

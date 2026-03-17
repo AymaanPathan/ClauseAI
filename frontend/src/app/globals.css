@@ -1208,3 +1208,15 @@ input, textarea, select { font-family: var(--font); }
   .db-ms-right      { flex-direction: row; align-items: center; margin-left: 0; }
   .ddv-statements   { flex-direction: column; }
 }
+
+.btn-yellow {
+  background: #facc15;
+  border-color: #facc15;
+  color: #0a0a0a;
+}
+
+.btn-yellow:hover {
+  background: #fde047;
+  border-color: #fde047;
+  box-shadow: 0 2px 16px rgba(250, 204, 21, 0.25);
+}

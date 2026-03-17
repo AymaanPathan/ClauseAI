@@ -1339,31 +1339,6 @@ export default function ScreenDashboard() {
                                 Dispute
                               </button>
                               {/* Timeout button — shown when overdue or has deadline_dt */}
-                              {(ms.deadline_dt || ms.deadline) && (
-                                <button
-                                  className="v2-btn v2-btn--timeout"
-                                  onClick={() => handleTimeout(ms)}
-                                  title={
-                                    overdue
-                                      ? "Trigger timeout refund (deadline passed)"
-                                      : "Trigger timeout refund"
-                                  }
-                                >
-                                  <svg
-                                    width="10"
-                                    height="10"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="1.8"
-                                    strokeLinecap="round"
-                                  >
-                                    <circle cx="12" cy="12" r="10" />
-                                    <polyline points="12 6 12 12 16 14" />
-                                  </svg>
-                                  {overdue && "Timeout"}
-                                </button>
-                              )}
                             </>
                           )}
                         </div>

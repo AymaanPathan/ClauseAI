@@ -47,7 +47,7 @@ interface DisputeData {
     total_amount: number;
     milestone_description: string;
     milestone_percentage: number;
-    milestone_deadline?: string;
+    milestone_deadline?: string; // ISO datetime or plain string
     agreement_type?: string;
   };
   party_a_statement: string;
@@ -95,6 +95,33 @@ function fmtDate(iso?: string) {
     minute: "2-digit",
   });
 }
+
+// ── Deadline helpers ─────────────────────────────────────────
+function fmtDeadline(iso?: string): string {
+  if (!iso) return "—";
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return iso; // fall back to raw string if not parseable
+    return d.toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return iso;
+  }
+}
+function isOverdue(iso?: string): boolean {
+  if (!iso) return false;
+  try {
+    return new Date(iso).getTime() < Date.now();
+  } catch {
+    return false;
+  }
+}
+
 async function pollTx(
   txId: string,
   maxAttempts = 60,
@@ -491,6 +518,9 @@ function DisputeRow({
     dispute.status === "ai_complete" || dispute.status === "party_b_submitted";
   const isRes =
     dispute.status === "resolved" || dispute.status === "auto_refunded";
+  const deadline = dispute.contract_terms.milestone_deadline;
+  const overdue = isOverdue(deadline) && !isRes;
+
   return (
     <button
       className={`a-drow${active ? " a-drow--active" : ""}`}
@@ -511,6 +541,18 @@ function DisputeRow({
         <div className="a-drow-sub">
           MS {dispute.milestone_index} ·{" "}
           {dispute.contract_terms.milestone_percentage}%
+          {/* ── Overdue indicator in sidebar ── */}
+          {overdue && (
+            <span
+              style={{
+                color: "rgba(248,113,113,0.80)",
+                marginLeft: 5,
+                fontSize: 8,
+              }}
+            >
+              ⚠ overdue
+            </span>
+          )}
         </div>
       </div>
       {needsAction && !isRes && <span className="a-drow-pulse" />}
@@ -547,6 +589,11 @@ function DisputePanel({
   const arbD = dispute.arbitrator_decision;
   const isOverride = chosenOutcome && aiV && chosenOutcome !== aiV.verdict;
 
+  // Deadline display values
+  const deadlineRaw = ct.milestone_deadline;
+  const deadlineLabel = fmtDeadline(deadlineRaw);
+  const deadlineOverdue = isOverdue(deadlineRaw) && !isResolved;
+
   return (
     <div className="a-panel">
       {/* Header */}
@@ -559,10 +606,54 @@ function DisputePanel({
           </h1>
           <div className="a-sub">Milestone {dispute.milestone_index}</div>
         </div>
-        <StatusBadge status={dispute.status} />
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "flex-end",
+            gap: 6,
+          }}
+        >
+          <StatusBadge status={dispute.status} />
+          {/* ── Overdue chip next to status badge ── */}
+          {deadlineRaw && deadlineRaw !== "—" && (
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 5,
+                fontSize: 9,
+                fontFamily: "var(--mono)",
+                fontWeight: 700,
+                color: deadlineOverdue ? "#f87171" : "rgba(255,255,255,0.30)",
+                background: deadlineOverdue
+                  ? "rgba(248,113,113,0.07)"
+                  : "rgba(255,255,255,0.03)",
+                border: `1px solid ${deadlineOverdue ? "rgba(248,113,113,0.20)" : "rgba(255,255,255,0.08)"}`,
+                borderRadius: 3,
+                padding: "2px 8px",
+              }}
+            >
+              <svg
+                width="8"
+                height="8"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+              >
+                <circle cx="12" cy="12" r="10" />
+                <polyline points="12 6 12 12 16 14" />
+              </svg>
+              {deadlineOverdue ? "Overdue · " : ""}
+              {deadlineLabel}
+            </span>
+          )}
+        </div>
       </div>
 
-      {/* Terms grid */}
+      {/* ── Terms grid — now includes Deadline as a full-width row when present ── */}
       <div className="a-terms">
         {[
           { k: "Payer", v: truncate(ct.payer) },
@@ -580,6 +671,56 @@ function DisputePanel({
             <div className="a-terms-v">{v}</div>
           </div>
         ))}
+
+        {/* ── Deadline cell — full width, only shown when present ── */}
+        {deadlineRaw && deadlineRaw !== "—" && (
+          <div
+            className="a-terms-cell a-terms-cell--full"
+            style={{
+              borderColor: deadlineOverdue
+                ? "rgba(248,113,113,0.18)"
+                : undefined,
+              background: deadlineOverdue
+                ? "rgba(248,113,113,0.04)"
+                : undefined,
+            }}
+          >
+            <div
+              className="a-terms-k"
+              style={{ color: deadlineOverdue ? "#f87171" : undefined }}
+            >
+              Deadline{deadlineOverdue ? " — Overdue" : ""}
+            </div>
+            <div
+              className="a-terms-v"
+              style={{
+                color: deadlineOverdue ? "#f87171" : undefined,
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <svg
+                width="10"
+                height="10"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+              >
+                <circle cx="12" cy="12" r="10" />
+                <polyline points="12 6 12 12 16 14" />
+              </svg>
+              {deadlineLabel}
+              {deadlineOverdue && (
+                <span style={{ fontSize: 9, color: "#f87171", opacity: 0.7 }}>
+                  · deadline has passed
+                </span>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Description */}
@@ -998,132 +1139,78 @@ const css = `
   display:flex;align-items:center;justify-content:space-between;
   padding:0 28px;
 }
-.a-topbar-l,.a-topbar-r{display:flex;align-items:center;gap:12px;}
-.a-sep{width:1px;height:16px;background:var(--border);margin:0 6px;}
+.a-topbar-l{display:flex;align-items:center;gap:0;}
+.a-topbar-r{display:flex;align-items:center;gap:12px;}
 .a-brand{display:flex;align-items:center;gap:9px;text-decoration:none;}
-.a-brand-mark{
-  width:28px;height:28px;border-radius:5px;flex-shrink:0;
-  background:var(--y);display:flex;align-items:center;justify-content:center;
-  font-family:var(--display);font-size:14px;font-weight:800;color:#0a0a0a;
-}
-.a-brand-name{font-family:var(--display);font-size:15px;font-weight:800;color:var(--t1);letter-spacing:-0.04em;}
-.a-portal-label{font-size:10px;font-family:var(--mono);color:var(--t4);}
-.a-net-badge{
-  font-size:8px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;
-  color:var(--y);border:1px solid var(--yborder);border-radius:3px;
-  padding:2px 8px;background:var(--ydim);font-family:var(--mono);
-}
-.a-wallet{display:flex;align-items:center;gap:7px;border:1px solid var(--border);border-radius:4px;padding:5px 12px;}
-.a-wallet-dot{width:5px;height:5px;border-radius:50%;background:var(--y);flex-shrink:0;}
-.a-wallet-addr{font-size:10px;font-family:var(--mono);color:var(--t4);}
-.a-connect-btn{
-  display:flex;align-items:center;gap:7px;padding:7px 16px;
-  border:none;background:var(--y);color:#0a0a0a;cursor:pointer;
-  font-family:var(--display);font-size:12px;font-weight:700;
-  letter-spacing:-0.02em;border-radius:4px;transition:background 0.13s;
-}
-.a-connect-btn:hover{background:#ffd740;}
-.a-connect-btn:disabled{opacity:0.45;cursor:not-allowed;}
-.a-live{
-  display:flex;align-items:center;gap:5px;
-  font-size:9px;font-family:var(--mono);font-weight:700;
-  letter-spacing:0.07em;text-transform:uppercase;
-  color:var(--y);border:1px solid var(--yborder);
-  border-radius:4px;padding:4px 10px;background:var(--ydim);
-}
-.a-live-dot{width:5px;height:5px;border-radius:50%;background:var(--y);animation:aPulse 2s ease infinite;flex-shrink:0;}
+.a-brand-mark{width:26px;height:26px;border-radius:5px;background:#f5c518;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:900;color:#0a0a0a;font-family:var(--display);}
+.a-brand-name{font-family:var(--display);font-size:14px;font-weight:800;color:#f0f0f0;letter-spacing:-0.02em;}
+.a-sep{width:1px;height:16px;background:var(--border);margin:0 18px;}
+.a-portal-label{font-size:11px;font-family:var(--mono);color:var(--t4);}
+.a-net-badge{font-size:9px;font-family:var(--mono);color:#f5c518;background:var(--ydim);border:1px solid var(--yborder);border-radius:3px;padding:2px 7px;margin-left:10px;text-transform:uppercase;letter-spacing:0.07em;}
+.a-wallet{display:flex;align-items:center;gap:7px;border:1px solid var(--border);border-radius:4px;padding:5px 11px;}
+.a-wallet-dot{width:5px;height:5px;border-radius:50%;background:#f5c518;flex-shrink:0;}
+.a-wallet-addr{font-size:10px;font-family:var(--mono);color:var(--t3);}
+.a-connect-btn{padding:6px 14px;background:var(--ydim);border:1px solid var(--yborder);color:#f5c518;font-size:11px;font-family:var(--mono);cursor:pointer;border-radius:4px;display:flex;align-items:center;gap:7px;}
+.a-connect-btn:hover{background:rgba(245,197,24,0.12);}
+.a-live{display:flex;align-items:center;gap:5px;font-size:9px;font-family:var(--mono);color:#f5c518;border:1px solid var(--yborder);border-radius:3px;padding:3px 9px;letter-spacing:0.06em;text-transform:uppercase;}
+.a-live-dot{width:5px;height:5px;border-radius:50%;background:#f5c518;animation:aPulse 2s ease infinite;}
 
 /* ── Shell ── */
-.a-shell{
-  display:flex;min-height:calc(100vh - 54px);
-  background:var(--bg);
-  background-image:radial-gradient(circle at 1px 1px, rgba(245,197,24,0.025) 1px, transparent 0);
-  background-size:28px 28px;
-}
+.a-shell{display:flex;min-height:calc(100vh - 54px);background:var(--bg);}
 
 /* ── Sidebar ── */
 .a-sidebar{
-  width:224px;flex-shrink:0;
-  background:var(--bg1);
+  width:210px;flex-shrink:0;background:var(--bg1);
   border-right:1px solid var(--border);
-  display:flex;flex-direction:column;
   position:sticky;top:54px;height:calc(100vh - 54px);
-  overflow-y:auto;
+  overflow-y:auto;display:flex;flex-direction:column;
+  padding:20px 0;
 }
-.a-sidebar::-webkit-scrollbar{width:2px;}
-.a-sidebar::-webkit-scrollbar-thumb{background:var(--bg3);}
-.a-sb-block{padding:16px 16px 18px;border-bottom:1px solid var(--border);}
+.a-sb-block{padding:0 14px 20px;border-bottom:1px solid var(--border);margin-bottom:4px;}
 .a-sb-block--grow{flex:1;border-bottom:none;}
-.a-sb-heading{
-  font-size:8px;font-family:var(--mono);color:var(--t4);
-  text-transform:uppercase;letter-spacing:0.14em;display:block;margin-bottom:11px;
-}
-.a-sb-heading-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:11px;}
+.a-sb-heading{font-size:9px;font-family:var(--mono);color:var(--t4);text-transform:uppercase;letter-spacing:0.14em;margin-bottom:12px;}
+.a-sb-heading-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
 .a-sb-stats{display:flex;flex-direction:column;gap:9px;}
 .a-sb-row{display:flex;align-items:center;justify-content:space-between;}
 .a-sb-key{font-size:10px;font-family:var(--mono);color:var(--t4);}
-.a-sb-val{font-size:11px;font-family:var(--mono);color:var(--t2);font-weight:500;}
-.a-sb-empty{font-size:11px;font-family:var(--mono);color:var(--t4);line-height:1.7;}
-.a-dg{margin-bottom:2px;}
-.a-dg-label{
-  font-size:8px;font-family:var(--mono);color:rgba(240,240,240,0.16);
-  text-transform:uppercase;letter-spacing:0.13em;
-  padding:10px 0 5px;
-}
-
-/* Dispute rows */
+.a-sb-val{font-size:11px;font-family:var(--mono);color:var(--t3);font-weight:600;}
+.a-sb-empty{font-size:11px;font-family:var(--mono);color:var(--t4);line-height:1.6;}
+.a-dg{margin-bottom:16px;}
+.a-dg-label{font-size:8px;font-family:var(--mono);color:var(--t4);text-transform:uppercase;letter-spacing:0.12em;margin-bottom:5px;}
 .a-drow{
-  width:100%;display:flex;align-items:center;gap:9px;
-  padding:9px 10px 9px 12px;
-  border:none;background:none;cursor:pointer;text-align:left;
-  border-left:2px solid transparent;
-  transition:background 0.11s,border-color 0.11s;
+  width:100%;display:flex;align-items:center;gap:8px;
+  padding:8px 10px;background:transparent;border:none;
+  cursor:pointer;text-align:left;border-radius:4px;
+  transition:background 0.12s;margin-bottom:1px;
 }
-.a-drow:hover{background:rgba(245,197,24,0.03);}
-.a-drow--active{background:rgba(245,197,24,0.05);border-left-color:var(--y);}
+.a-drow:hover{background:var(--bg2);}
+.a-drow--active{background:var(--bg2);border-left:2px solid #f5c518;}
 .a-drow-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;}
 .a-drow-body{flex:1;min-width:0;}
-.a-drow-id{font-size:10px;font-family:var(--mono);color:rgba(240,240,240,0.60);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.a-drow-id{font-size:10px;font-family:var(--mono);color:var(--t2);font-weight:500;}
 .a-drow-sub{font-size:9px;font-family:var(--mono);color:var(--t4);margin-top:1px;}
-.a-drow-pulse{width:6px;height:6px;border-radius:50%;background:var(--y);flex-shrink:0;animation:aPulse 2s ease infinite;}
+.a-drow-pulse{width:6px;height:6px;border-radius:50%;background:#f5c518;flex-shrink:0;animation:aPulse 1.6s ease infinite;}
 
 /* ── Main ── */
-.a-main{
-  flex:1;min-width:0;overflow-y:auto;
-}
-
-/* Empty state */
+.a-main{flex:1;min-width:0;}
 .a-empty{
   display:flex;flex-direction:column;align-items:center;justify-content:center;
-  min-height:calc(100vh - 54px);gap:12px;text-align:center;padding:40px;
-  width:100%;
+  min-height:calc(100vh - 54px);gap:14px;padding:40px;text-align:center;
 }
-.a-empty-icon{font-size:28px;opacity:0.10;margin-bottom:4px;}
-.a-empty-title{font-family:var(--display);font-size:20px;font-weight:800;color:rgba(240,240,240,0.22);letter-spacing:-0.04em;}
-.a-empty-body{font-size:13px;color:rgba(240,240,240,0.16);max-width:300px;line-height:1.75;margin:0;}
+.a-empty-icon{font-size:36px;opacity:0.18;}
+.a-empty-title{font-family:var(--display);font-size:20px;font-weight:700;color:var(--t2);letter-spacing:-0.03em;}
+.a-empty-body{font-size:13px;color:var(--t4);max-width:320px;line-height:1.7;}
 
-/* ── Panel — full width ── */
-.a-panel{
-  width:100%;
-  padding:40px 44px 80px;
-  display:flex;flex-direction:column;gap:22px;
-}
-
-/* Panel header */
+/* ── Panel ── */
+.a-panel{padding:36px 44px 72px;display:flex;flex-direction:column;gap:20px;max-width:900px;}
 .a-panel-hd{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;}
-.a-eyebrow{
-  font-size:9px;font-family:var(--mono);color:var(--y);
-  text-transform:uppercase;letter-spacing:0.12em;margin-bottom:8px;
-}
-.a-title{
-  font-family:var(--display);font-size:26px;font-weight:800;
-  color:var(--t1);letter-spacing:-0.04em;line-height:1.1;
-}
-.a-title-dim{color:rgba(240,240,240,0.28);}
+.a-eyebrow{font-size:9px;font-family:var(--mono);color:var(--y);text-transform:uppercase;letter-spacing:0.14em;margin-bottom:6px;}
+.a-title{font-family:var(--display);font-size:clamp(22px,2.5vw,30px);font-weight:800;color:var(--t1);letter-spacing:-0.04em;line-height:1.1;}
+.a-title-dim{color:var(--t4);font-weight:500;}
 .a-sub{font-size:11px;font-family:var(--mono);color:var(--t4);margin-top:5px;}
 .a-status-badge{
   font-size:9px;font-family:var(--mono);font-weight:700;text-transform:uppercase;
-  letter-spacing:0.07em;border:1px solid var(--border2);border-radius:3px;
+  letter-spacing:0.07em;border:1px solid var(--border);border-radius:3px;
   padding:4px 10px;display:inline-flex;align-items:center;gap:6px;
   flex-shrink:0;white-space:nowrap;
   color:var(--t3);background:var(--bg2);margin-top:4px;
@@ -1137,6 +1224,8 @@ const css = `
   background:var(--bg1);
 }
 .a-terms-cell:nth-child(3n){border-right:none;}
+/* Full-width deadline cell */
+.a-terms-cell--full{grid-column:1/-1;border-right:none;}
 .a-terms-k{font-size:8px;font-family:var(--mono);color:var(--t4);text-transform:uppercase;letter-spacing:0.10em;margin-bottom:5px;}
 .a-terms-v{font-size:12px;font-family:var(--mono);color:var(--t2);font-weight:500;}
 

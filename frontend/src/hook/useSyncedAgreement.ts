@@ -27,7 +27,8 @@ export interface SyncedMilestone {
   title: string;
   percentage: number;
   condition: string;
-  deadline?: string;
+  deadline?: string; // legacy plain-text label
+  deadline_dt?: string; // ← ADDED: ISO datetime from the date picker
   amountUsd: string;
   amountSats: number;
   status: MsStatus;
@@ -58,9 +59,7 @@ export interface SyncedAgreementState {
   totalAmountSats: number;
   arbitrator: string | null;
   terms: Record<string, unknown> | null;
-  // Per-milestone arbitrator decisions
   arbDecisions: Record<number, ArbitratorDecision | null>;
-  // UI state
   connected: boolean;
   loading: boolean;
   lastUpdate: Date | null;
@@ -111,18 +110,36 @@ const initialState: SyncedAgreementState = {
   flashIndex: null,
 };
 
+// ── Helper: map a raw DB milestone to SyncedMilestone ─────────
+// Centralised so both fetchSnapshot and socket payloads use the same mapping.
+function mapMilestone(m: any): SyncedMilestone {
+  return {
+    index: m.index,
+    title: m.title ?? "",
+    percentage: m.percentage ?? 0,
+    condition: m.condition ?? "",
+    deadline: m.deadline ?? "",
+    deadline_dt: m.deadline_dt ?? undefined, // ← ADDED: preserve ISO datetime
+    amountUsd: m.amountUsd ?? "0",
+    amountSats: m.amountSats ?? 0,
+    status: (m.status ?? "locked") as MsStatus,
+    txId: m.txId ?? undefined,
+    txUrl: m.txUrl ?? undefined,
+    completedAt: m.completedAt ?? undefined,
+    disputedAt: m.disputedAt ?? undefined,
+  };
+}
+
 function applyMilestoneUpdate(
   milestones: SyncedMilestone[],
   payload: MilestoneUpdatedPayload,
 ): SyncedMilestone[] {
   // If server sends full milestone array, use it directly
   if (payload.milestones?.length) {
-    return payload.milestones.map((m) => ({
-      ...m,
-      status: m.status as MsStatus,
-    }));
+    return payload.milestones.map(mapMilestone);
   }
-  // Otherwise apply to single milestone
+  // Otherwise patch the single milestone in-place,
+  // preserving deadline_dt that was already in state
   return milestones.map((ms) =>
     ms.index === payload.milestoneIndex
       ? {
@@ -173,10 +190,7 @@ function reducer(
 
     case "FUNDS_LOCKED": {
       const milestones = action.payload.milestones?.length
-        ? action.payload.milestones.map((m) => ({
-            ...m,
-            status: m.status as MsStatus,
-          }))
+        ? action.payload.milestones.map(mapMilestone)
         : state.milestones;
       return {
         ...state,
@@ -229,14 +243,12 @@ function reducer(
       ) {
         milestones = milestones.map((ms) =>
           ms.index === idx &&
-          // ── KEY FIX: never downgrade a settled milestone ──
           ms.status !== "complete" &&
           ms.status !== "refunded"
             ? { ...ms, status: "disputed" as MsStatus }
             : ms,
         );
       }
-      // If status is unknown/stale, do nothing — don't touch milestones
 
       return {
         ...state,
@@ -268,7 +280,6 @@ function reducer(
 
 interface UseSyncedAgreementOptions {
   agreementId: string | null;
-  /** Pass wallet address to skip REST for rooms you can derive locally */
   walletAddress?: string | null;
 }
 
@@ -290,13 +301,12 @@ export function useSyncedAgreement({
       );
       if (!res.ok) return;
       const data = await res.json();
+
       dispatch({
         type: "LOADED",
         payload: {
-          milestones: (data.milestones ?? []).map((m: SyncedMilestone) => ({
-            ...m,
-            status: m.status as MsStatus,
-          })),
+          // ← uses mapMilestone so deadline_dt is always preserved
+          milestones: (data.milestones ?? []).map(mapMilestone),
           fundState: data.fundState ?? "idle",
           fundsLocked: data.fundState === "locked" || data.fundsLocked,
           amountLocked: data.amountLocked ?? null,
@@ -311,11 +321,11 @@ export function useSyncedAgreement({
         },
       });
 
-      // Check arbitrator decisions for all milestones
-      const milestones: SyncedMilestone[] = data.milestones ?? [];
+      const milestones: SyncedMilestone[] = (data.milestones ?? []).map(
+        mapMilestone,
+      );
       milestones.forEach((ms) => {
         fetchArbDecision(ms.index);
-        // Auto-join dispute rooms for disputed milestones
         if (
           ms.status === "disputed" &&
           !joinedDisputeRooms.current.has(ms.index)
@@ -373,11 +383,8 @@ export function useSyncedAgreement({
 
     const socket = getSocket();
 
-    // Initial REST load
     fetchSnapshot();
 
-    // Join room with ack — server sends current state immediately.
-    // This also fires again after reconnect (socket.ts handles re-join).
     joinAgreementRoom(
       agreementId,
       (serverState: AgreementStatePayload | null) => {
@@ -385,10 +392,7 @@ export function useSyncedAgreement({
         dispatch({
           type: "LOADED",
           payload: {
-            milestones: (serverState.milestones ?? []).map((m) => ({
-              ...m,
-              status: m.status as MsStatus,
-            })),
+            milestones: (serverState.milestones ?? []).map(mapMilestone),
             fundState: serverState.fundState ?? "idle",
             fundsLocked: serverState.fundsLocked,
             amountLocked: serverState.amountLocked,
@@ -417,7 +421,6 @@ export function useSyncedAgreement({
     function onFundsLocked(payload: FundsLockedPayload) {
       if (payload.agreementId && payload.agreementId !== agreementId) return;
       dispatch({ type: "FUNDS_LOCKED", payload });
-      // Fetch full data to get milestones if not included
       if (!payload.milestones?.length) {
         setTimeout(fetchSnapshot, 500);
       }
@@ -438,7 +441,6 @@ export function useSyncedAgreement({
       scheduleFlashClear();
 
       const idx = payload.milestone_index;
-      // Auto-join dispute room if not already in it
       if (idx !== undefined && !joinedDisputeRooms.current.has(idx)) {
         joinDisputeRoom(
           agreementId!,
@@ -450,14 +452,12 @@ export function useSyncedAgreement({
         joinedDisputeRooms.current.add(idx);
       }
 
-      // If resolved, also fetch the canonical decision from REST
       if (payload.status === "resolved" && !payload.arbitrator_decision) {
         fetchArbDecision(idx);
       }
     }
 
     function onPresenceUpdated() {
-      // Presence changes (party joined, wallet connected) → re-fetch
       fetchSnapshot();
     }
 
@@ -473,7 +473,6 @@ export function useSyncedAgreement({
       dispatch({ type: "SOCKET_CONNECTED", payload: true });
     }
 
-    // Safety-net poll every 30s (not 10s — socket handles real-time)
     pollTimer.current = setInterval(fetchSnapshot, 30_000);
 
     return () => {
@@ -495,7 +494,6 @@ export function useSyncedAgreement({
 
   return {
     ...state,
-    // Expose refetch for manual refresh (e.g. after a local action)
     refetch: fetchSnapshot,
     fetchArbDecision,
   };

@@ -203,8 +203,6 @@ router.get("/", async (req: Request, res: Response) => {
   try {
     const query: Record<string, unknown> = {};
 
-    // Case-insensitive match — Stacks addresses sometimes differ in case
-    // between what the wallet returns and what was stored
     if (partyA) {
       query.partyA = {
         $regex: new RegExp(
@@ -236,6 +234,7 @@ router.get("/", async (req: Request, res: Response) => {
     res.status(500).json({ error: "Internal server error" });
   }
 });
+
 // ── GET /api/agreement/:id/events — SSE stream ────────────────
 router.get("/:id/events", async (req: Request, res: Response) => {
   const { id } = req.params;
@@ -327,8 +326,6 @@ router.get("/:id/milestones", async (req: Request, res: Response) => {
 });
 
 // ── POST /api/agreement/:id/create ───────────────────────────
-// FIXED: Always upserts milestones + terms, never skips them.
-// BUG WAS: existing doc check skipped milestones entirely — now uses findOneAndUpdate
 router.post("/:id/create", async (req: Request, res: Response) => {
   const {
     partyA,
@@ -352,6 +349,7 @@ router.post("/:id/create", async (req: Request, res: Response) => {
       percentage: number;
       condition: string;
       deadline?: string;
+      deadline_dt?: string; // ← CHANGE 1: added to type
       amountUsd: string;
       amountSats: number;
     }>;
@@ -359,12 +357,23 @@ router.post("/:id/create", async (req: Request, res: Response) => {
   };
 
   try {
+    // ← CHANGE 2: explicit field mapping so deadline_dt is never dropped by spread
     const normalizedMilestones = (milestones ?? []).map((ms) => ({
-      ...ms,
+      index: ms.index,
+      title: ms.title,
+      percentage: ms.percentage,
+      condition: ms.condition,
+      deadline: ms.deadline ?? "",
+      deadline_dt: ms.deadline_dt ?? "", // ← persisted now
+      amountUsd: ms.amountUsd,
+      amountSats: ms.amountSats,
       status: "locked" as const,
+      txId: null,
+      txUrl: null,
+      completedAt: null,
+      disputedAt: null,
     }));
 
-    // Always upsert — update milestones/terms even if doc already exists
     const agreement = await Agreement.findOneAndUpdate(
       { agreementId: req.params.id },
       {
@@ -385,10 +394,11 @@ router.post("/:id/create", async (req: Request, res: Response) => {
     );
 
     console.log(
-      `[agreement /create] Upserted agreement ${req.params.id} — ${normalizedMilestones.length} milestones`,
+      `[agreement /create] Upserted ${req.params.id} — ` +
+        `${normalizedMilestones.length} milestones, ` +
+        `deadlines: [${normalizedMilestones.map((m) => m.deadline_dt || "—").join(", ")}]`,
     );
 
-    // Emit socket event so Party B dashboard refreshes immediately
     emit(req.params.id, "funds:locked", {
       agreementId: req.params.id,
       milestones: agreement.milestones,

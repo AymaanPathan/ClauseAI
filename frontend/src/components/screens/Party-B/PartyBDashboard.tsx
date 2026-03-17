@@ -1,14 +1,13 @@
 "use client";
 // ============================================================
 // components/partyB/ScreenDashboard.tsx
-// Refactored to use useSyncedAgreement for real-time sync
 // ============================================================
 
 import { disputeMilestoneAsPartyBThunk } from "@/store/slices/partyBSlice";
 import { useDispatch } from "react-redux";
 import type { AppDispatch } from "@/store";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback } from "react";
 import { useSelector } from "react-redux";
 import { RootState } from "@/store";
 import { explorerTxUrl } from "@/lib/stacksConfig";
@@ -71,6 +70,74 @@ function fmtDate(iso?: string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+// ── Deadline helpers (same as Party A dashboard) ──────────────
+function fmtDeadline(iso: string | null | undefined): string {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    return d.toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "";
+  }
+}
+
+function isOverdue(iso: string | null | undefined): boolean {
+  if (!iso) return false;
+  try {
+    return new Date(iso).getTime() < Date.now();
+  } catch {
+    return false;
+  }
+}
+
+// ── Deadline Badge ─────────────────────────────────────────────
+function DeadlineBadge({ iso }: { iso: string | null | undefined }) {
+  if (!iso) return null;
+  const label = fmtDeadline(iso);
+  if (!label) return null;
+  const overdue = isOverdue(iso);
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        fontSize: 9,
+        fontFamily: "var(--mono)",
+        fontWeight: 600,
+        color: overdue ? "var(--red)" : "var(--text-4)",
+        background: overdue ? "var(--red-dim)" : "var(--bg-3)",
+        border: `1px solid ${overdue ? "rgba(248,113,113,0.20)" : "rgba(255,255,255,0.07)"}`,
+        borderRadius: 4,
+        padding: "2px 8px",
+        letterSpacing: "0.02em",
+      }}
+    >
+      <svg
+        width="8"
+        height="8"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      >
+        <circle cx="12" cy="12" r="10" />
+        <polyline points="12 6 12 12 16 14" />
+      </svg>
+      {overdue ? "Overdue · " : ""}
+      {label}
+    </span>
+  );
 }
 
 // ── Arbitrator Decision Banner ────────────────────────────────
@@ -279,7 +346,6 @@ function ArbitratorDecisionBanner({
 
 function HistoryCard({ agreementId }: { agreementId: string }) {
   const [expanded, setExpanded] = useState(false);
-  // HistoryCard uses its own small sync instance since it's not the active agreement
   const {
     milestones,
     fundState,
@@ -459,7 +525,6 @@ export default function PartyBDashboard() {
   const payerNameFallback = t?.payer ?? t?.partyA ?? "Payer";
   const dispatch = useDispatch<AppDispatch>();
 
-  // ── All real-time state from the sync hook ────────────────
   const {
     milestones,
     fundState,
@@ -527,7 +592,6 @@ export default function PartyBDashboard() {
         }).catch(console.warn);
         setDisputeConfirmMs(null);
         setDisputeModalMs(ms);
-        // refetch after a short delay to get updated state
         setTimeout(refetch, 2000);
       }
     } catch (err) {
@@ -835,6 +899,13 @@ export default function PartyBDashboard() {
                       const arbDecision = arbDecisions[ms.index] ?? null;
                       const showArbBanner = isDone && arbDecision !== null;
 
+                      // ── deadline_dt: read from milestone directly (after backend fix)
+                      // or fall back to the legacy string deadline field
+                      const deadlineDt: string | null =
+                        (ms as any).deadline_dt ?? null;
+                      const overdue =
+                        isOverdue(deadlineDt) && !isDone && !isDisputed;
+
                       return (
                         <div key={ms.index} className="db-ms-block">
                           <div
@@ -885,48 +956,84 @@ export default function PartyBDashboard() {
                                     ⚖ Arbitrated
                                   </span>
                                 )}
+                                {/* Overdue warning chip */}
+                                {overdue && (
+                                  <span
+                                    style={{
+                                      fontSize: 9,
+                                      fontFamily: "var(--mono)",
+                                      fontWeight: 700,
+                                      color: "var(--red)",
+                                      background: "var(--red-dim)",
+                                      border:
+                                        "1px solid rgba(248,113,113,0.20)",
+                                      borderRadius: 3,
+                                      padding: "2px 7px",
+                                    }}
+                                  >
+                                    ⚠ Overdue
+                                  </span>
+                                )}
                                 {isFlashing && !isDisputed && !isDone && (
                                   <span className="db-flash-chip">Updated</span>
                                 )}
                               </div>
+
                               {ms.condition && (
                                 <div className="db-ms-condition">
                                   {ms.condition}
                                 </div>
                               )}
-                              {ms.deadline && (
-                                <div className="db-ms-deadline">
-                                  ⏱ {ms.deadline}
-                                </div>
-                              )}
-                              {ms.txId && (
-                                <div className="db-ms-tx">
-                                  <span className="db-ms-tx-label">TX</span>
-                                  <a
-                                    href={ms.txUrl ?? explorerTxUrl(ms.txId)}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="db-ms-tx-link"
-                                  >
-                                    {ms.txId.slice(0, 12)}… ↗
-                                  </a>
-                                  {isPending && (
-                                    <span
-                                      className="spinner"
-                                      style={{ width: 8, height: 8 }}
-                                    />
-                                  )}
-                                </div>
-                              )}
-                              {ms.completedAt && (
-                                <div className="db-ms-released">
-                                  {ms.status === "complete"
-                                    ? "Released"
-                                    : "Settled"}{" "}
-                                  {new Date(ms.completedAt).toLocaleString()}
-                                </div>
-                              )}
+
+                              {/* ── Deadline display ── */}
+                              <div
+                                className="db-ms-meta-row"
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 8,
+                                  flexWrap: "wrap",
+                                  marginTop: 4,
+                                }}
+                              >
+                                {deadlineDt ? (
+                                  <DeadlineBadge iso={deadlineDt} />
+                                ) : ms.deadline ? (
+                                  <span className="db-ms-deadline">
+                                    ⏱ {ms.deadline}
+                                  </span>
+                                ) : null}
+
+                                {ms.txId && (
+                                  <div className="db-ms-tx">
+                                    <span className="db-ms-tx-label">TX</span>
+                                    <a
+                                      href={ms.txUrl ?? explorerTxUrl(ms.txId)}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="db-ms-tx-link"
+                                    >
+                                      {ms.txId.slice(0, 12)}… ↗
+                                    </a>
+                                    {isPending && (
+                                      <span
+                                        className="spinner"
+                                        style={{ width: 8, height: 8 }}
+                                      />
+                                    )}
+                                  </div>
+                                )}
+                                {ms.completedAt && (
+                                  <div className="db-ms-released">
+                                    {ms.status === "complete"
+                                      ? "Released"
+                                      : "Settled"}{" "}
+                                    {new Date(ms.completedAt).toLocaleString()}
+                                  </div>
+                                )}
+                              </div>
                             </div>
+
                             <div className="db-ms-right">
                               <div>
                                 <div
@@ -1213,7 +1320,11 @@ export default function PartyBDashboard() {
                   milestone_description:
                     disputeModalMs.condition || disputeModalMs.title,
                   milestone_percentage: disputeModalMs.percentage,
-                  milestone_deadline: disputeModalMs.deadline || undefined,
+                  // ── deadline_dt preferred, legacy deadline as fallback ──
+                  milestone_deadline:
+                    (disputeModalMs as any).deadline_dt ||
+                    disputeModalMs.deadline ||
+                    undefined,
                   agreement_type:
                     (terms as any)?.agreement_type ??
                     t?.agreement_type ??
@@ -1317,6 +1428,12 @@ export default function PartyBDashboard() {
                 {disputeConfirmMs.title}
               </strong>
             </div>
+            {/* Show deadline in confirm dialog too */}
+            {(disputeConfirmMs as any).deadline_dt && (
+              <div style={{ marginBottom: 10 }}>
+                <DeadlineBadge iso={(disputeConfirmMs as any).deadline_dt} />
+              </div>
+            )}
             <div
               style={{
                 fontSize: 12,

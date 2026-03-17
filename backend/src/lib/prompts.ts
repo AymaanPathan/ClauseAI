@@ -1,7 +1,3 @@
-// ============================================================
-// src/lib/prompts.ts — UPDATED for milestone extraction
-// ============================================================
-
 export type AgreementType =
   | "freelance"
   | "rental"
@@ -13,12 +9,12 @@ export type AgreementType =
 
 export interface Milestone {
   title: string;
-  percentage: number; // integer, 0–100, all must sum to 100
-  deadline: string; // ISO 8601 or ""
-  condition: string; // plain-English release condition
+  percentage: number;
+  deadline: string;
+  deadline_dt: string;
+  condition: string;
 }
 
-/** New multi-milestone schema (multi-phase + upgraded freelance/trade) */
 export interface ParsedAgreementV2 {
   payer: string;
   receiver: string;
@@ -30,7 +26,6 @@ export interface ParsedAgreementV2 {
   notes: string;
 }
 
-/** Legacy single-milestone schema — kept for rental / bet */
 export interface ParsedAgreementV1 {
   partyA: string;
   partyB: string;

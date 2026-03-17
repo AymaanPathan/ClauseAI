@@ -1,6 +1,6 @@
 "use client";
 // ============================================================
-// components/partyA/ScreenDashboard.tsx — Unmarshal-style flat
+// components/partyA/ScreenDashboard.tsx
 // ============================================================
 
 import { useEffect, useCallback, useState } from "react";
@@ -40,12 +40,12 @@ interface MilestoneUI {
   title: string;
   percentage: number;
   condition: string;
-  deadline: string;
+  deadline_dt: string | null; // ISO datetime from terms.milestones
+  deadline: string; // legacy string label
   amountUsd: string;
   amountSats: number;
 }
 
-// ── Arbitrator decision type ──────────────────────────────────
 interface ArbitratorDecision {
   outcome: "release_to_receiver" | "refund_to_payer" | "split";
   followed_ai: boolean;
@@ -118,18 +118,36 @@ function statusMeta(s: MilestoneUIStatus) {
 }
 
 const MS_COLORS = [
-  "#d4ff00",
-  "#ffffff",
-  "#4ade80",
+  "#c4ff46",
   "#60a5fa",
+  "#4ade80",
+  "#fbbf24",
   "#f472b6",
   "#a78bfa",
 ];
 
-function truncateAddr(addr: string): string {
-  if (!addr) return "";
-  return `${addr.slice(0, 8)}…${addr.slice(-5)}`;
+function truncateAddr(addr: string) {
+  return addr ? `${addr.slice(0, 8)}…${addr.slice(-5)}` : "";
 }
+
+/** Format ISO datetime into a compact human label */
+function fmtDeadline(iso: string | null | undefined): string {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return "";
+    return d.toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "";
+  }
+}
+
 function fmtDate(iso?: string): string {
   if (!iso) return "";
   return new Date(iso).toLocaleString(undefined, {
@@ -140,10 +158,17 @@ function fmtDate(iso?: string): string {
   });
 }
 
-// ── Arbitrator Decision Banner ────────────────────────────────
-// Shown inline under a milestone that was resolved by arbitration.
-// viewerRole="A" means the payer is viewing.
+/** Returns true if the deadline has passed */
+function isOverdue(iso: string | null | undefined): boolean {
+  if (!iso) return false;
+  try {
+    return new Date(iso).getTime() < Date.now();
+  } catch {
+    return false;
+  }
+}
 
+// ── Arbitrator Decision Banner ────────────────────────────────
 function ArbitratorDecisionBanner({
   decision,
   viewerRole,
@@ -156,7 +181,6 @@ function ArbitratorDecisionBanner({
   const outcomeLabel = isRelease
     ? "Funds Released to Receiver"
     : "Funds Refunded to Payer";
-
   const personalMsg = isRelease
     ? viewerRole === "A"
       ? "The arbitrator ruled in favour of the Receiver. Funds were released to Party B."
@@ -164,7 +188,6 @@ function ArbitratorDecisionBanner({
     : viewerRole === "A"
       ? "The arbitrator ruled in your favour. Funds were returned to your wallet."
       : "The arbitrator ruled in favour of the Payer. Funds were refunded.";
-
   const isBeneficiary =
     (viewerRole === "B" && isRelease) || (viewerRole === "A" && !isRelease);
 
@@ -178,7 +201,6 @@ function ArbitratorDecisionBanner({
         background: `${outcomeColor}06`,
       }}
     >
-      {/* Header */}
       <div
         style={{
           display: "flex",
@@ -194,7 +216,7 @@ function ArbitratorDecisionBanner({
           <div
             style={{
               fontSize: 9,
-              fontFamily: "'DM Mono', monospace",
+              fontFamily: "'DM Mono',monospace",
               fontWeight: 700,
               textTransform: "uppercase",
               letterSpacing: "0.10em",
@@ -219,7 +241,7 @@ function ArbitratorDecisionBanner({
           <span
             style={{
               fontSize: 9,
-              fontFamily: "'DM Mono', monospace",
+              fontFamily: "'DM Mono',monospace",
               fontWeight: 700,
               textTransform: "uppercase",
               letterSpacing: "0.06em",
@@ -234,8 +256,6 @@ function ArbitratorDecisionBanner({
           </span>
         )}
       </div>
-
-      {/* Body */}
       <div
         style={{
           padding: "10px 14px",
@@ -254,8 +274,6 @@ function ArbitratorDecisionBanner({
         >
           {personalMsg}
         </p>
-
-        {/* Arbitrator's note — always shown */}
         {decision.override_reason && (
           <div
             style={{
@@ -268,7 +286,7 @@ function ArbitratorDecisionBanner({
             <div
               style={{
                 fontSize: 9,
-                fontFamily: "'DM Mono', monospace",
+                fontFamily: "'DM Mono',monospace",
                 fontWeight: 600,
                 textTransform: "uppercase",
                 letterSpacing: "0.10em",
@@ -291,8 +309,6 @@ function ArbitratorDecisionBanner({
             </p>
           </div>
         )}
-
-        {/* Meta row */}
         <div
           style={{
             display: "flex",
@@ -304,7 +320,7 @@ function ArbitratorDecisionBanner({
           <span
             style={{
               fontSize: 9,
-              fontFamily: "'DM Mono', monospace",
+              fontFamily: "'DM Mono',monospace",
               color: "rgba(255,255,255,0.28)",
             }}
           >
@@ -316,7 +332,7 @@ function ArbitratorDecisionBanner({
           <span
             style={{
               fontSize: 9,
-              fontFamily: "'DM Mono', monospace",
+              fontFamily: "'DM Mono',monospace",
               color: "rgba(255,255,255,0.28)",
             }}
           >
@@ -328,7 +344,7 @@ function ArbitratorDecisionBanner({
           <span
             style={{
               fontSize: 8,
-              fontFamily: "'DM Mono', monospace",
+              fontFamily: "'DM Mono',monospace",
               fontWeight: 700,
               textTransform: "uppercase",
               letterSpacing: "0.08em",
@@ -346,6 +362,49 @@ function ArbitratorDecisionBanner({
         </div>
       </div>
     </div>
+  );
+}
+
+// ── Deadline badge ────────────────────────────────────────────
+function DeadlineBadge({ iso }: { iso: string | null | undefined }) {
+  if (!iso) return null;
+  const label = fmtDeadline(iso);
+  if (!label) return null;
+  const overdue = isOverdue(iso);
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        fontSize: 9,
+        fontFamily: "'DM Mono',monospace",
+        fontWeight: 600,
+        color: overdue ? "#f87171" : "rgba(255,255,255,0.35)",
+        background: overdue
+          ? "rgba(248,113,113,0.07)"
+          : "rgba(255,255,255,0.04)",
+        border: `1px solid ${overdue ? "rgba(248,113,113,0.20)" : "rgba(255,255,255,0.08)"}`,
+        borderRadius: 4,
+        padding: "2px 8px",
+        letterSpacing: "0.02em",
+      }}
+    >
+      <svg
+        width="8"
+        height="8"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      >
+        <circle cx="12" cy="12" r="10" />
+        <polyline points="12 6 12 12 16 14" />
+      </svg>
+      {overdue ? "Overdue · " : ""}
+      {label}
+    </span>
   );
 }
 
@@ -372,20 +431,35 @@ export default function ScreenDashboard() {
   const totalSats = usdToSatsPreview(totalAmountUsd);
   const arbitrator = t?.arbitrator ?? "TBD";
 
-  const milestones: MilestoneUI[] = v2?.milestones?.map((ms, i) => ({
-    index: i,
-    title: ms.title || `Milestone ${i + 1}`,
-    percentage: ms.percentage,
-    condition: ms.condition ?? "",
-    deadline: ms.deadline ?? "",
-    amountUsd: (((totalAmountUsd || 0) * ms.percentage) / 100).toFixed(2),
-    amountSats: Math.round((totalSats * ms.percentage) / 100),
-  })) ?? [
+  // ── KEY FIX: merge deadline_dt from terms.milestones into milestone objects ──
+  // The top-level milestones array in MongoDB has deadline_dt: null because
+  // deadline_dt is only saved in terms.milestones[]. Read from there as source of truth.
+  const termsMillestones: any[] = t?.milestones ?? [];
+
+  const milestones: MilestoneUI[] = v2?.milestones?.map((ms, i) => {
+    // Prefer the deadline_dt from terms.milestones (where it's actually saved by the picker)
+    const termsMsMatch = termsMillestones.find(
+      (tm: any) => tm.title === ms.title || tm.index === i,
+    );
+    const deadline_dt: string | null =
+      ms.deadline_dt ?? termsMsMatch?.deadline_dt ?? null;
+    return {
+      index: i,
+      title: ms.title || `Milestone ${i + 1}`,
+      percentage: ms.percentage,
+      condition: ms.condition ?? "",
+      deadline_dt,
+      deadline: ms.deadline ?? termsMsMatch?.deadline ?? "",
+      amountUsd: (((totalAmountUsd || 0) * ms.percentage) / 100).toFixed(2),
+      amountSats: Math.round((totalSats * ms.percentage) / 100),
+    };
+  }) ?? [
     {
       index: 0,
       title: "Full Payment",
       percentage: 100,
       condition: t?.condition ?? "Payer confirms work is complete.",
+      deadline_dt: termsMillestones[0]?.deadline_dt ?? null,
       deadline: t?.deadline ?? "",
       amountUsd: String(totalAmountUsd),
       amountSats: totalSats,
@@ -400,10 +474,7 @@ export default function ScreenDashboard() {
   >({});
   const [savedToDb, setSavedToDb] = useState(false);
   const [lastRefresh, setLastRefresh] = useState(0);
-
-  // ── NEW: per-milestone arbitrator decision cache ──
   const [arbDecisions, setArbDecisions] = useState<ArbDecisionMap>({});
-
   const [disputeModal, setDisputeModal] = useState<{
     open: boolean;
     ms: MilestoneUI | null;
@@ -417,7 +488,6 @@ export default function ScreenDashboard() {
     setDisputeModal({ open: false, ms: null, step: "confirm" });
   }
 
-  // ── NEW: fetch arbitrator decision for a milestone ──
   const fetchArbDecision = useCallback(
     async (milestoneIndex: number) => {
       if (!agreementId) return;
@@ -443,7 +513,6 @@ export default function ScreenDashboard() {
     [agreementId],
   );
 
-  // ── NEW: check all milestones for arbitrator decisions on load ──
   const checkAllArbDecisions = useCallback(async () => {
     if (!agreementId || milestones.length === 0) return;
     await Promise.all(milestones.map((ms) => fetchArbDecision(ms.index)));
@@ -476,14 +545,12 @@ export default function ScreenDashboard() {
     if (!agreementId) return;
     const socket = getSocket();
     joinAgreementRoom(agreementId);
-
     function onDisputeUpdated(payload: any) {
       if (payload.agreement_id && payload.agreement_id !== agreementId) return;
       setLastRefresh(Date.now());
       const idx = payload.milestone_index ?? payload.milestoneIndex;
       if (idx !== undefined) {
         joinDisputeRoom(agreementId!, idx);
-        // ── NEW: if resolved, fetch the arbitrator decision ──
         if (payload.status === "resolved" && payload.arbitrator_decision) {
           setArbDecisions((prev) => ({
             ...prev,
@@ -494,13 +561,13 @@ export default function ScreenDashboard() {
         }
       }
     }
-
     socket.on("dispute:updated", onDisputeUpdated);
     return () => {
       socket.off("dispute:updated", onDisputeUpdated);
     };
   }, [agreementId, fetchArbDecision]);
 
+  // ── KEY FIX: include deadline_dt in saveAgreementToDbThunk payload ──
   useEffect(() => {
     if (!agreementId || savedToDb || milestones.length === 0) return;
     setSavedToDb(true);
@@ -519,6 +586,7 @@ export default function ScreenDashboard() {
           percentage: ms.percentage,
           condition: ms.condition,
           deadline: ms.deadline || undefined,
+          deadline_dt: ms.deadline_dt || "", // ← now correctly passed
           amountUsd: ms.amountUsd,
           amountSats: ms.amountSats,
         })),
@@ -558,7 +626,6 @@ export default function ScreenDashboard() {
           setMilestoneOnChainStatus({ index: ms.index, status: ms.status }),
         ),
       );
-      // ── NEW: after on-chain refresh, check arbitrator decisions for done milestones ──
       if (!cancelled) checkAllArbDecisions();
     })();
     return () => {
@@ -770,7 +837,7 @@ export default function ScreenDashboard() {
                 fill="#ffffff"
                 fontSize="13"
                 fontWeight="700"
-                fontFamily="'DM Mono', monospace"
+                fontFamily="'DM Mono',monospace"
               >
                 {progressPct}%
               </text>
@@ -976,12 +1043,12 @@ export default function ScreenDashboard() {
                 const isDone = status === "complete" || status === "refunded";
                 const isPending = status === "pending";
                 const isFailed = status === "failed";
-                const isDisputed = status === "disputed";
+                const isDisp = status === "disputed";
                 const alreadySub = disputeSubmitted[ms.index];
                 const accent = MS_COLORS[ms.index % MS_COLORS.length];
                 const arbDecision = arbDecisions[ms.index] ?? null;
-                // Show banner when milestone is settled AND came from arbitration
                 const showArbBanner = isDone && arbDecision !== null;
+                const overdue = isOverdue(ms.deadline_dt) && !isDone && !isDisp;
 
                 return (
                   <div
@@ -989,7 +1056,7 @@ export default function ScreenDashboard() {
                     className={[
                       "v2-ms-block",
                       isDone ? "v2-ms-block--done" : "",
-                      isDisputed ? "v2-ms-block--disputed" : "",
+                      isDisp ? "v2-ms-block--disputed" : "",
                       isPending ? "v2-ms-block--pending" : "",
                     ]
                       .filter(Boolean)
@@ -1001,7 +1068,7 @@ export default function ScreenDashboard() {
                         style={{
                           background: isDone
                             ? "#4ade80"
-                            : isDisputed
+                            : isDisp
                               ? "#d4ff00"
                               : accent,
                         }}
@@ -1011,12 +1078,12 @@ export default function ScreenDashboard() {
                         style={{
                           borderColor: isDone
                             ? "#4ade80"
-                            : isDisputed
+                            : isDisp
                               ? "#d4ff00"
                               : accent + "60",
                           color: isDone
                             ? "#4ade80"
-                            : isDisputed
+                            : isDisp
                               ? "#d4ff00"
                               : accent,
                         }}
@@ -1041,7 +1108,7 @@ export default function ScreenDashboard() {
                       <div className="v2-ms-info">
                         <div className="v2-ms-title-row">
                           <span className="v2-ms-title">{ms.title}</span>
-                          {isDisputed && (
+                          {isDisp && (
                             <span className="v2-chip v2-chip--dispute">
                               ⚑ Dispute
                             </span>
@@ -1057,12 +1124,11 @@ export default function ScreenDashboard() {
                               ⚠ Failed
                             </span>
                           )}
-                          {/* ── NEW: "Arbitrated" chip when resolved via arbitration ── */}
                           {isDone && arbDecision && (
                             <span
                               style={{
                                 fontSize: 9,
-                                fontFamily: "'DM Mono', monospace",
+                                fontFamily: "'DM Mono',monospace",
                                 fontWeight: 700,
                                 textTransform: "uppercase",
                                 letterSpacing: "0.07em",
@@ -1076,12 +1142,30 @@ export default function ScreenDashboard() {
                               ⚖ Arbitrated
                             </span>
                           )}
+                          {overdue && (
+                            <span
+                              style={{
+                                fontSize: 9,
+                                fontFamily: "'DM Mono',monospace",
+                                fontWeight: 700,
+                                color: "#f87171",
+                                background: "rgba(248,113,113,0.08)",
+                                border: "1px solid rgba(248,113,113,0.20)",
+                                borderRadius: 3,
+                                padding: "2px 7px",
+                              }}
+                            >
+                              ⚠ Overdue
+                            </span>
+                          )}
                         </div>
                         {ms.condition && (
                           <p className="v2-ms-condition">{ms.condition}</p>
                         )}
                         <div className="v2-ms-meta-row">
-                          {ms.deadline && (
+                          {/* ── Deadline display — uses deadline_dt from terms ── */}
+                          <DeadlineBadge iso={ms.deadline_dt} />
+                          {!ms.deadline_dt && ms.deadline && (
                             <span className="v2-ms-deadline">
                               <svg
                                 width="9"
@@ -1182,7 +1266,7 @@ export default function ScreenDashboard() {
                               Retry
                             </button>
                           )}
-                          {isDisputed && !alreadySub && (
+                          {isDisp && !alreadySub && (
                             <button
                               className="v2-btn v2-btn--evidence"
                               onClick={() => setEvidenceModalMs(ms)}
@@ -1202,7 +1286,7 @@ export default function ScreenDashboard() {
                               Evidence
                             </button>
                           )}
-                          {isDisputed && alreadySub && (
+                          {isDisp && alreadySub && (
                             <span className="v2-filed-badge">
                               <svg
                                 width="9"
@@ -1218,14 +1302,52 @@ export default function ScreenDashboard() {
                               Filed
                             </span>
                           )}
-                          {!isDone &&
-                            !isPending &&
-                            !isFailed &&
-                            !isDisputed && (
-                              <>
+                          {!isDone && !isPending && !isFailed && !isDisp && (
+                            <>
+                              <button
+                                className="v2-btn v2-btn--release"
+                                onClick={() => handleRelease(ms)}
+                              >
+                                <svg
+                                  width="10"
+                                  height="10"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2.5"
+                                  strokeLinecap="round"
+                                >
+                                  <polyline points="20 6 9 17 4 12" />
+                                </svg>
+                                Release
+                              </button>
+                              <button
+                                className="v2-btn v2-btn--dispute"
+                                onClick={() => openDisputeModal(ms)}
+                              >
+                                <svg
+                                  width="10"
+                                  height="10"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                >
+                                  <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                                </svg>
+                                Dispute
+                              </button>
+                              {/* Timeout button — shown when overdue or has deadline_dt */}
+                              {(ms.deadline_dt || ms.deadline) && (
                                 <button
-                                  className="v2-btn v2-btn--release"
-                                  onClick={() => handleRelease(ms)}
+                                  className="v2-btn v2-btn--timeout"
+                                  onClick={() => handleTimeout(ms)}
+                                  title={
+                                    overdue
+                                      ? "Trigger timeout refund (deadline passed)"
+                                      : "Trigger timeout refund"
+                                  }
                                 >
                                   <svg
                                     width="10"
@@ -1233,57 +1355,21 @@ export default function ScreenDashboard() {
                                     viewBox="0 0 24 24"
                                     fill="none"
                                     stroke="currentColor"
-                                    strokeWidth="2.5"
+                                    strokeWidth="1.8"
                                     strokeLinecap="round"
                                   >
-                                    <polyline points="20 6 9 17 4 12" />
+                                    <circle cx="12" cy="12" r="10" />
+                                    <polyline points="12 6 12 12 16 14" />
                                   </svg>
-                                  Release
+                                  {overdue && "Timeout"}
                                 </button>
-                                <button
-                                  className="v2-btn v2-btn--dispute"
-                                  onClick={() => openDisputeModal(ms)}
-                                >
-                                  <svg
-                                    width="10"
-                                    height="10"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    strokeWidth="2"
-                                    strokeLinecap="round"
-                                  >
-                                    <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-                                  </svg>
-                                  Dispute
-                                </button>
-                                {ms.deadline && (
-                                  <button
-                                    className="v2-btn v2-btn--timeout"
-                                    onClick={() => handleTimeout(ms)}
-                                    title="Trigger timeout refund"
-                                  >
-                                    <svg
-                                      width="10"
-                                      height="10"
-                                      viewBox="0 0 24 24"
-                                      fill="none"
-                                      stroke="currentColor"
-                                      strokeWidth="1.8"
-                                      strokeLinecap="round"
-                                    >
-                                      <circle cx="12" cy="12" r="10" />
-                                      <polyline points="12 6 12 12 16 14" />
-                                    </svg>
-                                  </button>
-                                )}
-                              </>
-                            )}
+                              )}
+                            </>
+                          )}
                         </div>
                       </div>
                     </div>
 
-                    {/* ── NEW: Arbitrator Decision Banner (Party A view) ── */}
                     {showArbBanner && arbDecision && (
                       <div className="v2-dispute-panel">
                         <ArbitratorDecisionBanner
@@ -1292,14 +1378,12 @@ export default function ScreenDashboard() {
                         />
                       </div>
                     )}
-
-                    {/* Dispute panel — only while still open (not yet resolved) */}
-                    {isDisputed && agreementId && !showArbBanner && (
+                    {isDisp && agreementId && !showArbBanner && (
                       <div className="v2-dispute-panel">
                         <div
                           style={{
                             fontSize: 11,
-                            fontFamily: "'DM Mono', monospace",
+                            fontFamily: "'DM Mono',monospace",
                             color: "rgba(255,255,255,0.28)",
                             marginBottom: 8,
                           }}
@@ -1314,7 +1398,6 @@ export default function ScreenDashboard() {
             </div>
           </div>
 
-          {/* Help strip */}
           <div className="v2-info-strip">
             <p className="v2-info-text">
               Click <strong>Release</strong> to send sBTC on-chain once work is
@@ -1502,6 +1585,20 @@ export default function ScreenDashboard() {
                         : arbitrator}
                     </span>
                   </div>
+                  {disputeModal.ms.deadline_dt && (
+                    <div className="v2-modal-detail">
+                      <span className="v2-modal-detail-label">Deadline</span>
+                      <span
+                        className="v2-modal-detail-val"
+                        style={{
+                          color: "rgba(255,255,255,0.55)",
+                          fontSize: 11,
+                        }}
+                      >
+                        {fmtDeadline(disputeModal.ms.deadline_dt)}
+                      </span>
+                    </div>
+                  )}
                   {disputeModal.ms.condition && (
                     <div className="v2-modal-detail v2-modal-detail--full">
                       <span className="v2-modal-detail-label">Condition</span>
@@ -1569,7 +1666,10 @@ export default function ScreenDashboard() {
                     milestone_description:
                       disputeModal.ms.condition || disputeModal.ms.title,
                     milestone_percentage: disputeModal.ms.percentage,
-                    milestone_deadline: disputeModal.ms.deadline || undefined,
+                    milestone_deadline:
+                      disputeModal.ms.deadline_dt ||
+                      disputeModal.ms.deadline ||
+                      undefined,
                     agreement_type: t?.agreement_type ?? "freelance",
                   }}
                   onSubmitted={() => {
@@ -1654,7 +1754,10 @@ export default function ScreenDashboard() {
                   milestone_description:
                     evidenceModalMs.condition || evidenceModalMs.title,
                   milestone_percentage: evidenceModalMs.percentage,
-                  milestone_deadline: evidenceModalMs.deadline || undefined,
+                  milestone_deadline:
+                    evidenceModalMs.deadline_dt ||
+                    evidenceModalMs.deadline ||
+                    undefined,
                   agreement_type: t?.agreement_type ?? "freelance",
                 }}
                 onSubmitted={() => {
@@ -1673,9 +1776,7 @@ export default function ScreenDashboard() {
   );
 }
 
-/* ════════════════════════════════════════════════════════════
-   CSS — unchanged from original
-   ════════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════ */
 const css = `
 .v2-topbar { position:sticky;top:0;z-index:100;height:56px;background:#0a0a0a;border-bottom:1px solid rgba(255,255,255,0.07);display:flex;align-items:center;justify-content:space-between;padding:0 28px;gap:12px; }
 .v2-topbar-left { display:flex;align-items:center; }
@@ -1692,7 +1793,7 @@ const css = `
 .v2-wallet-dot { width:5px;height:5px;border-radius:50%;background:#d4ff00;flex-shrink:0; }
 .v2-wallet-addr { font-size:10px;font-family:'DM Mono',monospace;color:rgba(255,255,255,0.45); }
 .v2-live-badge { display:flex;align-items:center;gap:6px;font-size:10px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#d4ff00;border:1px solid rgba(212,255,0,0.25);border-radius:4px;padding:4px 10px; }
-.v2-live-dot { width:5px;height:5px;border-radius:50%;background:#d4ff00;flex-shrink:0; }
+.v2-live-dot { width:5px;height:5px;border-radius:50%;background:#d4ff00;flex-shrink:0;animation:v2Pulse 2s ease infinite; }
 .v2-shell { display:flex;min-height:calc(100vh - 56px);background:#0a0a0a; }
 .v2-sidebar { width:220px;flex-shrink:0;background:#0d0d0d;border-right:1px solid rgba(255,255,255,0.07);display:flex;flex-direction:column;position:sticky;top:56px;height:calc(100vh - 56px);overflow-y:auto;padding:20px 0 24px; }
 .v2-sidebar-block { padding:0 14px 20px;margin-bottom:4px;border-bottom:1px solid rgba(255,255,255,0.05); }
@@ -1763,7 +1864,7 @@ const css = `
 .v2-ms-title-row { display:flex;align-items:center;gap:8px;margin-bottom:5px;flex-wrap:wrap; }
 .v2-ms-title { font-size:14px;font-weight:600;color:#ffffff;letter-spacing:-0.02em;font-family:'DM Sans',sans-serif; }
 .v2-ms-condition { font-size:12px;color:rgba(255,255,255,0.38);line-height:1.65;max-width:440px;margin-bottom:8px; }
-.v2-ms-meta-row { display:flex;align-items:center;gap:14px;flex-wrap:wrap; }
+.v2-ms-meta-row { display:flex;align-items:center;gap:8px;flex-wrap:wrap; }
 .v2-ms-deadline { display:flex;align-items:center;gap:4px;font-size:10px;font-family:'DM Mono',monospace;color:rgba(255,255,255,0.22); }
 .v2-tx-link { display:flex;align-items:center;gap:4px;font-size:10px;font-family:'DM Mono',monospace;color:rgba(255,255,255,0.28);text-decoration:none; }
 .v2-tx-link:hover { color:#d4ff00; }
@@ -1807,9 +1908,9 @@ const css = `
 .v2-btn-secondary { display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:11px 24px;border-radius:4px;cursor:pointer;background:transparent;color:rgba(255,255,255,0.55);border:1px solid rgba(255,255,255,0.12);font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500; }
 .v2-btn-secondary:hover { border-color:rgba(255,255,255,0.22);color:#ffffff; }
 @keyframes v2Spin { to { transform:rotate(360deg); } }
-@keyframes v2Pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
-@media (max-width:900px) { .v2-sidebar { display:none; } .v2-main { padding:24px 20px 56px; } }
-@media (max-width:580px) { .v2-stats-grid { grid-template-columns:1fr 1fr; } .v2-ms-row { flex-direction:column; } .v2-ms-right { flex-direction:row;align-items:center;padding-top:0; } }
+@keyframes v2Pulse { 0%,100%{opacity:1}50%{opacity:0.4} }
+@media (max-width:900px) { .v2-sidebar{display:none;} .v2-main{padding:24px 20px 56px;} }
+@media (max-width:580px) { .v2-stats-grid{grid-template-columns:1fr 1fr;} .v2-ms-row{flex-direction:column;} .v2-ms-right{flex-direction:row;align-items:center;padding-top:0;} }
 .v2-modal-backdrop { position:fixed;inset:0;z-index:999;background:rgba(0,0,0,0.80);display:flex;align-items:center;justify-content:center;padding:24px; }
 .v2-modal { width:100%;max-width:560px;background:#111111;border:1px solid rgba(255,255,255,0.10);overflow:hidden;display:flex;flex-direction:column;max-height:90vh; }
 .v2-modal--evidence { max-width:640px; }

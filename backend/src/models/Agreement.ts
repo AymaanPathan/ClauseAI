@@ -14,6 +14,7 @@ export interface IMilestone {
   percentage: number;
   condition: string;
   deadline?: string;
+  deadline_dt?: string;
   amountUsd: string;
   amountSats: number;
   status:
@@ -58,6 +59,7 @@ const MilestoneSchema = new Schema<IMilestone>(
     percentage: { type: Number, required: true },
     condition: { type: String, default: "" },
     deadline: { type: String },
+    deadline_dt: { type: String, default: null },
     amountUsd: { type: String, default: "0" },
     amountSats: { type: Number, default: 0 },
     status: {

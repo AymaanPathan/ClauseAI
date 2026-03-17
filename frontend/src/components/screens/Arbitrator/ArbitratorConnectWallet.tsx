@@ -21,13 +21,11 @@ export default function ArbitratorConnectWallet() {
       <div className="bg-glow" />
 
       <div className="connect-card fade-up">
-        {/* Badge */}
         <div className="badge">
           <span className="badge-dot" />
           Arbitration Portal
         </div>
 
-        {/* Gavel icon */}
         <div className={`icon-ring ${connecting ? "icon-ring--active" : ""}`}>
           {connecting ? (
             <span className="spinner" />
@@ -103,11 +101,9 @@ export default function ArbitratorConnectWallet() {
 }
 
 const css = `
-  @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@400;500&family=DM+Sans:wght@300;400;500;600&display=swap');
-
   .arb-root {
     min-height: 100vh;
-    background: #080c0a;
+    background: #0a0a0a;
     display: flex; align-items: center; justify-content: center;
     padding: 24px;
     font-family: 'DM Sans', sans-serif;
@@ -117,107 +113,106 @@ const css = `
   .bg-grid {
     position: absolute; inset: 0; pointer-events: none;
     background-image:
-      repeating-linear-gradient(90deg, transparent, transparent 59px, rgba(52,211,153,0.03) 59px, rgba(52,211,153,0.03) 60px),
-      repeating-linear-gradient(0deg, transparent, transparent 59px, rgba(52,211,153,0.03) 59px, rgba(52,211,153,0.03) 60px);
+      repeating-linear-gradient(90deg, transparent, transparent 59px, rgba(196,255,70,0.03) 59px, rgba(196,255,70,0.03) 60px),
+      repeating-linear-gradient(0deg, transparent, transparent 59px, rgba(196,255,70,0.03) 59px, rgba(196,255,70,0.03) 60px);
   }
 
   .bg-glow {
     position: absolute; top: 20%; left: 50%; transform: translate(-50%,-50%);
     width: 700px; height: 500px; border-radius: 50%;
-    background: radial-gradient(ellipse, rgba(52,211,153,0.06) 0%, transparent 65%);
+    background: radial-gradient(ellipse, rgba(196,255,70,0.07) 0%, transparent 65%);
     pointer-events: none;
   }
 
   .connect-card {
     position: relative; z-index: 2;
-    background: rgba(12,18,14,0.9);
-    border: 1px solid rgba(52,211,153,0.15);
+    background: rgba(13,13,13,0.95);
+    border: 1px solid rgba(196,255,70,0.15);
     border-radius: 20px;
     padding: 48px 44px;
     max-width: 460px; width: 100%;
     backdrop-filter: blur(20px);
-    box-shadow: 0 0 60px rgba(0,0,0,0.5), inset 0 1px 0 rgba(52,211,153,0.08);
+    box-shadow: 0 0 60px rgba(0,0,0,0.6), inset 0 1px 0 rgba(196,255,70,0.06);
   }
 
   .badge {
     display: inline-flex; align-items: center; gap: 7px;
-    background: rgba(52,211,153,0.08); border: 1px solid rgba(52,211,153,0.2);
+    background: rgba(196,255,70,0.07); border: 1px solid rgba(196,255,70,0.22);
     border-radius: 20px; padding: 5px 14px;
-    font-family: 'DM Mono', monospace; font-size: 10px; color: #34d399;
+    font-family: 'DM Mono', monospace; font-size: 10px; color: #c4ff46;
     letter-spacing: 0.08em; text-transform: uppercase;
     margin-bottom: 32px;
   }
   .badge-dot {
-    width: 6px; height: 6px; border-radius: 50%; background: #34d399;
+    width: 6px; height: 6px; border-radius: 50%; background: #c4ff46;
     animation: pulse 2s ease infinite;
   }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
 
   .icon-ring {
     width: 80px; height: 80px; border-radius: 50%;
-    background: rgba(52,211,153,0.06); border: 1px solid rgba(52,211,153,0.2);
+    background: rgba(196,255,70,0.06); border: 1px solid rgba(196,255,70,0.20);
     display: flex; align-items: center; justify-content: center;
     margin: 0 0 28px;
-    color: #34d399;
+    color: #c4ff46;
     transition: all 0.3s;
   }
-  .icon-ring--active { border-color: rgba(52,211,153,0.5); background: rgba(52,211,153,0.1); }
+  .icon-ring--active { border-color: rgba(196,255,70,0.50); background: rgba(196,255,70,0.10); }
 
   .connect-title {
-    font-family: 'DM Serif Display', serif;
-    font-size: 40px; line-height: 1.05; letter-spacing: -0.02em;
-    color: #f0faf5; margin-bottom: 14px;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 40px; line-height: 1.05; letter-spacing: -0.04em; font-weight: 800;
+    color: #ffffff; margin-bottom: 14px;
   }
   .connect-subtitle {
-    font-style: italic; color: rgba(240,250,245,0.45); font-weight: 400;
+    color: rgba(255,255,255,0.35); font-weight: 400; font-size: 36px;
   }
   .connect-desc {
-    font-size: 14px; line-height: 1.75; color: rgba(240,250,245,0.55);
+    font-size: 14px; line-height: 1.75; color: rgba(255,255,255,0.45);
     margin-bottom: 28px;
   }
 
   .feature-list {
-    display: flex; flex-direction: column; gap: 10px; margin-bottom: 28px;
+    display: flex; flex-direction: column; gap: 8px; margin-bottom: 28px;
   }
   .feature-row {
     display: flex; align-items: center; gap: 12px;
     padding: 10px 14px;
-    background: rgba(52,211,153,0.04); border: 1px solid rgba(52,211,153,0.1);
-    border-radius: 10px;
+    background: rgba(196,255,70,0.03); border: 1px solid rgba(196,255,70,0.10);
+    border-radius: 8px;
   }
-  .feature-icon { font-size: 16px; flex-shrink: 0; }
-  .feature-text { font-size: 13px; color: rgba(240,250,245,0.7); }
+  .feature-icon { font-size: 15px; flex-shrink: 0; }
+  .feature-text { font-size: 13px; color: rgba(255,255,255,0.55); }
 
   .error-box {
     background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.25);
-    border-radius: 10px; padding: 10px 14px;
+    border-radius: 8px; padding: 10px 14px;
     font-size: 12px; color: #f87171; margin-bottom: 16px;
     font-family: 'DM Mono', monospace;
   }
 
   .btn-connect {
     width: 100%; padding: 14px 24px;
-    background: linear-gradient(135deg, #34d399, #059669);
-    border: none; border-radius: 12px; cursor: pointer;
-    font-family: 'DM Sans', sans-serif; font-size: 15px; font-weight: 600;
-    color: #080c0a; letter-spacing: -0.01em;
+    background: #c4ff46;
+    border: none; border-radius: 10px; cursor: pointer;
+    font-family: 'DM Sans', sans-serif; font-size: 15px; font-weight: 700;
+    color: #0a0a0a; letter-spacing: -0.02em;
     display: flex; align-items: center; justify-content: center; gap: 8px;
-    transition: opacity 0.2s, transform 0.15s;
+    transition: background 0.15s, transform 0.15s;
     margin-bottom: 14px;
   }
-  .btn-connect:hover:not(:disabled) { opacity: 0.9; transform: translateY(-1px); }
+  .btn-connect:hover:not(:disabled) { background: #d4ff60; transform: translateY(-1px); }
   .btn-connect:active:not(:disabled) { transform: translateY(0); }
-  .btn-connect:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-connect:disabled { opacity: 0.4; cursor: not-allowed; }
 
   .connect-note {
     font-size: 11px; font-family: 'DM Mono', monospace;
-    color: rgba(240,250,245,0.25); text-align: center;
+    color: rgba(255,255,255,0.20); text-align: center;
   }
 
-  /* Shared */
   .spinner {
     display: inline-block; width: 18px; height: 18px;
-    border: 2px solid rgba(8,12,10,0.3); border-top-color: #080c0a;
+    border: 2px solid rgba(10,10,10,0.25); border-top-color: #0a0a0a;
     border-radius: 50%; animation: spin 0.7s linear infinite;
   }
   .spinner.sm { width: 14px; height: 14px; }

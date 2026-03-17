@@ -1,17 +1,6 @@
 "use client";
 // ============================================================
 // components/screens/Shared/ArbitratorDecisionBanner.tsx
-//
-// Shows a clear "This was decided by the Arbitrator" banner
-// on both Party A and Party B dashboards whenever a disputed
-// milestone has been resolved via arbitration.
-//
-// Usage:
-//   <ArbitratorDecisionBanner
-//     agreementId={agreementId}
-//     milestoneIndex={ms.index}
-//     viewerRole="A" | "B"
-//   />
 // ============================================================
 
 import { useEffect, useState, useCallback } from "react";
@@ -87,7 +76,6 @@ export default function ArbitratorDecisionBanner({
     fetchDispute();
   }, [fetchDispute]);
 
-  // Live updates via socket
   useEffect(() => {
     joinDisputeRoom(agreementId, milestoneIndex);
     const socket = getSocket();
@@ -111,18 +99,16 @@ export default function ArbitratorDecisionBanner({
   if (!dec || dispute.status !== "resolved") return null;
 
   const isRelease = dec.outcome === "release_to_receiver";
-  const isRefund = dec.outcome === "refund_to_payer";
 
-  // What this outcome means for THIS viewer
-  const isBeneficiary =
-    (viewerRole === "B" && isRelease) || (viewerRole === "A" && isRefund);
-
-  const outcomeColor = isRelease ? "#4ade80" : "#f87171";
+  // Both outcomes use yellow — release is bright yellow, refund is dim yellow
+  const outcomeColor = isRelease ? "#f5c518" : "rgba(245,197,24,0.55)";
   const outcomeLabel = isRelease
     ? "Funds Released to Receiver (Party B)"
     : "Funds Refunded to Payer (Party A)";
 
-  // Friendly message tailored to each party
+  const isBeneficiary =
+    (viewerRole === "B" && isRelease) || (viewerRole === "A" && !isRelease);
+
   const personalMsg = isRelease
     ? viewerRole === "B"
       ? "The arbitrator ruled in your favour. Funds have been released to your wallet."
@@ -136,7 +122,7 @@ export default function ArbitratorDecisionBanner({
       <style>{`
         .arb-banner {
           border: 1px solid;
-          border-radius: 10px;
+          border-radius: 6px;
           overflow: hidden;
           font-family: 'DM Sans', sans-serif;
           margin-top: 8px;
@@ -148,13 +134,12 @@ export default function ArbitratorDecisionBanner({
         }
         .arb-banner-head {
           display: flex; align-items: center; gap: 10px;
-          padding: 11px 14px;
-          border-bottom: 1px solid;
+          padding: 10px 14px; border-bottom: 1px solid;
         }
         .arb-banner-icon {
-          width: 28px; height: 28px; border-radius: 7px; flex-shrink: 0;
+          width: 26px; height: 26px; border-radius: 5px; flex-shrink: 0;
           display: flex; align-items: center; justify-content: center;
-          font-size: 13px;
+          font-size: 12px;
         }
         .arb-banner-eyebrow {
           font-size: 9px; font-weight: 700; text-transform: uppercase;
@@ -162,25 +147,25 @@ export default function ArbitratorDecisionBanner({
           margin-bottom: 2px;
         }
         .arb-banner-outcome {
-          font-size: 13px; font-weight: 700; letter-spacing: -0.02em;
+          font-size: 12px; font-weight: 700; letter-spacing: -0.02em;
         }
         .arb-banner-body {
-          padding: 12px 14px;
-          display: flex; flex-direction: column; gap: 10px;
+          padding: 11px 14px;
+          display: flex; flex-direction: column; gap: 9px;
         }
-        .arb-banner-msg {
-          font-size: 12px; line-height: 1.65;
-        }
+        .arb-banner-msg { font-size: 12px; line-height: 1.65; }
         .arb-banner-note-block {
-          border-radius: 7px; padding: 10px 12px;
+          border-radius: 5px; padding: 9px 11px;
           border: 1px solid rgba(255,255,255,0.06);
+          background: rgba(255,255,255,0.02);
         }
         .arb-banner-note-label {
           font-size: 9px; font-family: 'DM Mono', monospace; font-weight: 600;
-          text-transform: uppercase; letter-spacing: 0.10em; margin-bottom: 5px;
+          text-transform: uppercase; letter-spacing: 0.10em;
+          color: rgba(255,255,255,0.25); margin-bottom: 5px;
         }
         .arb-banner-note-text {
-          font-size: 12px; line-height: 1.65; color: rgba(255,255,255,0.65);
+          font-size: 12px; line-height: 1.65; color: rgba(255,255,255,0.55);
           font-style: italic;
         }
         .arb-banner-meta {
@@ -188,7 +173,7 @@ export default function ArbitratorDecisionBanner({
         }
         .arb-banner-meta-item {
           font-size: 9px; font-family: 'DM Mono', monospace;
-          color: rgba(255,255,255,0.28); display: flex; align-items: center; gap: 4px;
+          color: rgba(255,255,255,0.25);
         }
         .arb-banner-meta-sep { color: rgba(255,255,255,0.12); font-size: 10px; }
         .arb-banner-ai-tag {
@@ -197,12 +182,12 @@ export default function ArbitratorDecisionBanner({
           border-radius: 3px; padding: 2px 6px; border: 1px solid;
         }
         .arb-banner-ai-tag--followed {
-          color: #4ade80; border-color: rgba(74,222,128,0.25);
-          background: rgba(74,222,128,0.07);
+          color: #f5c518; border-color: rgba(245,197,24,0.25);
+          background: rgba(245,197,24,0.07);
         }
         .arb-banner-ai-tag--overrode {
-          color: #fbbf24; border-color: rgba(251,191,36,0.25);
-          background: rgba(251,191,36,0.06);
+          color: rgba(245,197,24,0.55); border-color: rgba(245,197,24,0.18);
+          background: rgba(245,197,24,0.04);
         }
       `}</style>
 
@@ -210,22 +195,22 @@ export default function ArbitratorDecisionBanner({
         className="arb-banner"
         style={{
           borderColor: outcomeColor + "30",
-          background: outcomeColor + "06",
+          background: outcomeColor + "05",
         }}
       >
         {/* Header */}
         <div
           className="arb-banner-head"
           style={{
-            background: outcomeColor + "0a",
+            background: outcomeColor + "08",
             borderBottomColor: outcomeColor + "18",
           }}
         >
           <div
             className="arb-banner-icon"
             style={{
-              background: outcomeColor + "15",
-              border: `1px solid ${outcomeColor}30`,
+              background: outcomeColor + "12",
+              border: `1px solid ${outcomeColor}28`,
               color: outcomeColor,
             }}
           >
@@ -239,7 +224,6 @@ export default function ArbitratorDecisionBanner({
               {outcomeLabel}
             </div>
           </div>
-          {/* Beneficiary indicator */}
           {isBeneficiary && (
             <div
               style={{
@@ -249,10 +233,10 @@ export default function ArbitratorDecisionBanner({
                 textTransform: "uppercase",
                 letterSpacing: "0.08em",
                 color: outcomeColor,
-                background: outcomeColor + "15",
-                border: `1px solid ${outcomeColor}30`,
-                borderRadius: 4,
-                padding: "3px 8px",
+                background: outcomeColor + "12",
+                border: `1px solid ${outcomeColor}28`,
+                borderRadius: 3,
+                padding: "2px 8px",
                 flexShrink: 0,
               }}
             >
@@ -263,44 +247,30 @@ export default function ArbitratorDecisionBanner({
 
         {/* Body */}
         <div className="arb-banner-body">
-          {/* Personal message */}
           <div
             className="arb-banner-msg"
-            style={{ color: "rgba(255,255,255,0.55)" }}
+            style={{ color: "rgba(255,255,255,0.50)" }}
           >
             {personalMsg}
           </div>
 
-          {/* Arbitrator's note — always shown */}
           {dec.override_reason && (
-            <div
-              className="arb-banner-note-block"
-              style={{ background: "rgba(255,255,255,0.03)" }}
-            >
-              <div
-                className="arb-banner-note-label"
-                style={{ color: "rgba(255,255,255,0.30)" }}
-              >
-                Arbitrator's Note
-              </div>
+            <div className="arb-banner-note-block">
+              <div className="arb-banner-note-label">Arbitrator's Note</div>
               <div className="arb-banner-note-text">
                 "{dec.override_reason}"
               </div>
             </div>
           )}
 
-          {/* Meta row */}
           <div className="arb-banner-meta">
-            <div className="arb-banner-meta-item">
-              <span style={{ opacity: 0.5 }}>By</span>
-              <span style={{ color: "rgba(255,255,255,0.45)" }}>
-                {truncateAddr(dec.arbitrator_address)}
-              </span>
-            </div>
+            <span className="arb-banner-meta-item">
+              By {truncateAddr(dec.arbitrator_address)}
+            </span>
             <span className="arb-banner-meta-sep">·</span>
-            <div className="arb-banner-meta-item">
+            <span className="arb-banner-meta-item">
               {fmtDate(dec.decided_at)}
-            </div>
+            </span>
             <span className="arb-banner-meta-sep">·</span>
             <span
               className={`arb-banner-ai-tag ${

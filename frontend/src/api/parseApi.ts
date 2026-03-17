@@ -1,7 +1,3 @@
-// ============================================================
-// api/parseApi.ts
-// ============================================================
-
 import axiosInstance from "@/lib/axiosSetup";
 
 export type AgreementType =
@@ -29,11 +25,11 @@ export interface ParsedAgreement {
   notes: string;
 }
 
-// ── V2 schema — freelance / trade / multi-phase (milestones) ──
 export interface Milestone {
   title: string;
-  percentage: number; // integer 0–100, all milestones must sum to 100
-  deadline: string; // ISO 8601 or ""
+  percentage: number;
+  deadline: string;
+  deadline_dt: string;
   condition: string;
 }
 

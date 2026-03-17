@@ -268,6 +268,7 @@ export const saveAgreementToDbThunk = createAsyncThunk(
         percentage: number;
         condition: string;
         deadline?: string;
+        deadline_dt: string;
         amountUsd: string;
         amountSats: number;
       }>;

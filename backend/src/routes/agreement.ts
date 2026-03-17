@@ -29,16 +29,14 @@ async function verifyStacksTx(txId: string): Promise<{
     if (!res.ok) return { status: "pending" };
     const data: any = await res.json();
     const s = data.tx_status;
-    if (s === "success") {
+    if (s === "success")
       return {
         status: "success",
         blockHeight: data.block_height,
         blockTime: data.block_time,
       };
-    }
-    if (s === "abort_by_response" || s === "abort_by_post_condition") {
+    if (s === "abort_by_response" || s === "abort_by_post_condition")
       return { status: "failed" };
-    }
     return { status: "pending" };
   } catch {
     return { status: "pending" };
@@ -161,18 +159,13 @@ function notifySSE(id: string, data: PresenceResponse) {
 
 router.post("/:id/partyb-wallet", async (req: Request, res: Response) => {
   const { walletAddress } = req.body as { walletAddress?: string };
-
   if (!walletAddress || typeof walletAddress !== "string") {
     return res.status(400).json({ error: "walletAddress is required" });
   }
-
   try {
     await Agreement.findOneAndUpdate(
       { agreementId: req.params.id },
       { partyBWallet: walletAddress, partyBApproved: true },
-    );
-    console.log(
-      `[partyb-wallet] ${req.params.id} → partyBWallet: ${walletAddress}`,
     );
     res.json({ ok: true });
   } catch (err) {
@@ -183,38 +176,30 @@ router.post("/:id/partyb-wallet", async (req: Request, res: Response) => {
 
 router.get("/", async (req: Request, res: Response) => {
   const { partyA, partyB } = req.query as { partyA?: string; partyB?: string };
-
-  if (!partyA && !partyB) {
+  if (!partyA && !partyB)
     return res
       .status(400)
       .json({ error: "partyA or partyB query param required" });
-  }
-
   try {
     const query: Record<string, unknown> = {};
-
-    if (partyA) {
+    if (partyA)
       query.partyA = {
         $regex: new RegExp(
           `^${partyA.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
           "i",
         ),
       };
-    }
-    if (partyB) {
+    if (partyB)
       query.partyB = {
         $regex: new RegExp(
           `^${partyB.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
           "i",
         ),
       };
-    }
-
     const agreements = await Agreement.find(query)
       .sort({ createdAt: -1 })
       .limit(50)
       .lean();
-
     res.json(agreements);
   } catch (err) {
     console.error("[GET /api/agreement]", err);
@@ -229,10 +214,8 @@ router.get("/:id/events", async (req: Request, res: Response) => {
   res.setHeader("Connection", "keep-alive");
   res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders();
-
   if (!sseClients.has(id)) sseClients.set(id, new Set());
   sseClients.get(id)!.add(res);
-
   try {
     const entry = await readPresence(id);
     res.write(
@@ -241,7 +224,6 @@ router.get("/:id/events", async (req: Request, res: Response) => {
   } catch (err) {
     console.error("[SSE] initial state error:", err);
   }
-
   const heartbeat = setInterval(() => {
     try {
       res.write(": heartbeat\n\n");
@@ -249,7 +231,6 @@ router.get("/:id/events", async (req: Request, res: Response) => {
       clearInterval(heartbeat);
     }
   }, 25_000);
-
   req.on("close", () => {
     clearInterval(heartbeat);
     sseClients.get(id)?.delete(res);
@@ -308,10 +289,12 @@ router.get("/:id/milestones", async (req: Request, res: Response) => {
   }
 });
 
-// ── POST /create ──────────────────────────────────────────────
-// FIX: Only write milestones if they don't exist yet (first save).
-// Never overwrite milestones that have been updated by /milestone endpoint.
-// Never emit funds:locked on re-saves (dashboard remounts).
+// ═══════════════════════════════════════════════════════════════
+// POST /create
+// FIX 1: Never overwrite milestones that already have real statuses.
+// FIX 2: Never emit funds:locked on re-saves (kills the "100%" bug).
+// FIX 3: Never downgrade fundState.
+// ═══════════════════════════════════════════════════════════════
 router.post("/:id/create", async (req: Request, res: Response) => {
   const {
     partyA,
@@ -359,16 +342,16 @@ router.post("/:id/create", async (req: Request, res: Response) => {
       disputedAt: null,
     }));
 
-    // Check if agreement already exists
     const existing = await Agreement.findOne({ agreementId: req.params.id });
     const isFirstSave = !existing;
 
-    // Only write milestones if:
-    // 1. This is the first save (no existing record), OR
-    // 2. All existing milestones are still "locked" (nothing has happened yet)
-    const existingMilestonesAllLocked =
+    // Only write milestones if it's the first save, or all are still locked
+    const allStillLocked =
       existing?.milestones?.every((m: any) => m.status === "locked") ?? true;
-    const shouldWriteMilestones = isFirstSave || existingMilestonesAllLocked;
+    const shouldWriteMilestones = isFirstSave || allStillLocked;
+
+    // Only set fundState if it's currently idle (never overwrite locked/released/etc)
+    const shouldSetFundState = !existing || existing.fundState === "idle";
 
     const updateDoc: Record<string, any> = {
       ...(partyA && { partyA }),
@@ -378,15 +361,11 @@ router.post("/:id/create", async (req: Request, res: Response) => {
       ...(totalAmountSats !== undefined && { totalAmountSats }),
       ...(terms && Object.keys(terms).length > 0 && { terms }),
       ...(onChainCreateTxId && { onChainCreateTxId }),
-      // Only write milestones on first save or if all still locked
       ...(shouldWriteMilestones &&
         normalizedMilestones.length > 0 && {
           milestones: normalizedMilestones,
         }),
-      // Only set fundState to "locked" if it's currently idle or doesn't exist
-      ...(!existing || existing.fundState === "idle"
-        ? { fundState: "locked", fundsLocked: true }
-        : {}),
+      ...(shouldSetFundState && { fundState: "locked", fundsLocked: true }),
     };
 
     const agreement = await Agreement.findOneAndUpdate(
@@ -396,13 +375,10 @@ router.post("/:id/create", async (req: Request, res: Response) => {
     );
 
     console.log(
-      `[agreement /create] ${isFirstSave ? "Created" : "Re-saved (no milestone overwrite)"} ${req.params.id} — ` +
-        `milestones written: ${shouldWriteMilestones}, ` +
-        `deadlines: [${normalizedMilestones.map((m) => m.deadline_dt || "—").join(", ")}]`,
+      `[/create] ${isFirstSave ? "CREATED" : "re-saved"} ${req.params.id} | milestones:${shouldWriteMilestones} fundState:${agreement.fundState}`,
     );
 
-    // Only emit funds:locked on the FIRST save
-    // Re-saves from dashboard remounts should NOT trigger this
+    // ONLY emit on first save — re-saves from dashboard remounts must NOT fire this
     if (isFirstSave) {
       emit(req.params.id, "funds:locked", {
         agreementId: req.params.id,
@@ -417,10 +393,18 @@ router.post("/:id/create", async (req: Request, res: Response) => {
   }
 });
 
-// ── POST /milestone ───────────────────────────────────────────
-// FIX: Don't re-verify the tx — the client (pollMilestoneTxThunk) already
-// polled until confirmed before calling this. Re-verification returns "pending"
-// due to testnet API lag and causes wrong status to be saved to DB.
+// ═══════════════════════════════════════════════════════════════
+// POST /milestone
+// THE CRITICAL FIX: Don't re-verify the tx. Trust the action.
+//
+// Why: The client (pollMilestoneTxThunk) polls every 5s until the
+// Stacks API returns "success". Only THEN does it call this endpoint.
+// But if we re-verify here, the testnet API often returns "pending"
+// due to propagation lag — so we'd save status="pending" to DB.
+// That's why milestones never show as "disputed" or "complete" in DB.
+//
+// Solution: Map action → status directly. Simple and correct.
+// ═══════════════════════════════════════════════════════════════
 router.post("/:id/milestone", async (req: Request, res: Response) => {
   const { milestoneIndex, action, txId, txUrl, callerAddress } = req.body as {
     milestoneIndex: number;
@@ -437,66 +421,51 @@ router.post("/:id/milestone", async (req: Request, res: Response) => {
   }
 
   try {
-    // ── KEY FIX: Trust the action, don't re-verify ──
-    // The client already ran pollMilestoneTxThunk which polled every 5s
-    // until the Stacks API returned "success". Re-verifying here returns
-    // "pending" due to API propagation lag, causing wrong status in DB.
-    const targetStatus = (() => {
-      if (action === "complete") return "complete";
-      if (action === "dispute") return "disputed";
-      if (action === "timeout") return "refunded";
-      return "pending";
-    })() as "complete" | "disputed" | "refunded" | "pending";
+    // Map action to DB status — NO re-verification
+    const targetStatus = (
+      action === "complete"
+        ? "complete"
+        : action === "dispute"
+          ? "disputed"
+          : action === "timeout"
+            ? "refunded"
+            : "pending"
+    ) as "complete" | "disputed" | "refunded" | "pending";
 
-    // Still verify to get block metadata (but don't use status for gating)
-    let blockHeight: number | undefined;
-    let blockTime: number | undefined;
-    try {
-      const txInfo = await verifyStacksTx(txId);
-      blockHeight = txInfo.blockHeight;
-      blockTime = txInfo.blockTime;
-      // Only override to failed if explicitly aborted
-      // (this case shouldn't happen since client waits for success)
-      if (txInfo.status === "failed") {
-        console.warn(
-          `[agreement /milestone] tx ${txId} is failed on-chain but client sent action=${action}`,
-        );
-      }
-    } catch {
-      // non-fatal — continue with targetStatus from action
-    }
+    console.log(
+      `[/milestone] ${req.params.id} ms[${milestoneIndex}] ${action} → ${targetStatus} | tx:${txId.slice(0, 12)}`,
+    );
 
     const agreement = await Agreement.findOne({ agreementId: req.params.id });
     if (!agreement) {
       return res
         .status(404)
-        .json({ error: "Agreement not found in DB. Call /create first." });
+        .json({ error: "Agreement not found. Call /create first." });
     }
 
     const ms = agreement.milestones.find(
       (m: { index: number }) => m.index === milestoneIndex,
     );
-
     if (!ms) {
       return res
         .status(404)
         .json({ error: `Milestone ${milestoneIndex} not found` });
     }
 
-    // Guard: don't re-dispute an already settled milestone
+    // Guard: don't dispute a settled milestone
     if (
       action === "dispute" &&
       (ms.status === "complete" || ms.status === "refunded")
     ) {
-      return res.status(409).json({
-        error: "Cannot dispute an already settled milestone",
-      });
+      return res
+        .status(409)
+        .json({ error: "Cannot dispute an already settled milestone" });
     }
 
-    // Don't re-update if already at target status (idempotent)
+    // Idempotent: skip if already correct
     if (ms.status === targetStatus) {
       console.log(
-        `[agreement /milestone] ms[${milestoneIndex}] already at ${targetStatus}, skipping`,
+        `[/milestone] ms[${milestoneIndex}] already ${targetStatus}, skipping`,
       );
       return res.json({
         ok: true,
@@ -506,28 +475,34 @@ router.post("/:id/milestone", async (req: Request, res: Response) => {
       });
     }
 
+    // Apply update
     ms.status = targetStatus;
     ms.txId = txId;
     ms.txUrl = txUrl ?? null;
     if (targetStatus === "complete") ms.completedAt = new Date();
     if (targetStatus === "disputed") ms.disputedAt = new Date();
 
-    // Only mark fundState as "released" if ALL milestones are settled
-    const allComplete = agreement.milestones.every((m: { status: string }) =>
+    // Recompute fundState from actual milestone data
+    const allSettled = agreement.milestones.every((m: any) =>
       ["complete", "refunded"].includes(m.status),
     );
-    if (allComplete) {
+    const anyUnsettled = agreement.milestones.some(
+      (m: any) => !["complete", "refunded"].includes(m.status),
+    );
+
+    if (allSettled) {
       agreement.fundState = "released";
-    }
-    // If a milestone is now disputed, mark agreement as active (not released)
-    // This prevents the stale "released" fundState bug
-    if (targetStatus === "disputed" && agreement.fundState === "released") {
+    } else if (anyUnsettled && agreement.fundState === "released") {
+      // Defensive: correct a stale "released"
       agreement.fundState = "locked";
     }
 
     await agreement.save();
+    console.log(
+      `[/milestone] ✓ ms[${milestoneIndex}]=${targetStatus} fundState=${agreement.fundState}`,
+    );
 
-    const milestonePayload = {
+    const payload = {
       agreementId: req.params.id,
       milestoneIndex,
       action,
@@ -535,19 +510,13 @@ router.post("/:id/milestone", async (req: Request, res: Response) => {
       txUrl,
       status: targetStatus,
       txVerified: "success",
-      blockHeight,
-      blockTime,
-      allComplete,
+      allComplete: allSettled,
       fundState: agreement.fundState,
       milestones: agreement.milestones,
     };
 
-    emit(req.params.id, "milestone:updated", milestonePayload);
-    console.log(
-      `[agreement /milestone] #${req.params.id} ms[${milestoneIndex}] → ${targetStatus} tx:${txId}`,
-    );
-
-    res.json({ ok: true, ...milestonePayload });
+    emit(req.params.id, "milestone:updated", payload);
+    res.json({ ok: true, ...payload });
   } catch (err) {
     console.error("[agreement POST /milestone]", err);
     res.status(500).json({ error: "Internal server error" });
@@ -561,24 +530,19 @@ router.post("/:id/status", async (req: Request, res: Response) => {
     amountLocked?: string;
     txId?: string;
   };
-
   if (fundsLocked !== true && fundState !== "locked") {
     return res
       .status(400)
       .json({ error: "fundsLocked must be true or fundState must be locked" });
   }
-
   try {
     const entry = await readPresence(req.params.id);
     if (!entry) return res.status(404).json({ error: "Agreement not found" });
-
     entry.fundsLocked = true;
     entry.fundState = "locked";
     if (amountLocked) entry.amountLocked = amountLocked;
     if (txId) entry.depositTxId = txId;
-
     await writePresence(req.params.id, entry);
-
     await Agreement.findOneAndUpdate(
       { agreementId: req.params.id },
       {
@@ -588,19 +552,13 @@ router.post("/:id/status", async (req: Request, res: Response) => {
         ...(txId && { depositTxId: txId }),
       },
     );
-
     const response = makeResponse(entry);
     notifySSE(req.params.id, response);
-
     emit(req.params.id, "funds:locked", {
       agreementId: req.params.id,
       amountLocked,
       txId,
     });
-
-    console.log(
-      `[agreement /status] Funds locked for ${req.params.id}, txId: ${txId}`,
-    );
     res.json(response);
   } catch (err) {
     console.error("[agreement POST /status]", err);
@@ -615,18 +573,13 @@ router.post("/:id", async (req: Request, res: Response) => {
     termsHash?: string;
     termsSnapshot?: Record<string, unknown>;
   };
-
-  if (!role || !["partyA", "partyB"].includes(role)) {
+  if (!role || !["partyA", "partyB"].includes(role))
     return res.status(400).json({ error: 'role must be "partyA" or "partyB"' });
-  }
-  if (!address || typeof address !== "string") {
+  if (!address || typeof address !== "string")
     return res.status(400).json({ error: "address is required" });
-  }
-
   try {
     let entry = await readPresence(req.params.id);
     if (!entry) entry = EMPTY_ENTRY();
-
     if (role === "partyA") {
       entry.partyA = address;
       entry.partyAJoinedAt = Date.now();
@@ -636,9 +589,7 @@ router.post("/:id", async (req: Request, res: Response) => {
       entry.partyB = address;
       entry.partyBJoinedAt = Date.now();
     }
-
     await writePresence(req.params.id, entry);
-
     await Agreement.findOneAndUpdate(
       { agreementId: req.params.id },
       {
@@ -648,7 +599,6 @@ router.post("/:id", async (req: Request, res: Response) => {
       },
       { upsert: true, new: true, setDefaultsOnInsert: true },
     );
-
     const response = makeResponse(entry);
     notifySSE(req.params.id, response);
     emit(req.params.id, "presence:updated", response);
@@ -664,30 +614,20 @@ router.post("/:id/approve", async (req: Request, res: Response) => {
     role: "partyA" | "partyB";
     address: string;
   };
-
-  if (!role || !["partyA", "partyB"].includes(role)) {
+  if (!role || !["partyA", "partyB"].includes(role))
     return res.status(400).json({ error: 'role must be "partyA" or "partyB"' });
-  }
-  if (!address || typeof address !== "string") {
+  if (!address || typeof address !== "string")
     return res.status(400).json({ error: "address is required" });
-  }
-
   try {
     const entry = await readPresence(req.params.id);
     if (!entry) return res.status(404).json({ error: "Agreement not found" });
-
-    if (role === "partyA" && entry.partyA && entry.partyA !== address) {
+    if (role === "partyA" && entry.partyA && entry.partyA !== address)
       return res.status(403).json({ error: "Address does not match Party A" });
-    }
-    if (role === "partyB" && entry.partyB && entry.partyB !== address) {
+    if (role === "partyB" && entry.partyB && entry.partyB !== address)
       return res.status(403).json({ error: "Address does not match Party B" });
-    }
-
     if (role === "partyA") entry.partyAApproved = true;
     else entry.partyBApproved = true;
-
     await writePresence(req.params.id, entry);
-
     await Agreement.findOneAndUpdate(
       { agreementId: req.params.id },
       {
@@ -695,7 +635,6 @@ router.post("/:id/approve", async (req: Request, res: Response) => {
         ...(role === "partyB" && { partyBApproved: true }),
       },
     );
-
     const response = makeResponse(entry);
     notifySSE(req.params.id, response);
     emit(req.params.id, "approval:updated", response);

@@ -21,11 +21,6 @@ export default function ArbitratorConnectWallet() {
       <div className="bg-glow" />
 
       <div className="connect-card fade-up">
-        <div className="badge">
-          <span className="badge-dot" />
-          Arbitration Portal
-        </div>
-
         <div className={`icon-ring ${connecting ? "icon-ring--active" : ""}`}>
           {connecting ? (
             <span className="spinner" />

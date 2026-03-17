@@ -6,7 +6,7 @@ import { explorerTxUrl, NETWORK_NAME } from "@/lib/stacksConfig";
 import { getConnectedUser, connectHiroWallet } from "@/lib/hiroWallet";
 import { getSocket, joinDisputeRoom, leaveDisputeRoom } from "@/lib/socket";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL;
 
 type VerdictOutcome = "release_to_receiver" | "refund_to_payer" | "split";
 type DisputeStatus =

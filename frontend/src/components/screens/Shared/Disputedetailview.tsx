@@ -14,7 +14,7 @@ import { useEffect, useState, useCallback } from "react";
 import { getSocket, joinDisputeRoom, leaveDisputeRoom } from "@/lib/socket";
 import ArbitratorDecisionBanner from "../Arbitrator/ArbitratorDecisionBanner";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL;
 
 interface AIVerdict {
   verdict: "release_to_receiver" | "refund_to_payer" | "split";

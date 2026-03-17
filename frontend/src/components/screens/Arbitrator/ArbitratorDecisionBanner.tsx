@@ -6,7 +6,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { getSocket, joinDisputeRoom } from "@/lib/socket";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL;
 
 interface ArbitratorDecision {
   outcome: "release_to_receiver" | "refund_to_payer" | "split";

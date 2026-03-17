@@ -1,10 +1,4 @@
-// ============================================================
-// api/approvalApi.ts
-// Handles per-party agreement approval.
-// Mirrors the pattern of PresenceaApi.ts.
-// ============================================================
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
+const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL;
 
 // ── Types ─────────────────────────────────────────────────────
 

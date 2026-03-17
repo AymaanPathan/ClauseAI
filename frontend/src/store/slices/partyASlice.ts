@@ -22,7 +22,7 @@ import { explorerTxUrl, NETWORK_NAME } from "@/lib/stacksConfig";
 import { registerParty } from "@/api/PresenceaApi";
 import { approveAgreement, getApprovalState } from "@/api/approvalApi";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL;
 
 // ── Tx polling helper ─────────────────────────────────────────
 const STACKS_API_BASE =

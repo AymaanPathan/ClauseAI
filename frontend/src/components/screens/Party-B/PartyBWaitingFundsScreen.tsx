@@ -20,7 +20,7 @@ import {
 } from "../../../store/slices/partyBSlice";
 import { subscribeApproval } from "@/api/approvalApi";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL;
 
 export default function PartyBWaitingFundsScreen() {
   const dispatch = useDispatch<AppDispatch>();

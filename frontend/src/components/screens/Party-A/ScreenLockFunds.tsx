@@ -14,7 +14,7 @@ import { isV2, ParsedAgreementV2 } from "@/api/parseApi";
 import { useDispatch, useSelector } from "react-redux";
 import { AppDispatch, RootState } from "@/store";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL;
 const BLOCK_PER_DAY = 144;
 const FALLBACK_ARBITRATOR = "ST000000000000000000002AMW42H";
 

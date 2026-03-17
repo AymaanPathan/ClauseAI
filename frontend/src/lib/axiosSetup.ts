@@ -7,7 +7,7 @@ import axios, { AxiosInstance, AxiosResponse, AxiosError } from "axios";
 
 // ── Base URL ──────────────────────────────────────────────────
 const BACKEND_URL =
-  process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000";
+  process.env.NEXT_PUBLIC_BACKEND_URL
 
 // ── Create instance ───────────────────────────────────────────
 const axiosInstance: AxiosInstance = axios.create({

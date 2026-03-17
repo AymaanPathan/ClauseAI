@@ -9,7 +9,7 @@ exports.joinDisputeRoom = joinDisputeRoom;
 exports.leaveDisputeRoom = leaveDisputeRoom;
 exports.disconnectSocket = disconnectSocket;
 const socket_io_client_1 = require("socket.io-client");
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL;
 let socket = null;
 function getSocket() {
     if (!socket) {

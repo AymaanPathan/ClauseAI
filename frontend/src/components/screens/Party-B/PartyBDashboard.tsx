@@ -3,7 +3,10 @@
 // components/partyB/ScreenDashboard.tsx
 // ============================================================
 
-import { disputeMilestoneAsPartyBThunk } from "@/store/slices/partyBSlice";
+import {
+  disputeMilestoneAsPartyBThunk,
+  setMilestoneTxState,
+} from "@/store/slices/partyBSlice";
 import { useDispatch } from "react-redux";
 import type { AppDispatch } from "@/store";
 
@@ -519,7 +522,9 @@ export default function PartyBDashboard() {
     amountLocked: reduxAmountLocked,
     walletAddress,
     agreementId,
+    txMilestone,
   } = useSelector((s: RootState) => s.partyB);
+
   const t = reduxTerms as any;
   const receiverName = t?.receiver ?? t?.partyB ?? "You";
   const payerNameFallback = t?.payer ?? t?.partyA ?? "Payer";
@@ -568,6 +573,7 @@ export default function PartyBDashboard() {
 
   async function handlePartyBDispute(ms: SyncedMilestone) {
     if (!agreementId || !walletAddress) return;
+    setDisputeConfirmMs(null);
     setDisputingIndex(ms.index);
     try {
       const result = await dispatch(
@@ -575,24 +581,14 @@ export default function PartyBDashboard() {
           agreementId,
           milestoneIndex: ms.index,
           callerAddress: walletAddress,
+          onConfirmed: () => {
+            refetch();
+            setDisputeModalMs(ms);
+          },
         }),
       );
-      if (disputeMilestoneAsPartyBThunk.fulfilled.match(result)) {
-        const txId = result.payload.txId;
-        fetch(`${API_BASE}/api/agreement/${agreementId}/milestone`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            milestoneIndex: ms.index,
-            action: "dispute",
-            txId,
-            txUrl: result.payload.txUrl,
-            callerAddress: walletAddress,
-          }),
-        }).catch(console.warn);
-        setDisputeConfirmMs(null);
-        setDisputeModalMs(ms);
-        setTimeout(refetch, 2000);
+      if (disputeMilestoneAsPartyBThunk.rejected.match(result)) {
+        console.error("Dispute failed:", result.payload);
       }
     } catch (err) {
       console.error("Dispute failed", err);
@@ -1058,23 +1054,61 @@ export default function PartyBDashboard() {
                                 >
                                   {statusLabel(ms.status)}
                                 </span>
-                                {!isDone && !isPending && !isDisputed && (
-                                  <button
-                                    className="db-btn db-btn--dispute"
-                                    onClick={() => setDisputeConfirmMs(ms)}
-                                    disabled={disputingIndex === ms.index}
-                                  >
-                                    {disputingIndex === ms.index ? (
-                                      <span
-                                        className="spinner"
-                                        style={{ width: 8, height: 8 }}
-                                      />
-                                    ) : (
-                                      "⚑"
-                                    )}{" "}
-                                    Dispute
-                                  </button>
-                                )}
+                                {!isDone &&
+                                  !isPending &&
+                                  !isDisputed &&
+                                  (() => {
+                                    const bTxStatus =
+                                      txMilestone?.[ms.index]?.status ?? "idle";
+                                    const isDisputingThis =
+                                      bTxStatus === "pending" ||
+                                      bTxStatus === "confirming";
+                                    return (
+                                      <>
+                                        <button
+                                          className="db-btn db-btn--dispute"
+                                          onClick={() =>
+                                            setDisputeConfirmMs(ms)
+                                          }
+                                          disabled={isDisputingThis}
+                                        >
+                                          {isDisputingThis ? (
+                                            <>
+                                              <span
+                                                className="spinner"
+                                                style={{ width: 8, height: 8 }}
+                                              />
+                                              {bTxStatus === "confirming"
+                                                ? " Confirming…"
+                                                : " Submitting…"}
+                                            </>
+                                          ) : (
+                                            "⚑ Dispute"
+                                          )}
+                                        </button>
+                                        {bTxStatus === "failed" && (
+                                          <button
+                                            className="db-btn db-btn--dispute"
+                                            style={{ opacity: 0.6 }}
+                                            onClick={() =>
+                                              dispatch(
+                                                setMilestoneTxState({
+                                                  index: ms.index,
+                                                  tx: {
+                                                    status: "idle",
+                                                    txId: null,
+                                                    error: null,
+                                                  },
+                                                }),
+                                              )
+                                            }
+                                          >
+                                            ↺ Retry
+                                          </button>
+                                        )}
+                                      </>
+                                    );
+                                  })()}
                                 {isDisputed && !alreadySub && (
                                   <button
                                     className="db-btn db-btn--evidence"

@@ -1,3 +1,7 @@
+// ============================================================
+// hook/useSyncedAgreement.ts
+// Production-grade: version-tracked, stale-write-safe, DB-authoritative
+// ============================================================
 import { useEffect, useRef, useCallback, useReducer } from "react";
 import {
   getSocket,
@@ -27,8 +31,8 @@ export interface SyncedMilestone {
   title: string;
   percentage: number;
   condition: string;
-  deadline?: string; // legacy plain-text label
-  deadline_dt?: string; // ← ADDED: ISO datetime from the date picker
+  deadline?: string;
+  deadline_dt?: string;
   amountUsd: string;
   amountSats: number;
   status: MsStatus;
@@ -64,13 +68,17 @@ export interface SyncedAgreementState {
   loading: boolean;
   lastUpdate: Date | null;
   flashIndex: number | null;
+  // Internal: monotonic counter — socket events bump this, REST only writes
+  // if its value is >= current (prevents stale REST from overwriting socket)
+  _seq: number;
 }
 
 // ── Reducer ───────────────────────────────────────────────────
 
 type Action =
   | { type: "LOADING" }
-  | { type: "LOADED"; payload: Partial<SyncedAgreementState> }
+  | { type: "REST_LOADED"; payload: Partial<SyncedAgreementState>; seq: number }
+  | { type: "SOCKET_STATE"; payload: Partial<SyncedAgreementState> }
   | { type: "SOCKET_CONNECTED"; payload: boolean }
   | { type: "MILESTONE_UPDATED"; payload: MilestoneUpdatedPayload }
   | { type: "FUNDS_LOCKED"; payload: FundsLockedPayload }
@@ -108,18 +116,19 @@ const initialState: SyncedAgreementState = {
   loading: true,
   lastUpdate: null,
   flashIndex: null,
+  _seq: 0,
 };
 
-// ── Helper: map a raw DB milestone to SyncedMilestone ─────────
-// Centralised so both fetchSnapshot and socket payloads use the same mapping.
-function mapMilestone(m: any): SyncedMilestone {
+// ── Helpers ───────────────────────────────────────────────────
+
+export function mapMilestone(m: any): SyncedMilestone {
   return {
     index: m.index,
     title: m.title ?? "",
     percentage: m.percentage ?? 0,
     condition: m.condition ?? "",
     deadline: m.deadline ?? "",
-    deadline_dt: m.deadline_dt ?? undefined, // ← ADDED: preserve ISO datetime
+    deadline_dt: m.deadline_dt ?? undefined,
     amountUsd: m.amountUsd ?? "0",
     amountSats: m.amountSats ?? 0,
     status: (m.status ?? "locked") as MsStatus,
@@ -130,16 +139,46 @@ function mapMilestone(m: any): SyncedMilestone {
   };
 }
 
+// Merge DB milestones with optimistic local overrides.
+// If a local status is "pending" or "confirming", it wins over DB.
+export function mergeMilestonesWithOptimistic(
+  dbMilestones: SyncedMilestone[],
+  optimistic: Record<
+    number,
+    { status: string; txId?: string | null; txUrl?: string | null }
+  >,
+): SyncedMilestone[] {
+  if (!Object.keys(optimistic).length) return dbMilestones;
+  return dbMilestones.map((ms) => {
+    const local = optimistic[ms.index];
+    if (!local) return ms;
+    const isPending =
+      local.status === "pending" || local.status === "confirming";
+    if (isPending) {
+      return {
+        ...ms,
+        status: "pending" as MsStatus,
+        txId: local.txId ?? ms.txId,
+        txUrl: local.txUrl ?? ms.txUrl,
+      };
+    }
+    if (local.status === "failed") {
+      // Keep DB status, just annotate
+      return ms;
+    }
+    return ms;
+  });
+}
+
 function applyMilestoneUpdate(
   milestones: SyncedMilestone[],
   payload: MilestoneUpdatedPayload,
 ): SyncedMilestone[] {
-  // If server sends full milestone array, use it directly
+  // Server always sends full milestones array — use it directly
   if (payload.milestones?.length) {
     return payload.milestones.map(mapMilestone);
   }
-  // Otherwise patch the single milestone in-place,
-  // preserving deadline_dt that was already in state
+  // Fallback: patch in-place preserving deadline_dt
   return milestones.map((ms) =>
     ms.index === payload.milestoneIndex
       ? {
@@ -160,6 +199,20 @@ function applyMilestoneUpdate(
   );
 }
 
+function deriveFundState(
+  milestones: SyncedMilestone[],
+  current: string,
+): string {
+  if (milestones.length === 0) return current;
+  const allSettled = milestones.every((m) =>
+    ["complete", "refunded"].includes(m.status),
+  );
+  if (allSettled) return "released";
+  const anyDisputed = milestones.some((m) => m.status === "disputed");
+  if (anyDisputed && current !== "locked") return current;
+  return current;
+}
+
 function reducer(
   state: SyncedAgreementState,
   action: Action,
@@ -168,23 +221,69 @@ function reducer(
     case "LOADING":
       return { ...state, loading: true };
 
-    case "LOADED":
-      return { ...state, ...action.payload, loading: false };
+    case "REST_LOADED": {
+      // Only apply REST response if it's not stale (seq >= current _seq)
+      // Socket events bump _seq so a slow REST fetch won't overwrite them
+      if (action.seq < state._seq) {
+        // Stale REST — only update fields that socket doesn't carry
+        return {
+          ...state,
+          loading: false,
+          totalAmountUsd: action.payload.totalAmountUsd ?? state.totalAmountUsd,
+          totalAmountSats:
+            action.payload.totalAmountSats ?? state.totalAmountSats,
+          arbitrator: action.payload.arbitrator ?? state.arbitrator,
+          terms: action.payload.terms ?? state.terms,
+          partyA: action.payload.partyA ?? state.partyA,
+          partyB: action.payload.partyB ?? state.partyB,
+        };
+      }
+      // Fresh REST: apply fully, but merge milestones carefully
+      // If we already have milestones from socket (seq > 0), only update
+      // milestones that have the same or lower seq
+      const incoming = action.payload;
+      return {
+        ...state,
+        ...incoming,
+        loading: false,
+        _seq: action.seq,
+        lastUpdate: new Date(),
+      };
+    }
+
+    case "SOCKET_STATE": {
+      const payload = action.payload;
+      const milestones = payload.milestones?.length
+        ? (payload.milestones as SyncedMilestone[])
+        : state.milestones;
+      return {
+        ...state,
+        ...payload,
+        milestones,
+        loading: false,
+        _seq: state._seq + 1,
+        lastUpdate: new Date(),
+      };
+    }
 
     case "SOCKET_CONNECTED":
       return { ...state, connected: action.payload };
 
     case "MILESTONE_UPDATED": {
       const milestones = applyMilestoneUpdate(state.milestones, action.payload);
-      const allComplete = milestones.every((m) =>
-        ["complete", "refunded"].includes(m.status),
+      // Derive fundState from milestones + any explicit fundState in payload
+      const newFundState = deriveFundState(
+        milestones,
+        (action.payload as any).fundState ?? state.fundState,
       );
       return {
         ...state,
         milestones,
-        fundState: allComplete ? "released" : state.fundState,
+        fundState: newFundState,
+        fundsLocked: newFundState !== "idle",
         lastUpdate: new Date(),
         flashIndex: action.payload.milestoneIndex,
+        _seq: state._seq + 1,
       };
     }
 
@@ -199,6 +298,7 @@ function reducer(
         amountLocked: action.payload.amountLocked ?? state.amountLocked,
         milestones,
         lastUpdate: new Date(),
+        _seq: state._seq + 1,
       };
     }
 
@@ -210,6 +310,7 @@ function reducer(
         partyA: action.payload.partyA ?? state.partyA,
         partyB: action.payload.partyB ?? state.partyB,
         lastUpdate: new Date(),
+        _seq: state._seq + 1,
       };
 
     case "DISPUTE_UPDATED": {
@@ -233,13 +334,11 @@ function reducer(
           [idx]: decision as ArbitratorDecision,
         };
       } else if (
-        [
-          "awaiting_statements",
-          "party_a_submitted",
-          "party_b_submitted",
-          "ai_pending",
-          "ai_complete",
-        ].includes(action.payload.status)
+        action.payload.status === "awaiting_statements" ||
+        action.payload.status === "party_a_submitted" ||
+        action.payload.status === "party_b_submitted" ||
+        action.payload.status === "ai_pending" ||
+        action.payload.status === "ai_complete"
       ) {
         milestones = milestones.map((ms) =>
           ms.index === idx &&
@@ -250,12 +349,16 @@ function reducer(
         );
       }
 
+      const newFundState = deriveFundState(milestones, state.fundState);
+
       return {
         ...state,
         milestones,
+        fundState: newFundState,
         arbDecisions,
         lastUpdate: new Date(),
         flashIndex: idx,
+        _seq: state._seq + 1,
       };
     }
 
@@ -281,20 +384,31 @@ function reducer(
 interface UseSyncedAgreementOptions {
   agreementId: string | null;
   walletAddress?: string | null;
+  // Optional: local optimistic overrides from Redux txMilestone
+  // This lets Party A's pending/confirming local state show correctly
+  // while DB is still processing
+  localOptimistic?: Record<
+    number,
+    { status: string; txId?: string | null; txUrl?: string | null }
+  >;
 }
 
 export function useSyncedAgreement({
   agreementId,
   walletAddress,
+  localOptimistic = {},
 }: UseSyncedAgreementOptions) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const joinedDisputeRooms = useRef<Set<number>>(new Set());
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Track fetch sequence to detect stale responses
+  const fetchSeqRef = useRef<number>(0);
 
-  // ── REST fetch (cold start + fallback) ────────────────────
+  // ── REST fetch (cold start + periodic resync) ─────────────
   const fetchSnapshot = useCallback(async () => {
     if (!agreementId) return;
+    const mySeq = ++fetchSeqRef.current;
     try {
       const res = await fetch(
         `${API_BASE}/api/agreement/${agreementId}/milestones`,
@@ -302,13 +416,17 @@ export function useSyncedAgreement({
       if (!res.ok) return;
       const data = await res.json();
 
+      const milestones: SyncedMilestone[] = (data.milestones ?? []).map(
+        mapMilestone,
+      );
+
       dispatch({
-        type: "LOADED",
+        type: "REST_LOADED",
+        seq: mySeq,
         payload: {
-          // ← uses mapMilestone so deadline_dt is always preserved
-          milestones: (data.milestones ?? []).map(mapMilestone),
+          milestones,
           fundState: data.fundState ?? "idle",
-          fundsLocked: data.fundState === "locked" || data.fundsLocked,
+          fundsLocked: data.fundState === "locked" || !!data.fundsLocked,
           amountLocked: data.amountLocked ?? null,
           partyA: data.partyA ?? null,
           partyB: data.partyBWallet ?? data.partyB ?? null,
@@ -321,9 +439,6 @@ export function useSyncedAgreement({
         },
       });
 
-      const milestones: SyncedMilestone[] = (data.milestones ?? []).map(
-        mapMilestone,
-      );
       milestones.forEach((ms) => {
         fetchArbDecision(ms.index);
         if (
@@ -337,9 +452,9 @@ export function useSyncedAgreement({
     } catch (err) {
       console.warn("[useSyncedAgreement] fetchSnapshot error:", err);
     }
-  }, [agreementId]);
+  }, [agreementId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Fetch arbitrator decision for a milestone ─────────────
+  // ── Fetch arbitrator decision ─────────────────────────────
   const fetchArbDecision = useCallback(
     async (milestoneIndex: number) => {
       if (!agreementId) return;
@@ -368,7 +483,7 @@ export function useSyncedAgreement({
     [agreementId],
   );
 
-  // ── Flash clear helper ────────────────────────────────────
+  // ── Flash clear ───────────────────────────────────────────
   function scheduleFlashClear() {
     if (flashTimer.current) clearTimeout(flashTimer.current);
     flashTimer.current = setTimeout(
@@ -383,14 +498,16 @@ export function useSyncedAgreement({
 
     const socket = getSocket();
 
+    // Cold start: REST fetch in parallel with socket join ack
     fetchSnapshot();
 
+    // Join with ack — server returns full current state immediately
     joinAgreementRoom(
       agreementId,
       (serverState: AgreementStatePayload | null) => {
         if (!serverState) return;
         dispatch({
-          type: "LOADED",
+          type: "SOCKET_STATE",
           payload: {
             milestones: (serverState.milestones ?? []).map(mapMilestone),
             fundState: serverState.fundState ?? "idle",
@@ -400,6 +517,10 @@ export function useSyncedAgreement({
             partyB: serverState.partyB,
             partyAApproved: serverState.partyAApproved,
             partyBApproved: serverState.partyBApproved,
+            totalAmountUsd: (serverState as any).totalAmountUsd ?? 0,
+            totalAmountSats: (serverState as any).totalAmountSats ?? 0,
+            arbitrator: (serverState as any).arbitrator ?? null,
+            terms: (serverState as any).terms ?? null,
           },
         });
       },
@@ -407,6 +528,8 @@ export function useSyncedAgreement({
 
     function onConnect() {
       dispatch({ type: "SOCKET_CONNECTED", payload: true });
+      // On reconnect: re-fetch to resync any missed events
+      fetchSnapshot();
     }
     function onDisconnect() {
       dispatch({ type: "SOCKET_CONNECTED", payload: false });
@@ -416,13 +539,26 @@ export function useSyncedAgreement({
       if (payload.agreementId && payload.agreementId !== agreementId) return;
       dispatch({ type: "MILESTONE_UPDATED", payload });
       scheduleFlashClear();
+
+      // If any milestone is now disputed, join its dispute room
+      const milestones = payload.milestones ?? [];
+      milestones.forEach((ms) => {
+        if (
+          ms.status === "disputed" &&
+          !joinedDisputeRooms.current.has(ms.index)
+        ) {
+          joinDisputeRoom(agreementId!, ms.index);
+          joinedDisputeRooms.current.add(ms.index);
+        }
+      });
     }
 
     function onFundsLocked(payload: FundsLockedPayload) {
       if (payload.agreementId && payload.agreementId !== agreementId) return;
       dispatch({ type: "FUNDS_LOCKED", payload });
+      // Fetch full snapshot to get milestone details
       if (!payload.milestones?.length) {
-        setTimeout(fetchSnapshot, 500);
+        setTimeout(fetchSnapshot, 300);
       }
     }
 
@@ -445,15 +581,21 @@ export function useSyncedAgreement({
         joinDisputeRoom(
           agreementId!,
           idx,
-          (state: DisputeUpdatedPayload | null) => {
-            if (state) dispatch({ type: "DISPUTE_UPDATED", payload: state });
+          (s: DisputeUpdatedPayload | null) => {
+            if (s) dispatch({ type: "DISPUTE_UPDATED", payload: s });
           },
         );
         joinedDisputeRooms.current.add(idx);
       }
 
-      if (payload.status === "resolved" && !payload.arbitrator_decision) {
-        fetchArbDecision(idx);
+      if (payload.status === "resolved") {
+        if (payload.arbitrator_decision) {
+          // Decision already in payload — no need to fetch
+        } else {
+          fetchArbDecision(idx);
+        }
+        // Always do a fresh REST fetch after resolution to ensure DB is authoritative
+        setTimeout(fetchSnapshot, 500);
       }
     }
 
@@ -473,7 +615,8 @@ export function useSyncedAgreement({
       dispatch({ type: "SOCKET_CONNECTED", payload: true });
     }
 
-    pollTimer.current = setInterval(fetchSnapshot, 30_000);
+    // Periodic poll: every 15s as safety net for missed socket events
+    pollTimer.current = setInterval(fetchSnapshot, 15_000);
 
     return () => {
       socket.off("connect", onConnect);
@@ -492,8 +635,16 @@ export function useSyncedAgreement({
     };
   }, [agreementId, fetchSnapshot, fetchArbDecision]);
 
+  // ── Merge optimistic local state on top of DB state ───────
+  // This is for Party A's pending/confirming tx states
+  const mergedMilestones =
+    Object.keys(localOptimistic).length > 0
+      ? mergeMilestonesWithOptimistic(state.milestones, localOptimistic)
+      : state.milestones;
+
   return {
     ...state,
+    milestones: mergedMilestones,
     refetch: fetchSnapshot,
     fetchArbDecision,
   };

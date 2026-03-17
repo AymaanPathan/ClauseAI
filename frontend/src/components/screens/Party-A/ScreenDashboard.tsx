@@ -1,6 +1,9 @@
 "use client";
 // ============================================================
 // components/partyA/ScreenDashboard.tsx
+// KEY CHANGE: uses useSyncedAgreement as source of truth for milestone
+// status. Local Redux txMilestone is used ONLY for optimistic pending/
+// confirming overlay. This makes Party A and Party B see identical state.
 // ============================================================
 
 import { useEffect, useCallback, useState } from "react";
@@ -21,9 +24,12 @@ import {
 import { isV2, ParsedAgreementV2 } from "@/api/parseApi";
 import { usdToSatsPreview } from "@/lib/contractCalls";
 import { formatSats, explorerTxUrl } from "@/lib/stacksConfig";
-import { getAllMilestones, MILESTONE_STATUS } from "@/lib/contractReads";
 import DisputeSubmitScreen from "@/components/screens/Shared/DisputeSubmitScreen";
 import { getSocket, joinAgreementRoom, joinDisputeRoom } from "@/lib/socket";
+import {
+  useSyncedAgreement,
+  type SyncedMilestone,
+} from "@/hook/useSyncedAgreement";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -35,13 +41,16 @@ type MilestoneUIStatus =
   | "refunded"
   | "failed";
 
+// ── Milestone definition (from Redux terms) ───────────────────
+// We keep this only for terms-derived metadata (title, condition, deadline_dt)
+// The actual STATUS comes from useSyncedAgreement (DB)
 interface MilestoneUI {
   index: number;
   title: string;
   percentage: number;
   condition: string;
-  deadline_dt: string | null; // ISO datetime from terms.milestones
-  deadline: string; // legacy string label
+  deadline_dt: string | null;
+  deadline: string;
   amountUsd: string;
   amountSats: number;
 }
@@ -54,21 +63,6 @@ interface ArbitratorDecision {
   arbitrator_address: string;
 }
 type ArbDecisionMap = Record<number, ArbitratorDecision | null>;
-
-function onChainStatusToUI(s: number): MilestoneUIStatus {
-  switch (s) {
-    case MILESTONE_STATUS.COMPLETE:
-      return "complete";
-    case MILESTONE_STATUS.REFUNDED:
-      return "refunded";
-    case MILESTONE_STATUS.DISPUTED:
-      return "disputed";
-    case MILESTONE_STATUS.ACTIVE:
-      return "locked";
-    default:
-      return "locked";
-  }
-}
 
 function statusMeta(s: MilestoneUIStatus) {
   switch (s) {
@@ -129,8 +123,6 @@ const MS_COLORS = [
 function truncateAddr(addr: string) {
   return addr ? `${addr.slice(0, 8)}…${addr.slice(-5)}` : "";
 }
-
-/** Format ISO datetime into a compact human label */
 function fmtDeadline(iso: string | null | undefined): string {
   if (!iso) return "";
   try {
@@ -147,7 +139,6 @@ function fmtDeadline(iso: string | null | undefined): string {
     return "";
   }
 }
-
 function fmtDate(iso?: string): string {
   if (!iso) return "";
   return new Date(iso).toLocaleString(undefined, {
@@ -157,8 +148,6 @@ function fmtDate(iso?: string): string {
     minute: "2-digit",
   });
 }
-
-/** Returns true if the deadline has passed */
 function isOverdue(iso: string | null | undefined): boolean {
   if (!iso) return false;
   try {
@@ -168,7 +157,48 @@ function isOverdue(iso: string | null | undefined): boolean {
   }
 }
 
-// ── Arbitrator Decision Banner ────────────────────────────────
+function DeadlineBadge({ iso }: { iso: string | null | undefined }) {
+  if (!iso) return null;
+  const label = fmtDeadline(iso);
+  if (!label) return null;
+  const overdue = isOverdue(iso);
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        fontSize: 9,
+        fontFamily: "'DM Mono',monospace",
+        fontWeight: 600,
+        color: overdue ? "#f87171" : "rgba(255,255,255,0.35)",
+        background: overdue
+          ? "rgba(248,113,113,0.07)"
+          : "rgba(255,255,255,0.04)",
+        border: `1px solid ${overdue ? "rgba(248,113,113,0.20)" : "rgba(255,255,255,0.08)"}`,
+        borderRadius: 4,
+        padding: "2px 8px",
+        letterSpacing: "0.02em",
+      }}
+    >
+      <svg
+        width="8"
+        height="8"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      >
+        <circle cx="12" cy="12" r="10" />
+        <polyline points="12 6 12 12 16 14" />
+      </svg>
+      {overdue ? "Overdue · " : ""}
+      {label}
+    </span>
+  );
+}
+
 function ArbitratorDecisionBanner({
   decision,
   viewerRole,
@@ -182,14 +212,8 @@ function ArbitratorDecisionBanner({
     ? "Funds Released to Receiver"
     : "Funds Refunded to Payer";
   const personalMsg = isRelease
-    ? viewerRole === "A"
-      ? "The arbitrator ruled in favour of the Receiver. Funds were released to Party B."
-      : "The arbitrator ruled in your favour. Funds were released to your wallet."
-    : viewerRole === "A"
-      ? "The arbitrator ruled in your favour. Funds were returned to your wallet."
-      : "The arbitrator ruled in favour of the Payer. Funds were refunded.";
-  const isBeneficiary =
-    (viewerRole === "B" && isRelease) || (viewerRole === "A" && !isRelease);
+    ? "The arbitrator ruled in favour of the Receiver. Funds were released to Party B."
+    : "The arbitrator ruled in your favour. Funds were returned to your wallet.";
 
   return (
     <div
@@ -212,7 +236,7 @@ function ArbitratorDecisionBanner({
         }}
       >
         <span style={{ fontSize: 13 }}>⚖</span>
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ flex: 1 }}>
           <div
             style={{
               fontSize: 9,
@@ -237,24 +261,6 @@ function ArbitratorDecisionBanner({
             {outcomeLabel}
           </div>
         </div>
-        {isBeneficiary && (
-          <span
-            style={{
-              fontSize: 9,
-              fontFamily: "'DM Mono',monospace",
-              fontWeight: 700,
-              textTransform: "uppercase",
-              letterSpacing: "0.06em",
-              color: outcomeColor,
-              background: `${outcomeColor}15`,
-              border: `1px solid ${outcomeColor}30`,
-              borderRadius: 3,
-              padding: "2px 7px",
-            }}
-          >
-            You
-          </span>
-        )}
       </div>
       <div
         style={{
@@ -365,56 +371,13 @@ function ArbitratorDecisionBanner({
   );
 }
 
-// ── Deadline badge ────────────────────────────────────────────
-function DeadlineBadge({ iso }: { iso: string | null | undefined }) {
-  if (!iso) return null;
-  const label = fmtDeadline(iso);
-  if (!label) return null;
-  const overdue = isOverdue(iso);
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 5,
-        fontSize: 9,
-        fontFamily: "'DM Mono',monospace",
-        fontWeight: 600,
-        color: overdue ? "#f87171" : "rgba(255,255,255,0.35)",
-        background: overdue
-          ? "rgba(248,113,113,0.07)"
-          : "rgba(255,255,255,0.04)",
-        border: `1px solid ${overdue ? "rgba(248,113,113,0.20)" : "rgba(255,255,255,0.08)"}`,
-        borderRadius: 4,
-        padding: "2px 8px",
-        letterSpacing: "0.02em",
-      }}
-    >
-      <svg
-        width="8"
-        height="8"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-      >
-        <circle cx="12" cy="12" r="10" />
-        <polyline points="12 6 12 12 16 14" />
-      </svg>
-      {overdue ? "Overdue · " : ""}
-      {label}
-    </span>
-  );
-}
-
 export default function ScreenDashboard() {
   const dispatch = useDispatch<AppDispatch>();
   const {
     editedTerms,
     agreementId,
     walletAddress,
-    amountLocked,
+    amountLocked: reduxAmountLocked,
     txMilestone,
     milestoneOnChainStatuses,
   } = useSelector((s: RootState) => s.partyA);
@@ -423,33 +386,30 @@ export default function ScreenDashboard() {
   const v2 = isV2(editedTerms)
     ? (editedTerms as unknown as ParsedAgreementV2)
     : null;
-  const payerName = t?.payer ?? t?.partyA ?? "Payer";
-  const receiverName = t?.receiver ?? t?.partyB ?? "Receiver";
   const totalAmountUsd = parseFloat(
-    String(t?.total_usd ?? t?.amount_usd ?? amountLocked ?? "0"),
+    String(t?.total_usd ?? t?.amount_usd ?? reduxAmountLocked ?? "0"),
   );
   const totalSats = usdToSatsPreview(totalAmountUsd);
-  const arbitrator = t?.arbitrator ?? "TBD";
+  const payerName = t?.payer ?? t?.partyA ?? "Payer";
+  const receiverName = t?.receiver ?? t?.partyB ?? "Receiver";
+  const arbitratorTerms = t?.arbitrator ?? "TBD";
 
-  // ── KEY FIX: merge deadline_dt from terms.milestones into milestone objects ──
-  // The top-level milestones array in MongoDB has deadline_dt: null because
-  // deadline_dt is only saved in terms.milestones[]. Read from there as source of truth.
+  // ── Terms-level milestone metadata (titles, conditions, deadlines) ──
+  // Status does NOT come from here — it comes from useSyncedAgreement below
   const termsMillestones: any[] = t?.milestones ?? [];
-
-  const milestones: MilestoneUI[] = v2?.milestones?.map((ms, i) => {
-    // Prefer the deadline_dt from terms.milestones (where it's actually saved by the picker)
-    const termsMsMatch = termsMillestones.find(
+  const milestonesMeta: MilestoneUI[] = v2?.milestones?.map((ms, i) => {
+    const tmMatch = termsMillestones.find(
       (tm: any) => tm.title === ms.title || tm.index === i,
     );
     const deadline_dt: string | null =
-      ms.deadline_dt ?? termsMsMatch?.deadline_dt ?? null;
+      ms.deadline_dt ?? tmMatch?.deadline_dt ?? null;
     return {
       index: i,
       title: ms.title || `Milestone ${i + 1}`,
       percentage: ms.percentage,
       condition: ms.condition ?? "",
       deadline_dt,
-      deadline: ms.deadline ?? termsMsMatch?.deadline ?? "",
+      deadline: ms.deadline ?? tmMatch?.deadline ?? "",
       amountUsd: (((totalAmountUsd || 0) * ms.percentage) / 100).toFixed(2),
       amountSats: Math.round((totalSats * ms.percentage) / 100),
     };
@@ -466,6 +426,86 @@ export default function ScreenDashboard() {
     },
   ];
 
+  // ── Build local optimistic map for useSyncedAgreement ─────
+  // txMilestone has pending/confirming states that should overlay DB status
+  const localOptimistic: Record<
+    number,
+    { status: string; txId?: string | null; txUrl?: string | null }
+  > = {};
+  if (txMilestone) {
+    Object.entries(txMilestone).forEach(([idx, tx]) => {
+      if (
+        tx.status === "pending" ||
+        tx.status === "confirming" ||
+        tx.status === "failed"
+      ) {
+        localOptimistic[parseInt(idx)] = {
+          status: tx.status,
+          txId: tx.txId,
+          txUrl: tx.txUrl,
+        };
+      }
+    });
+  }
+
+  // ── useSyncedAgreement: DB is source of truth ─────────────
+  const {
+    milestones: dbMilestones,
+    fundState,
+    fundsLocked,
+    amountLocked,
+    partyA: dbPartyA,
+    arbDecisions: dbArbDecisions,
+    totalAmountUsd: dbTotalUsd,
+    totalAmountSats: dbTotalSats,
+    arbitrator: dbArbitrator,
+    terms: dbTerms,
+    connected,
+    loading,
+    lastUpdate,
+    flashIndex,
+    refetch,
+  } = useSyncedAgreement({ agreementId, walletAddress, localOptimistic });
+
+  // ── getStatus: DB-first, optimistic overlay for pending/confirming ──
+  // This is THE authoritative status function. Both Party A and B now
+  // derive status from the same DB-backed source.
+  const getStatus = useCallback(
+    (index: number): MilestoneUIStatus => {
+      // 1. Local optimistic: pending/confirming overrides DB
+      const tx = txMilestone?.[index];
+      if (tx?.status === "pending" || tx?.status === "confirming")
+        return "pending";
+      if (tx?.status === "failed") return "failed";
+
+      // 2. DB status from useSyncedAgreement (via socket + REST)
+      const dbMs = dbMilestones.find((m) => m.index === index);
+      if (dbMs) return dbMs.status as MilestoneUIStatus;
+
+      // 3. Last resort: on-chain read (only used before DB has synced)
+      const onChain = milestoneOnChainStatuses?.[index];
+      if (onChain !== undefined) {
+        // MILESTONE_STATUS: 1=ACTIVE, 2=COMPLETE, 3=DISPUTED, 4=REFUNDED
+        switch (onChain) {
+          case 2:
+            return "complete";
+          case 3:
+            return "disputed";
+          case 4:
+            return "refunded";
+          default:
+            return "locked";
+        }
+      }
+
+      return "locked";
+    },
+    [txMilestone, dbMilestones, milestoneOnChainStatuses],
+  );
+
+  // ── arbDecisions: use DB arbDecisions ─────────────────────
+  const arbDecisions = dbArbDecisions;
+
   const [evidenceModalMs, setEvidenceModalMs] = useState<MilestoneUI | null>(
     null,
   );
@@ -474,7 +514,6 @@ export default function ScreenDashboard() {
   >({});
   const [savedToDb, setSavedToDb] = useState(false);
   const [lastRefresh, setLastRefresh] = useState(0);
-  const [arbDecisions, setArbDecisions] = useState<ArbDecisionMap>({});
   const [disputeModal, setDisputeModal] = useState<{
     open: boolean;
     ms: MilestoneUI | null;
@@ -488,35 +527,81 @@ export default function ScreenDashboard() {
     setDisputeModal({ open: false, ms: null, step: "confirm" });
   }
 
-  const fetchArbDecision = useCallback(
-    async (milestoneIndex: number) => {
-      if (!agreementId) return;
-      try {
-        const res = await fetch(
-          `${API_BASE}/api/arbitrate/${agreementId}/${milestoneIndex}`,
-        );
-        if (!res.ok) return;
-        const json = await res.json();
-        if (
-          json.dispute?.status === "resolved" &&
-          json.dispute?.arbitrator_decision
-        ) {
-          setArbDecisions((prev) => ({
-            ...prev,
-            [milestoneIndex]: json.dispute.arbitrator_decision,
-          }));
-        }
-      } catch {
-        /* ignore */
-      }
-    },
-    [agreementId],
-  );
+  // ── Save to DB on mount ───────────────────────────────────
+  useEffect(() => {
+    if (!agreementId || savedToDb || milestonesMeta.length === 0) return;
+    setSavedToDb(true);
+    dispatch(
+      saveAgreementToDbThunk({
+        agreementId,
+        partyA: walletAddress ?? "",
+        partyB: t?.receiver ?? t?.partyB ?? "",
+        arbitrator: t?.arbitrator ?? "",
+        totalAmountUsd,
+        totalAmountSats: totalSats,
+        terms: t ?? {},
+        milestones: milestonesMeta.map((ms) => ({
+          index: ms.index,
+          title: ms.title,
+          percentage: ms.percentage,
+          condition: ms.condition,
+          deadline: ms.deadline || undefined,
+          deadline_dt: ms.deadline_dt || "",
+          amountUsd: ms.amountUsd,
+          amountSats: ms.amountSats,
+        })),
+      }),
+    );
+  }, [agreementId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const checkAllArbDecisions = useCallback(async () => {
-    if (!agreementId || milestones.length === 0) return;
-    await Promise.all(milestones.map((ms) => fetchArbDecision(ms.index)));
-  }, [agreementId, milestones.length, fetchArbDecision]);
+  // ── Socket: dispute:updated ───────────────────────────────
+  // useSyncedAgreement already handles this. We only need to handle
+  // arbDecisions that come from dispute:updated here.
+  useEffect(() => {
+    if (!agreementId) return;
+    const socket = getSocket();
+    joinAgreementRoom(agreementId);
+
+    function onDisputeUpdated(payload: any) {
+      if (payload.agreement_id && payload.agreement_id !== agreementId) return;
+      setLastRefresh(Date.now());
+      const idx = payload.milestone_index ?? payload.milestoneIndex;
+      if (idx !== undefined) {
+        joinDisputeRoom(agreementId!, idx);
+      }
+    }
+    socket.on("dispute:updated", onDisputeUpdated);
+    return () => {
+      socket.off("dispute:updated", onDisputeUpdated);
+    };
+  }, [agreementId]);
+
+  // ── Poll pending txs ──────────────────────────────────────
+  useEffect(() => {
+    if (!txMilestone) return;
+    Object.entries(txMilestone).forEach(([idxStr, tx]) => {
+      if ((tx.status === "pending" || tx.status === "confirming") && tx.txId) {
+        dispatch(
+          pollMilestoneTxThunk({
+            milestoneIndex: parseInt(idxStr),
+            txId: tx.txId,
+            agreementId: agreementId ?? undefined,
+            action: "complete",
+            callerAddress: walletAddress ?? undefined,
+            onConfirmed: () => {
+              setLastRefresh(Date.now());
+              refetch();
+            },
+          }),
+        );
+      }
+    });
+  }, [txMilestone]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Refetch when lastRefresh changes ─────────────────────
+  useEffect(() => {
+    if (lastRefresh > 0) refetch();
+  }, [lastRefresh]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleDisputeConfirm(ms: MilestoneUI) {
     if (!agreementId) return;
@@ -541,116 +626,6 @@ export default function ScreenDashboard() {
     }
   }
 
-  useEffect(() => {
-    if (!agreementId) return;
-    const socket = getSocket();
-    joinAgreementRoom(agreementId);
-    function onDisputeUpdated(payload: any) {
-      if (payload.agreement_id && payload.agreement_id !== agreementId) return;
-      setLastRefresh(Date.now());
-      const idx = payload.milestone_index ?? payload.milestoneIndex;
-      if (idx !== undefined) {
-        joinDisputeRoom(agreementId!, idx);
-        if (payload.status === "resolved" && payload.arbitrator_decision) {
-          setArbDecisions((prev) => ({
-            ...prev,
-            [idx]: payload.arbitrator_decision,
-          }));
-        } else {
-          fetchArbDecision(idx);
-        }
-      }
-    }
-    socket.on("dispute:updated", onDisputeUpdated);
-    return () => {
-      socket.off("dispute:updated", onDisputeUpdated);
-    };
-  }, [agreementId, fetchArbDecision]);
-
-  // ── KEY FIX: include deadline_dt in saveAgreementToDbThunk payload ──
-  useEffect(() => {
-    if (!agreementId || savedToDb || milestones.length === 0) return;
-    setSavedToDb(true);
-    dispatch(
-      saveAgreementToDbThunk({
-        agreementId,
-        partyA: walletAddress ?? "",
-        partyB: t?.receiver ?? t?.partyB ?? "",
-        arbitrator: t?.arbitrator ?? "",
-        totalAmountUsd,
-        totalAmountSats: totalSats,
-        terms: t ?? {},
-        milestones: milestones.map((ms) => ({
-          index: ms.index,
-          title: ms.title,
-          percentage: ms.percentage,
-          condition: ms.condition,
-          deadline: ms.deadline || undefined,
-          deadline_dt: ms.deadline_dt || "", // ← now correctly passed
-          amountUsd: ms.amountUsd,
-          amountSats: ms.amountSats,
-        })),
-      }),
-    );
-  }, [agreementId]);
-
-  const getStatus = useCallback(
-    (index: number): MilestoneUIStatus => {
-      const tx = txMilestone?.[index];
-      if (tx?.status === "pending" || tx?.status === "confirming")
-        return "pending";
-      if (tx?.status === "failed") return "failed";
-      const onChain = milestoneOnChainStatuses?.[index];
-      if (onChain !== undefined) return onChainStatusToUI(onChain);
-      return "locked";
-    },
-    [txMilestone, milestoneOnChainStatuses],
-  );
-
-  useEffect(() => {
-    if (!agreementId || milestones.length === 0) return;
-    milestones.forEach((ms) => {
-      if (getStatus(ms.index) === "disputed")
-        joinDisputeRoom(agreementId, ms.index);
-    });
-  }, [agreementId, milestones.length, getStatus]);
-
-  useEffect(() => {
-    if (!agreementId || milestones.length === 0) return;
-    let cancelled = false;
-    (async () => {
-      const onChainMs = await getAllMilestones(agreementId, milestones.length);
-      if (cancelled) return;
-      onChainMs.forEach((ms) =>
-        dispatch(
-          setMilestoneOnChainStatus({ index: ms.index, status: ms.status }),
-        ),
-      );
-      if (!cancelled) checkAllArbDecisions();
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [agreementId, lastRefresh, milestones.length]);
-
-  useEffect(() => {
-    if (!txMilestone) return;
-    Object.entries(txMilestone).forEach(([idxStr, tx]) => {
-      if ((tx.status === "pending" || tx.status === "confirming") && tx.txId) {
-        dispatch(
-          pollMilestoneTxThunk({
-            milestoneIndex: parseInt(idxStr),
-            txId: tx.txId,
-            agreementId: agreementId ?? undefined,
-            action: "complete",
-            callerAddress: walletAddress ?? undefined,
-            onConfirmed: () => setLastRefresh(Date.now()),
-          }),
-        );
-      }
-    });
-  }, [txMilestone]);
-
   async function handleRelease(ms: MilestoneUI) {
     if (!agreementId || !walletAddress) return;
     const result = await dispatch(
@@ -668,7 +643,10 @@ export default function ScreenDashboard() {
           agreementId,
           action: "complete",
           callerAddress: walletAddress,
-          onConfirmed: () => setLastRefresh(Date.now()),
+          onConfirmed: () => {
+            setLastRefresh(Date.now());
+            refetch();
+          },
         }),
       );
     }
@@ -691,25 +669,30 @@ export default function ScreenDashboard() {
           agreementId,
           action: "timeout",
           callerAddress: walletAddress ?? undefined,
-          onConfirmed: () => setLastRefresh(Date.now()),
+          onConfirmed: () => {
+            setLastRefresh(Date.now());
+            refetch();
+          },
         }),
       );
     }
   }
 
-  const completedCount = milestones.filter((m) =>
+  // ── Derived stats (use DB milestones for consistency) ─────
+  const completedCount = milestonesMeta.filter((m) =>
     ["complete", "refunded"].includes(getStatus(m.index)),
   ).length;
   const progressPct =
-    milestones.length > 0
-      ? Math.round((completedCount / milestones.length) * 100)
+    milestonesMeta.length > 0
+      ? Math.round((completedCount / milestonesMeta.length) * 100)
       : 0;
-  const allComplete = milestones.every((m) =>
+  const allComplete = milestonesMeta.every((m) =>
     ["complete", "refunded"].includes(getStatus(m.index)),
   );
-  const releasedUsd = milestones
+  const releasedUsd = milestonesMeta
     .filter((m) => getStatus(m.index) === "complete")
     .reduce((s, m) => s + parseFloat(m.amountUsd), 0);
+  const displayArbitrator = dbArbitrator ?? arbitratorTerms;
 
   return (
     <div>
@@ -741,6 +724,11 @@ export default function ScreenDashboard() {
           </nav>
         </div>
         <div className="v2-topbar-right">
+          {lastUpdate && (
+            <span className="v2-timestamp">
+              {lastUpdate.toLocaleTimeString()}
+            </span>
+          )}
           {walletAddress && (
             <div className="v2-wallet-pill">
               <span className="v2-wallet-dot" />
@@ -749,9 +737,13 @@ export default function ScreenDashboard() {
               </span>
             </div>
           )}
-          <div className="v2-live-badge">
-            <span className="v2-live-dot" />
-            sBTC Live
+          <div
+            className={`v2-live-badge${connected ? "" : " v2-live-badge--off"}`}
+          >
+            <span
+              className={`v2-live-dot${connected ? "" : " v2-live-dot--off"}`}
+            />
+            {connected ? "sBTC Live" : "Reconnecting"}
           </div>
         </div>
       </header>
@@ -843,7 +835,7 @@ export default function ScreenDashboard() {
               </text>
             </svg>
             <div className="v2-ring-label">
-              {completedCount}/{milestones.length} milestones
+              {completedCount}/{milestonesMeta.length} milestones
             </div>
           </div>
 
@@ -876,11 +868,11 @@ export default function ScreenDashboard() {
             </div>
           </div>
 
-          {milestones.length > 1 && (
+          {milestonesMeta.length > 1 && (
             <div className="v2-sidebar-block">
               <div className="v2-sidebar-label">Milestones</div>
               <div className="v2-ms-mini-list">
-                {milestones.map((ms, i) => {
+                {milestonesMeta.map((ms, i) => {
                   const st = getStatus(ms.index);
                   const col = MS_COLORS[i % MS_COLORS.length];
                   return (
@@ -940,7 +932,7 @@ export default function ScreenDashboard() {
           </div>
         </aside>
 
-        {/* ── Main canvas ── */}
+        {/* ── Main ── */}
         <main className="v2-main">
           <div className="v2-page-header">
             <div className="v2-page-header-left">
@@ -953,7 +945,7 @@ export default function ScreenDashboard() {
             </div>
           </div>
 
-          {/* Stats grid */}
+          {/* Stats */}
           <div className="v2-stats-grid">
             {[
               {
@@ -980,9 +972,9 @@ export default function ScreenDashboard() {
               {
                 label: "Arbitrator",
                 value:
-                  arbitrator.length > 14
-                    ? `${arbitrator.slice(0, 12)}…`
-                    : arbitrator,
+                  displayArbitrator.length > 14
+                    ? `${displayArbitrator.slice(0, 12)}…`
+                    : displayArbitrator,
                 sub: "dispute resolver",
                 icon: "⚖",
                 accent: "#60a5fa",
@@ -999,7 +991,7 @@ export default function ScreenDashboard() {
             ))}
           </div>
 
-          {/* Progress bar */}
+          {/* Progress */}
           <div className="v2-progress-card">
             <div className="v2-progress-top">
               <span className="v2-progress-title">Contract Progress</span>
@@ -1011,7 +1003,7 @@ export default function ScreenDashboard() {
                   {progressPct}%
                 </span>
                 <span className="v2-progress-frac">
-                  {completedCount}/{milestones.length}
+                  {completedCount}/{milestonesMeta.length}
                 </span>
               </div>
             </div>
@@ -1031,12 +1023,27 @@ export default function ScreenDashboard() {
             <div className="v2-section-head">
               <span className="v2-section-title">Milestones</span>
               <span className="v2-section-count">
-                {milestones.length} total
+                {milestonesMeta.length} total
               </span>
             </div>
 
+            {loading && milestonesMeta.length === 0 && (
+              <div
+                style={{
+                  padding: "24px 0",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  color: "rgba(255,255,255,0.3)",
+                  fontSize: 12,
+                }}
+              >
+                <span className="v2-spinner-sm" /> Loading milestone data…
+              </div>
+            )}
+
             <div className="v2-ms-list">
-              {milestones.map((ms) => {
+              {milestonesMeta.map((ms) => {
                 const status = getStatus(ms.index);
                 const meta = statusMeta(status);
                 const tx = txMilestone?.[ms.index];
@@ -1049,6 +1056,12 @@ export default function ScreenDashboard() {
                 const arbDecision = arbDecisions[ms.index] ?? null;
                 const showArbBanner = isDone && arbDecision !== null;
                 const overdue = isOverdue(ms.deadline_dt) && !isDone && !isDisp;
+                const isFlashing = flashIndex === ms.index;
+
+                // Prefer DB milestone for txId/txUrl since it's confirmed
+                const dbMs = dbMilestones.find((m) => m.index === ms.index);
+                const displayTxId = tx?.txId ?? dbMs?.txId;
+                const displayTxUrl = tx?.txUrl ?? dbMs?.txUrl;
 
                 return (
                   <div
@@ -1058,6 +1071,7 @@ export default function ScreenDashboard() {
                       isDone ? "v2-ms-block--done" : "",
                       isDisp ? "v2-ms-block--disputed" : "",
                       isPending ? "v2-ms-block--pending" : "",
+                      isFlashing ? "v2-ms-block--flash" : "",
                     ]
                       .filter(Boolean)
                       .join(" ")}
@@ -1158,12 +1172,27 @@ export default function ScreenDashboard() {
                               ⚠ Overdue
                             </span>
                           )}
+                          {isFlashing && !isDone && !isPending && (
+                            <span
+                              style={{
+                                fontSize: 9,
+                                fontFamily: "'DM Mono',monospace",
+                                fontWeight: 700,
+                                color: "#d4ff00",
+                                background: "rgba(212,255,0,0.08)",
+                                border: "1px solid rgba(212,255,0,0.20)",
+                                borderRadius: 3,
+                                padding: "2px 7px",
+                              }}
+                            >
+                              Updated
+                            </span>
+                          )}
                         </div>
                         {ms.condition && (
                           <p className="v2-ms-condition">{ms.condition}</p>
                         )}
                         <div className="v2-ms-meta-row">
-                          {/* ── Deadline display — uses deadline_dt from terms ── */}
                           <DeadlineBadge iso={ms.deadline_dt} />
                           {!ms.deadline_dt && ms.deadline && (
                             <span className="v2-ms-deadline">
@@ -1181,9 +1210,9 @@ export default function ScreenDashboard() {
                               {ms.deadline}
                             </span>
                           )}
-                          {tx?.txId && (
+                          {displayTxId && (
                             <a
-                              href={explorerTxUrl(tx.txId)}
+                              href={displayTxUrl ?? explorerTxUrl(displayTxId)}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="v2-tx-link"
@@ -1199,7 +1228,7 @@ export default function ScreenDashboard() {
                                 <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" />
                                 <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
                               </svg>
-                              {tx.txId.slice(0, 12)}… ↗
+                              {displayTxId.slice(0, 12)}… ↗
                             </a>
                           )}
                           {tx?.error && (
@@ -1338,7 +1367,6 @@ export default function ScreenDashboard() {
                                 </svg>
                                 Dispute
                               </button>
-                              {/* Timeout button — shown when overdue or has deadline_dt */}
                             </>
                           )}
                         </div>
@@ -1353,7 +1381,7 @@ export default function ScreenDashboard() {
                         />
                       </div>
                     )}
-                    {isDisp && agreementId && !showArbBanner && (
+                    {isDisp && !showArbBanner && (
                       <div className="v2-dispute-panel">
                         <div
                           style={{
@@ -1377,8 +1405,8 @@ export default function ScreenDashboard() {
             <p className="v2-info-text">
               Click <strong>Release</strong> to send sBTC on-chain once work is
               approved. Use <strong>Dispute</strong> to open arbitration if
-              deliverables are unsatisfactory. The <strong>⏱</strong> button
-              triggers a timeout refund if a deadline has passed.
+              deliverables are unsatisfactory. Status syncs in real-time across
+              all parties.
             </p>
           </div>
 
@@ -1555,9 +1583,9 @@ export default function ScreenDashboard() {
                   <div className="v2-modal-detail">
                     <span className="v2-modal-detail-label">Arbitrator</span>
                     <span className="v2-modal-detail-val">
-                      {arbitrator.length > 18
-                        ? `${arbitrator.slice(0, 16)}…`
-                        : arbitrator}
+                      {displayArbitrator.length > 18
+                        ? `${displayArbitrator.slice(0, 16)}…`
+                        : displayArbitrator}
                     </span>
                   </div>
                   {disputeModal.ms.deadline_dt && (
@@ -1628,22 +1656,22 @@ export default function ScreenDashboard() {
                 </div>
                 <DisputeSubmitScreen
                   agreementId={agreementId}
-                  milestoneIndex={disputeModal.ms.index}
+                  milestoneIndex={disputeModal.ms!.index}
                   party="A"
                   milestoneDescription={
-                    disputeModal.ms.condition || disputeModal.ms.title
+                    disputeModal.ms!.condition || disputeModal.ms!.title
                   }
                   contractTerms={{
                     payer: walletAddress ?? t?.payer ?? "",
                     receiver: t?.receiver ?? t?.partyB ?? "",
-                    arbitrator: t?.arbitrator ?? "TBD",
+                    arbitrator: displayArbitrator,
                     total_amount: totalAmountUsd,
                     milestone_description:
-                      disputeModal.ms.condition || disputeModal.ms.title,
-                    milestone_percentage: disputeModal.ms.percentage,
+                      disputeModal.ms!.condition || disputeModal.ms!.title,
+                    milestone_percentage: disputeModal.ms!.percentage,
                     milestone_deadline:
-                      disputeModal.ms.deadline_dt ||
-                      disputeModal.ms.deadline ||
+                      disputeModal.ms!.deadline_dt ||
+                      disputeModal.ms!.deadline ||
                       undefined,
                     agreement_type: t?.agreement_type ?? "freelance",
                   }}
@@ -1724,7 +1752,7 @@ export default function ScreenDashboard() {
                 contractTerms={{
                   payer: walletAddress ?? t?.payer ?? "",
                   receiver: t?.receiver ?? t?.partyB ?? "",
-                  arbitrator: t?.arbitrator ?? "TBD",
+                  arbitrator: displayArbitrator,
                   total_amount: totalAmountUsd,
                   milestone_description:
                     evidenceModalMs.condition || evidenceModalMs.title,
@@ -1757,6 +1785,7 @@ const css = `
 .v2-topbar-left { display:flex;align-items:center; }
 .v2-topbar-right { display:flex;align-items:center;gap:10px; }
 .v2-topbar-sep { width:1px;height:16px;background:rgba(255,255,255,0.08);margin:0 20px; }
+.v2-timestamp { font-size:10px;font-family:'DM Mono',monospace;color:rgba(255,255,255,0.20); }
 .v2-brand { display:flex;align-items:center;gap:9px;text-decoration:none; }
 .v2-brand-mark { width:28px;height:28px;border-radius:6px;background:#d4ff00;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:900;color:#0a0a0a;font-family:'Syne',sans-serif;flex-shrink:0; }
 .v2-brand-name { font-family:'Syne',sans-serif;font-size:15px;font-weight:800;color:#ffffff;letter-spacing:-0.02em; }
@@ -1768,7 +1797,9 @@ const css = `
 .v2-wallet-dot { width:5px;height:5px;border-radius:50%;background:#d4ff00;flex-shrink:0; }
 .v2-wallet-addr { font-size:10px;font-family:'DM Mono',monospace;color:rgba(255,255,255,0.45); }
 .v2-live-badge { display:flex;align-items:center;gap:6px;font-size:10px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#d4ff00;border:1px solid rgba(212,255,0,0.25);border-radius:4px;padding:4px 10px; }
+.v2-live-badge--off { color:rgba(255,255,255,0.30);border-color:rgba(255,255,255,0.12); }
 .v2-live-dot { width:5px;height:5px;border-radius:50%;background:#d4ff00;flex-shrink:0;animation:v2Pulse 2s ease infinite; }
+.v2-live-dot--off { background:rgba(255,255,255,0.30);animation:none; }
 .v2-shell { display:flex;min-height:calc(100vh - 56px);background:#0a0a0a; }
 .v2-sidebar { width:220px;flex-shrink:0;background:#0d0d0d;border-right:1px solid rgba(255,255,255,0.07);display:flex;flex-direction:column;position:sticky;top:56px;height:calc(100vh - 56px);overflow-y:auto;padding:20px 0 24px; }
 .v2-sidebar-block { padding:0 14px 20px;margin-bottom:4px;border-bottom:1px solid rgba(255,255,255,0.05); }
@@ -1832,6 +1863,8 @@ const css = `
 .v2-ms-block--done { opacity:0.55; }
 .v2-ms-block--disputed { background:rgba(212,255,0,0.02);border-left:2px solid rgba(212,255,0,0.35); }
 .v2-ms-block--pending { background:rgba(255,255,255,0.01); }
+.v2-ms-block--flash { animation:v2Flash 0.4s ease; }
+@keyframes v2Flash { 0%{background:rgba(212,255,0,0.12)} 100%{background:transparent} }
 .v2-ms-row { display:flex;align-items:flex-start; }
 .v2-ms-accent-bar { width:2px;flex-shrink:0;align-self:stretch;min-height:60px; }
 .v2-ms-num { width:28px;height:28px;border-radius:4px;flex-shrink:0;border:1px solid;margin:20px 16px 20px 18px;display:flex;align-items:center;justify-content:center;font-size:10px;font-family:'DM Mono',monospace;font-weight:800; }
@@ -1865,8 +1898,6 @@ const css = `
 .v2-btn--evidence:hover { border-color:rgba(212,255,0,0.50); }
 .v2-btn--retry { color:#f87171;background:transparent;border-color:rgba(248,113,113,0.25); }
 .v2-btn--retry:hover { border-color:rgba(248,113,113,0.45); }
-.v2-btn--timeout { color:rgba(255,255,255,0.28);background:transparent;border-color:rgba(255,255,255,0.10);padding:5px 9px; }
-.v2-btn--timeout:hover { color:rgba(255,255,255,0.60);border-color:rgba(255,255,255,0.20); }
 .v2-filed-badge { display:inline-flex;align-items:center;gap:5px;font-size:10px;font-family:'DM Mono',monospace;font-weight:700;color:#4ade80;border:1px solid rgba(74,222,128,0.25);border-radius:3px;padding:3px 9px; }
 .v2-dispute-panel { border-top:1px solid rgba(212,255,0,0.10);padding:16px 22px; }
 .v2-spinner-xs { display:inline-block;width:7px;height:7px;border-radius:50%;border:1.5px solid rgba(255,255,255,0.15);border-top-color:rgba(255,255,255,0.6);animation:v2Spin 0.65s linear infinite;flex-shrink:0; }
@@ -1878,7 +1909,7 @@ const css = `
 .v2-complete-title { font-family:'Syne',sans-serif;font-size:22px;font-weight:800;letter-spacing:-0.04em;color:#ffffff;margin-bottom:8px; }
 .v2-complete-body { font-size:13px;color:rgba(255,255,255,0.35);margin-bottom:28px; }
 .v2-complete-actions { display:flex;gap:10px;justify-content:center; }
-.v2-btn-primary { display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:11px 24px;border-radius:4px;cursor:pointer;border:none;background:#d4ff00;color:#0a0a0a;font-family:'Syne',sans-serif;font-size:13px;font-weight:700;letter-spacing:-0.01em; }
+.v2-btn-primary { display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:11px 24px;border-radius:4px;cursor:pointer;border:none;background:#d4ff00;color:#0a0a0a;font-family:'Syne',sans-serif;font-size:13px;font-weight:700; }
 .v2-btn-primary:hover { background:#e0ff33; }
 .v2-btn-secondary { display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:11px 24px;border-radius:4px;cursor:pointer;background:transparent;color:rgba(255,255,255,0.55);border:1px solid rgba(255,255,255,0.12);font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500; }
 .v2-btn-secondary:hover { border-color:rgba(255,255,255,0.22);color:#ffffff; }

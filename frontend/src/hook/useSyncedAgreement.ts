@@ -1,6 +1,7 @@
 // ============================================================
 // hook/useSyncedAgreement.ts
-// Production-grade: version-tracked, stale-write-safe, DB-authoritative
+// FIXED: deriveFundState no longer flips to "released" from stale DB.
+//        REST_LOADED always re-derives fundState from milestone statuses.
 // ============================================================
 import { useEffect, useRef, useCallback, useReducer } from "react";
 import {
@@ -15,8 +16,6 @@ import {
 } from "@/lib/socket";
 
 const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL;
-
-// ── Types ─────────────────────────────────────────────────────
 
 export type MsStatus =
   | "locked"
@@ -68,12 +67,8 @@ export interface SyncedAgreementState {
   loading: boolean;
   lastUpdate: Date | null;
   flashIndex: number | null;
-  // Internal: monotonic counter — socket events bump this, REST only writes
-  // if its value is >= current (prevents stale REST from overwriting socket)
   _seq: number;
 }
-
-// ── Reducer ───────────────────────────────────────────────────
 
 type Action =
   | { type: "LOADING" }
@@ -119,8 +114,6 @@ const initialState: SyncedAgreementState = {
   _seq: 0,
 };
 
-// ── Helpers ───────────────────────────────────────────────────
-
 export function mapMilestone(m: any): SyncedMilestone {
   return {
     index: m.index,
@@ -139,8 +132,6 @@ export function mapMilestone(m: any): SyncedMilestone {
   };
 }
 
-// Merge DB milestones with optimistic local overrides.
-// If a local status is "pending" or "confirming", it wins over DB.
 export function mergeMilestonesWithOptimistic(
   dbMilestones: SyncedMilestone[],
   optimistic: Record<
@@ -162,10 +153,6 @@ export function mergeMilestonesWithOptimistic(
         txUrl: local.txUrl ?? ms.txUrl,
       };
     }
-    if (local.status === "failed") {
-      // Keep DB status, just annotate
-      return ms;
-    }
     return ms;
   });
 }
@@ -174,11 +161,9 @@ function applyMilestoneUpdate(
   milestones: SyncedMilestone[],
   payload: MilestoneUpdatedPayload,
 ): SyncedMilestone[] {
-  // Server always sends full milestones array — use it directly
   if (payload.milestones?.length) {
     return payload.milestones.map(mapMilestone);
   }
-  // Fallback: patch in-place preserving deadline_dt
   return milestones.map((ms) =>
     ms.index === payload.milestoneIndex
       ? {
@@ -199,18 +184,40 @@ function applyMilestoneUpdate(
   );
 }
 
+// ── THE KEY FIX ───────────────────────────────────────────────
+// Always derive fundState from actual milestone statuses.
+// NEVER trust the raw DB fundState if milestones contradict it.
+// Rules:
+//   - ALL milestones complete/refunded → "released"
+//   - ANY milestone locked/pending/disputed → "locked" (never "released")
+//   - Otherwise keep current
 function deriveFundState(
   milestones: SyncedMilestone[],
-  current: string,
+  rawDbFundState: string,
 ): string {
-  if (milestones.length === 0) return current;
+  if (milestones.length === 0) {
+    // No milestones yet — if DB says released, that's wrong; use locked
+    return rawDbFundState === "released" ? "locked" : rawDbFundState;
+  }
+
   const allSettled = milestones.every((m) =>
     ["complete", "refunded"].includes(m.status),
   );
+
   if (allSettled) return "released";
-  const anyDisputed = milestones.some((m) => m.status === "disputed");
-  if (anyDisputed && current !== "locked") return current;
-  return current;
+
+  // If ANY milestone is not settled, the agreement is NOT released.
+  // Even if DB says "released" — milestone statuses are ground truth.
+  const anyUnsettled = milestones.some(
+    (m) => !["complete", "refunded"].includes(m.status),
+  );
+
+  if (anyUnsettled && rawDbFundState === "released") {
+    // DB is corrupted / stale. Override to locked.
+    return "locked";
+  }
+
+  return rawDbFundState;
 }
 
 function reducer(
@@ -222,10 +229,8 @@ function reducer(
       return { ...state, loading: true };
 
     case "REST_LOADED": {
-      // Only apply REST response if it's not stale (seq >= current _seq)
-      // Socket events bump _seq so a slow REST fetch won't overwrite them
       if (action.seq < state._seq) {
-        // Stale REST — only update fields that socket doesn't carry
+        // Stale REST — only update non-milestone fields
         return {
           ...state,
           loading: false,
@@ -238,13 +243,25 @@ function reducer(
           partyB: action.payload.partyB ?? state.partyB,
         };
       }
-      // Fresh REST: apply fully, but merge milestones carefully
-      // If we already have milestones from socket (seq > 0), only update
-      // milestones that have the same or lower seq
+
       const incoming = action.payload;
+      const milestones = incoming.milestones ?? state.milestones;
+
+      // ── CRITICAL: Always re-derive fundState from milestone statuses ──
+      // The DB fundState can be stale/wrong (e.g. "released" with locked milestones).
+      // Milestone statuses are the single source of truth for completion.
+      const derivedFundState = deriveFundState(
+        milestones,
+        incoming.fundState ?? state.fundState,
+      );
+
       return {
         ...state,
         ...incoming,
+        milestones,
+        fundState: derivedFundState,
+        // fundsLocked = true whenever agreement is active (not idle)
+        fundsLocked: derivedFundState !== "idle",
         loading: false,
         _seq: action.seq,
         lastUpdate: new Date(),
@@ -256,10 +273,18 @@ function reducer(
       const milestones = payload.milestones?.length
         ? (payload.milestones as SyncedMilestone[])
         : state.milestones;
+
+      const derivedFundState = deriveFundState(
+        milestones,
+        payload.fundState ?? state.fundState,
+      );
+
       return {
         ...state,
         ...payload,
         milestones,
+        fundState: derivedFundState,
+        fundsLocked: derivedFundState !== "idle",
         loading: false,
         _seq: state._seq + 1,
         lastUpdate: new Date(),
@@ -271,7 +296,6 @@ function reducer(
 
     case "MILESTONE_UPDATED": {
       const milestones = applyMilestoneUpdate(state.milestones, action.payload);
-      // Derive fundState from milestones + any explicit fundState in payload
       const newFundState = deriveFundState(
         milestones,
         (action.payload as any).fundState ?? state.fundState,
@@ -334,12 +358,15 @@ function reducer(
           [idx]: decision as ArbitratorDecision,
         };
       } else if (
-        action.payload.status === "awaiting_statements" ||
-        action.payload.status === "party_a_submitted" ||
-        action.payload.status === "party_b_submitted" ||
-        action.payload.status === "ai_pending" ||
-        action.payload.status === "ai_complete"
+        [
+          "awaiting_statements",
+          "party_a_submitted",
+          "party_b_submitted",
+          "ai_pending",
+          "ai_complete",
+        ].includes(action.payload.status)
       ) {
+        // Dispute is open — mark milestone as disputed
         milestones = milestones.map((ms) =>
           ms.index === idx &&
           ms.status !== "complete" &&
@@ -349,12 +376,14 @@ function reducer(
         );
       }
 
+      // Re-derive fundState — a disputed milestone means NOT released
       const newFundState = deriveFundState(milestones, state.fundState);
 
       return {
         ...state,
         milestones,
         fundState: newFundState,
+        fundsLocked: newFundState !== "idle",
         arbDecisions,
         lastUpdate: new Date(),
         flashIndex: idx,
@@ -379,14 +408,9 @@ function reducer(
   }
 }
 
-// ── Hook ──────────────────────────────────────────────────────
-
 interface UseSyncedAgreementOptions {
   agreementId: string | null;
   walletAddress?: string | null;
-  // Optional: local optimistic overrides from Redux txMilestone
-  // This lets Party A's pending/confirming local state show correctly
-  // while DB is still processing
   localOptimistic?: Record<
     number,
     { status: string; txId?: string | null; txUrl?: string | null }
@@ -402,10 +426,8 @@ export function useSyncedAgreement({
   const joinedDisputeRooms = useRef<Set<number>>(new Set());
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
-  // Track fetch sequence to detect stale responses
   const fetchSeqRef = useRef<number>(0);
 
-  // ── REST fetch (cold start + periodic resync) ─────────────
   const fetchSnapshot = useCallback(async () => {
     if (!agreementId) return;
     const mySeq = ++fetchSeqRef.current;
@@ -454,7 +476,6 @@ export function useSyncedAgreement({
     }
   }, [agreementId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Fetch arbitrator decision ─────────────────────────────
   const fetchArbDecision = useCallback(
     async (milestoneIndex: number) => {
       if (!agreementId) return;
@@ -483,7 +504,6 @@ export function useSyncedAgreement({
     [agreementId],
   );
 
-  // ── Flash clear ───────────────────────────────────────────
   function scheduleFlashClear() {
     if (flashTimer.current) clearTimeout(flashTimer.current);
     flashTimer.current = setTimeout(
@@ -492,16 +512,13 @@ export function useSyncedAgreement({
     );
   }
 
-  // ── Socket setup ──────────────────────────────────────────
   useEffect(() => {
     if (!agreementId) return;
 
     const socket = getSocket();
 
-    // Cold start: REST fetch in parallel with socket join ack
     fetchSnapshot();
 
-    // Join with ack — server returns full current state immediately
     joinAgreementRoom(
       agreementId,
       (serverState: AgreementStatePayload | null) => {
@@ -528,7 +545,6 @@ export function useSyncedAgreement({
 
     function onConnect() {
       dispatch({ type: "SOCKET_CONNECTED", payload: true });
-      // On reconnect: re-fetch to resync any missed events
       fetchSnapshot();
     }
     function onDisconnect() {
@@ -540,7 +556,6 @@ export function useSyncedAgreement({
       dispatch({ type: "MILESTONE_UPDATED", payload });
       scheduleFlashClear();
 
-      // If any milestone is now disputed, join its dispute room
       const milestones = payload.milestones ?? [];
       milestones.forEach((ms) => {
         if (
@@ -556,7 +571,6 @@ export function useSyncedAgreement({
     function onFundsLocked(payload: FundsLockedPayload) {
       if (payload.agreementId && payload.agreementId !== agreementId) return;
       dispatch({ type: "FUNDS_LOCKED", payload });
-      // Fetch full snapshot to get milestone details
       if (!payload.milestones?.length) {
         setTimeout(fetchSnapshot, 300);
       }
@@ -589,12 +603,9 @@ export function useSyncedAgreement({
       }
 
       if (payload.status === "resolved") {
-        if (payload.arbitrator_decision) {
-          // Decision already in payload — no need to fetch
-        } else {
+        if (!payload.arbitrator_decision) {
           fetchArbDecision(idx);
         }
-        // Always do a fresh REST fetch after resolution to ensure DB is authoritative
         setTimeout(fetchSnapshot, 500);
       }
     }
@@ -615,7 +626,6 @@ export function useSyncedAgreement({
       dispatch({ type: "SOCKET_CONNECTED", payload: true });
     }
 
-    // Periodic poll: every 15s as safety net for missed socket events
     pollTimer.current = setInterval(fetchSnapshot, 15_000);
 
     return () => {
@@ -635,8 +645,6 @@ export function useSyncedAgreement({
     };
   }, [agreementId, fetchSnapshot, fetchArbDecision]);
 
-  // ── Merge optimistic local state on top of DB state ───────
-  // This is for Party A's pending/confirming tx states
   const mergedMilestones =
     Object.keys(localOptimistic).length > 0
       ? mergeMilestonesWithOptimistic(state.milestones, localOptimistic)

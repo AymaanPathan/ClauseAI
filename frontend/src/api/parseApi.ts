@@ -78,14 +78,11 @@ export interface ParserHealthResponse {
 export const parseAgreement = async (
   payload: ParseRequest,
 ): Promise<ParseResponse> => {
-  const { data } = await axiosInstance.post<ParseResponse>(
-    "/api/parse",
-    payload,
-  );
+  const { data } = await axiosInstance.post<ParseResponse>("/parse", payload);
   return data;
 };
 
 export const getParserHealth = async (): Promise<ParserHealthResponse> => {
-  const { data } = await axiosInstance.get<ParserHealthResponse>("/api/parse");
+  const { data } = await axiosInstance.get<ParserHealthResponse>("/parse");
   return data;
 };

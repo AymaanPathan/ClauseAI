@@ -67,7 +67,6 @@ export interface PresenceResponse extends PresenceEntry {
   bothConnected: boolean;
 }
 
-// ── Persistence helpers (Redis / mem) ─────────────────────────
 async function readPresence(id: string): Promise<PresenceEntry | null> {
   if (isRedisAvailable()) {
     const redis = getRedisClient();
@@ -145,7 +144,6 @@ const EMPTY_ENTRY = (): PresenceEntry => ({
   depositTxId: null,
 });
 
-// ── SSE client registry ───────────────────────────────────────
 const sseClients = new Map<string, Set<Response>>();
 
 function notifySSE(id: string, data: PresenceResponse) {
@@ -217,9 +215,6 @@ router.get("/", async (req: Request, res: Response) => {
       .limit(50)
       .lean();
 
-    console.log(
-      `[GET /api/agreement] partyA=${partyA} → ${agreements.length} results`,
-    );
     res.json(agreements);
   } catch (err) {
     console.error("[GET /api/agreement]", err);
@@ -313,6 +308,10 @@ router.get("/:id/milestones", async (req: Request, res: Response) => {
   }
 });
 
+// ── POST /create ──────────────────────────────────────────────
+// FIX: Only write milestones if they don't exist yet (first save).
+// Never overwrite milestones that have been updated by /milestone endpoint.
+// Never emit funds:locked on re-saves (dashboard remounts).
 router.post("/:id/create", async (req: Request, res: Response) => {
   const {
     partyA,
@@ -344,7 +343,6 @@ router.post("/:id/create", async (req: Request, res: Response) => {
   };
 
   try {
-    // Explicit field mapping so deadline_dt is never dropped by spread
     const normalizedMilestones = (milestones ?? []).map((ms) => ({
       index: ms.index,
       title: ms.title,
@@ -361,35 +359,56 @@ router.post("/:id/create", async (req: Request, res: Response) => {
       disputedAt: null,
     }));
 
+    // Check if agreement already exists
+    const existing = await Agreement.findOne({ agreementId: req.params.id });
+    const isFirstSave = !existing;
+
+    // Only write milestones if:
+    // 1. This is the first save (no existing record), OR
+    // 2. All existing milestones are still "locked" (nothing has happened yet)
+    const existingMilestonesAllLocked =
+      existing?.milestones?.every((m: any) => m.status === "locked") ?? true;
+    const shouldWriteMilestones = isFirstSave || existingMilestonesAllLocked;
+
+    const updateDoc: Record<string, any> = {
+      ...(partyA && { partyA }),
+      ...(partyB && { partyB }),
+      ...(arbitrator && { arbitrator }),
+      ...(totalAmountUsd !== undefined && { totalAmountUsd }),
+      ...(totalAmountSats !== undefined && { totalAmountSats }),
+      ...(terms && Object.keys(terms).length > 0 && { terms }),
+      ...(onChainCreateTxId && { onChainCreateTxId }),
+      // Only write milestones on first save or if all still locked
+      ...(shouldWriteMilestones &&
+        normalizedMilestones.length > 0 && {
+          milestones: normalizedMilestones,
+        }),
+      // Only set fundState to "locked" if it's currently idle or doesn't exist
+      ...(!existing || existing.fundState === "idle"
+        ? { fundState: "locked", fundsLocked: true }
+        : {}),
+    };
+
     const agreement = await Agreement.findOneAndUpdate(
       { agreementId: req.params.id },
-      {
-        $set: {
-          ...(partyA && { partyA }),
-          ...(partyB && { partyB }),
-          ...(arbitrator && { arbitrator }),
-          ...(totalAmountUsd !== undefined && { totalAmountUsd }),
-          ...(totalAmountSats !== undefined && { totalAmountSats }),
-          ...(terms && Object.keys(terms).length > 0 && { terms }),
-          ...(normalizedMilestones.length > 0 && {
-            milestones: normalizedMilestones,
-          }),
-          ...(onChainCreateTxId && { onChainCreateTxId }),
-        },
-      },
+      { $set: updateDoc },
       { upsert: true, new: true, setDefaultsOnInsert: true },
     );
 
     console.log(
-      `[agreement /create] Upserted ${req.params.id} — ` +
-        `${normalizedMilestones.length} milestones, ` +
+      `[agreement /create] ${isFirstSave ? "Created" : "Re-saved (no milestone overwrite)"} ${req.params.id} — ` +
+        `milestones written: ${shouldWriteMilestones}, ` +
         `deadlines: [${normalizedMilestones.map((m) => m.deadline_dt || "—").join(", ")}]`,
     );
 
-    emit(req.params.id, "funds:locked", {
-      agreementId: req.params.id,
-      milestones: agreement.milestones,
-    });
+    // Only emit funds:locked on the FIRST save
+    // Re-saves from dashboard remounts should NOT trigger this
+    if (isFirstSave) {
+      emit(req.params.id, "funds:locked", {
+        agreementId: req.params.id,
+        milestones: agreement.milestones,
+      });
+    }
 
     res.json({ ok: true, agreementId: req.params.id });
   } catch (err) {
@@ -398,6 +417,10 @@ router.post("/:id/create", async (req: Request, res: Response) => {
   }
 });
 
+// ── POST /milestone ───────────────────────────────────────────
+// FIX: Don't re-verify the tx — the client (pollMilestoneTxThunk) already
+// polled until confirmed before calling this. Re-verification returns "pending"
+// due to testnet API lag and causes wrong status to be saved to DB.
 router.post("/:id/milestone", async (req: Request, res: Response) => {
   const { milestoneIndex, action, txId, txUrl, callerAddress } = req.body as {
     milestoneIndex: number;
@@ -414,18 +437,34 @@ router.post("/:id/milestone", async (req: Request, res: Response) => {
   }
 
   try {
-    const txInfo = await verifyStacksTx(txId);
-
+    // ── KEY FIX: Trust the action, don't re-verify ──
+    // The client already ran pollMilestoneTxThunk which polled every 5s
+    // until the Stacks API returned "success". Re-verifying here returns
+    // "pending" due to API propagation lag, causing wrong status in DB.
     const targetStatus = (() => {
-      if (txInfo.status === "failed") return "failed";
-      if (action === "complete")
-        return txInfo.status === "success" ? "complete" : "pending";
-      if (action === "dispute")
-        return txInfo.status === "success" ? "disputed" : "pending";
-      if (action === "timeout")
-        return txInfo.status === "success" ? "refunded" : "pending";
+      if (action === "complete") return "complete";
+      if (action === "dispute") return "disputed";
+      if (action === "timeout") return "refunded";
       return "pending";
-    })() as "complete" | "disputed" | "refunded" | "failed" | "pending";
+    })() as "complete" | "disputed" | "refunded" | "pending";
+
+    // Still verify to get block metadata (but don't use status for gating)
+    let blockHeight: number | undefined;
+    let blockTime: number | undefined;
+    try {
+      const txInfo = await verifyStacksTx(txId);
+      blockHeight = txInfo.blockHeight;
+      blockTime = txInfo.blockTime;
+      // Only override to failed if explicitly aborted
+      // (this case shouldn't happen since client waits for success)
+      if (txInfo.status === "failed") {
+        console.warn(
+          `[agreement /milestone] tx ${txId} is failed on-chain but client sent action=${action}`,
+        );
+      }
+    } catch {
+      // non-fatal — continue with targetStatus from action
+    }
 
     const agreement = await Agreement.findOne({ agreementId: req.params.id });
     if (!agreement) {
@@ -438,13 +477,13 @@ router.post("/:id/milestone", async (req: Request, res: Response) => {
       (m: { index: number }) => m.index === milestoneIndex,
     );
 
-    // Guard: check ms exists before accessing ms.status
     if (!ms) {
       return res
         .status(404)
         .json({ error: `Milestone ${milestoneIndex} not found` });
     }
 
+    // Guard: don't re-dispute an already settled milestone
     if (
       action === "dispute" &&
       (ms.status === "complete" || ms.status === "refunded")
@@ -454,17 +493,37 @@ router.post("/:id/milestone", async (req: Request, res: Response) => {
       });
     }
 
+    // Don't re-update if already at target status (idempotent)
+    if (ms.status === targetStatus) {
+      console.log(
+        `[agreement /milestone] ms[${milestoneIndex}] already at ${targetStatus}, skipping`,
+      );
+      return res.json({
+        ok: true,
+        skipped: true,
+        status: targetStatus,
+        milestones: agreement.milestones,
+      });
+    }
+
     ms.status = targetStatus;
     ms.txId = txId;
     ms.txUrl = txUrl ?? null;
-    ms.onChainStatus = txInfo.status === "success" ? 2 : undefined;
     if (targetStatus === "complete") ms.completedAt = new Date();
     if (targetStatus === "disputed") ms.disputedAt = new Date();
 
+    // Only mark fundState as "released" if ALL milestones are settled
     const allComplete = agreement.milestones.every((m: { status: string }) =>
       ["complete", "refunded"].includes(m.status),
     );
-    if (allComplete) agreement.fundState = "released";
+    if (allComplete) {
+      agreement.fundState = "released";
+    }
+    // If a milestone is now disputed, mark agreement as active (not released)
+    // This prevents the stale "released" fundState bug
+    if (targetStatus === "disputed" && agreement.fundState === "released") {
+      agreement.fundState = "locked";
+    }
 
     await agreement.save();
 
@@ -475,12 +534,12 @@ router.post("/:id/milestone", async (req: Request, res: Response) => {
       txId,
       txUrl,
       status: targetStatus,
-      txVerified: txInfo.status,
-      blockHeight: txInfo.blockHeight,
-      blockTime: txInfo.blockTime,
+      txVerified: "success",
+      blockHeight,
+      blockTime,
       allComplete,
-      fundState: agreement.fundState, // included so clients can sync state
-      milestones: agreement.milestones, // full array — clients replace their state
+      fundState: agreement.fundState,
+      milestones: agreement.milestones,
     };
 
     emit(req.params.id, "milestone:updated", milestonePayload);

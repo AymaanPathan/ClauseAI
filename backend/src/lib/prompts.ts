@@ -11,7 +11,7 @@ export interface Milestone {
   title: string;
   percentage: number;
   deadline: string;
-  deadline_dt: string;
+  deadline_dt?: string;
   condition: string;
 }
 

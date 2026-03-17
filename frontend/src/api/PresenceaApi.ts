@@ -3,7 +3,7 @@
 // Handles presence registration, polling, and SSE subscription.
 // ============================================================
 
-const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL;
+const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL
 
 // ── Types ─────────────────────────────────────────────────────
 

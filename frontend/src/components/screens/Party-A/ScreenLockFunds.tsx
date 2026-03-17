@@ -83,7 +83,7 @@ async function notifyServerFundsLocked(
   txId: string | null,
 ): Promise<boolean> {
   try {
-    const res = await fetch(`${API_BASE}/api/agreement/${agreementId}/status`, {
+    const res = await fetch(`${API_BASE}/agreement/${agreementId}/status`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

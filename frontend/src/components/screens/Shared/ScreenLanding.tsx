@@ -929,7 +929,7 @@ export default function ScreenLanding() {
 
     try {
       const res = await fetch(
-        `${API_BASE}/api/agreement?partyA=${encodeURIComponent(address)}`,
+        `${API_BASE}/agreement?partyA=${encodeURIComponent(address)}`,
       );
       if (res.ok) {
         const data = await res.json();
@@ -949,7 +949,7 @@ export default function ScreenLanding() {
 
     try {
       const res = await fetch(
-        `${API_BASE}/api/agreement?partyB=${encodeURIComponent(address)}`,
+        `${API_BASE}/agreement?partyB=${encodeURIComponent(address)}`,
       );
       if (res.ok) {
         const data = await res.json();
@@ -974,7 +974,7 @@ export default function ScreenLanding() {
       for (const id of pBIds) {
         if (seen.has(id)) continue;
         try {
-          const r = await fetch(`${API_BASE}/api/agreement/${id}/milestones`);
+          const r = await fetch(`${API_BASE}/agreement/${id}/milestones`);
           if (r.ok) {
             const d = await r.json();
             if (d?.agreementId) {
@@ -994,7 +994,7 @@ export default function ScreenLanding() {
     if (storedId && !seen.has(storedId)) {
       try {
         const r = await fetch(
-          `${API_BASE}/api/agreement/${storedId}/milestones`,
+          `${API_BASE}/agreement/${storedId}/milestones`,
         );
         if (r.ok) {
           const d = await r.json();

@@ -187,7 +187,7 @@ export default function ArbitratorDashboard() {
     setLoading(true);
     try {
       const res = await fetch(
-        `${API_BASE}/api/arbitrate/by-arbitrator/${walletAddress}`,
+        `${API_BASE}/arbitrate/by-arbitrator/${walletAddress}`,
       );
       if (res.ok) {
         const json = await res.json();
@@ -278,7 +278,7 @@ export default function ArbitratorDashboard() {
     const followed_ai = ai_verdict?.verdict === chosenOutcome;
     try {
       await fetch(
-        `${API_BASE}/api/arbitrate/${agreement_id}/${milestone_index}/decide`,
+        `${API_BASE}/arbitrate/${agreement_id}/${milestone_index}/decide`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

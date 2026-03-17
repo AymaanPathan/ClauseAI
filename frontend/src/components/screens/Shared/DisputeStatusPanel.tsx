@@ -102,7 +102,7 @@ export default function DisputeStatusPanel({
     async function load() {
       try {
         const res = await fetch(
-          `${API_BASE}/api/arbitrate/${agreementId}/${milestoneIndex}`,
+          `${API_BASE}/arbitrate/${agreementId}/${milestoneIndex}`,
         );
         if (res.ok) {
           const data = await res.json();

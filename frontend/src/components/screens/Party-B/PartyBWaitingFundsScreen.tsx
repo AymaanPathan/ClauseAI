@@ -68,7 +68,7 @@ export default function PartyBWaitingFundsScreen() {
     const pollFunds = setInterval(async () => {
       try {
         const res = await fetch(
-          `${API_BASE}/api/agreement/${agreementId}/status`,
+          `${API_BASE}/agreement/${agreementId}/status`,
         );
         if (!res.ok) return;
         const data = await res.json();

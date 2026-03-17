@@ -279,7 +279,7 @@ export const saveAgreementToDbThunk = createAsyncThunk(
   ) => {
     try {
       const res = await fetch(
-        `${API_BASE}/api/agreement/${payload.agreementId}/create`,
+        `${API_BASE}/agreement/${payload.agreementId}/create`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -312,7 +312,7 @@ export const notifyMilestoneToDbThunk = createAsyncThunk(
   ) => {
     try {
       const res = await fetch(
-        `${API_BASE}/api/agreement/${payload.agreementId}/milestone`,
+        `${API_BASE}/agreement/${payload.agreementId}/milestone`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

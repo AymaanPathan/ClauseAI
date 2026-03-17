@@ -25,12 +25,6 @@ const VALID_TYPES: AgreementType[] = [
   "multi-phase",
 ];
 
-// ── Validation helpers ────────────────────────────────────────
-
-/**
- * Ensures milestone percentages sum to exactly 100.
- * If off due to rounding, adjusts the last milestone.
- */
 function normalizeMilestones(milestones: Milestone[]): Milestone[] {
   if (!milestones.length) return milestones;
 

@@ -85,7 +85,7 @@ export default function DashboardPage() {
   const fetchData = useCallback(async () => {
     try {
       const res = await fetch(
-        `${API_BASE}/api/agreement/${agreementId}/milestones`,
+        `${API_BASE}/agreement/${agreementId}/milestones`,
       );
       if (res.status === 404) {
         setError("Agreement not found. Make sure the ID is correct.");

@@ -173,7 +173,7 @@ export default function DisputeSubmitScreen({
     joinAgreementRoom(agreementId);
     joinDisputeRoom(agreementId, milestoneIndex);
 
-    fetch(`${API_BASE}/api/arbitrate/${agreementId}/${milestoneIndex}`)
+    fetch(`${API_BASE}/arbitrate/${agreementId}/${milestoneIndex}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (data?.dispute) {
@@ -248,7 +248,7 @@ export default function DisputeSubmitScreen({
     try {
       const form = new FormData();
       selected.forEach((f) => form.append("files", f));
-      const res = await fetch(`${API_BASE}/api/arbitrate/upload`, {
+      const res = await fetch(`${API_BASE}/arbitrate/upload`, {
         method: "POST",
         body: form,
       });
@@ -277,7 +277,7 @@ export default function DisputeSubmitScreen({
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const res = await fetch(`${API_BASE}/api/arbitrate/submit`, {
+      const res = await fetch(`${API_BASE}/arbitrate/submit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

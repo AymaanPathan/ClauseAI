@@ -118,7 +118,7 @@ export const initPartyBThunk = createAsyncThunk(
   "partyB/init",
   async (agreementId: string, { rejectWithValue }) => {
     try {
-      const res = await fetch(`${API_BASE}/api/agreement/${agreementId}`);
+      const res = await fetch(`${API_BASE}/agreement/${agreementId}`);
       if (!res.ok) {
         if (res.status === 404)
           throw new Error("This agreement link is invalid or has expired.");
@@ -130,7 +130,7 @@ export const initPartyBThunk = createAsyncThunk(
       if (!terms) {
         try {
           const dbRes = await fetch(
-            `${API_BASE}/api/agreement/${agreementId}/milestones`,
+            `${API_BASE}/agreement/${agreementId}/milestones`,
           );
           if (dbRes.ok) {
             const dbData = await dbRes.json();
@@ -221,7 +221,7 @@ export const approveAsPartyBThunk = createAsyncThunk(
 
       try {
         await fetch(
-          `${API_BASE}/api/agreement/${payload.agreementId}/partyb-wallet`,
+          `${API_BASE}/agreement/${payload.agreementId}/partyb-wallet`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -307,7 +307,7 @@ export const disputeMilestoneAsPartyBThunk = createAsyncThunk(
           // Step 3: notify DB + socket ONLY after confirmed
           try {
             await fetch(
-              `${API_BASE}/api/agreement/${payload.agreementId}/milestone`,
+              `${API_BASE}/agreement/${payload.agreementId}/milestone`,
               {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },

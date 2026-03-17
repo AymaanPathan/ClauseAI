@@ -1,7 +1,3 @@
-// ============================================================
-// src/index.ts
-// ============================================================
-
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -94,7 +90,7 @@ io.on("connection", (socket) => {
 
       try {
         const res = await fetch(
-          `${API_BASE}/api/arbitrate/${payload.agreementId}/${payload.milestoneIndex}`,
+          `${API_BASE}/arbitrate/${payload.agreementId}/${payload.milestoneIndex}`,
         );
         if (res.ok) {
           const data = (await res.json()) as {
@@ -142,9 +138,9 @@ io.on("connection", (socket) => {
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 
-app.use("/api/parse", parseRouter);
-app.use("/api/agreement", agreementRouter);
-app.use("/api/arbitrate", arbitrateRouter);
+app.use("/parse", parseRouter);
+app.use("/agreement", agreementRouter);
+app.use("/arbitrate", arbitrateRouter);
 
 app.get("/", (_req, res) => {
   res.json({ status: "ok", service: "ClauseAI Backend", version: "2.0.0" });

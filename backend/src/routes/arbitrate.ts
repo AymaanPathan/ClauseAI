@@ -13,8 +13,7 @@ import Agreement from "../models/Agreement";
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
 
-// ── GET /api/arbitrate/by-arbitrator/:address ────────────────
-// Returns all disputes where contract_terms.arbitrator === address
+
 router.get("/by-arbitrator/:address", async (req, res) => {
   try {
     const { address } = req.params;
@@ -30,7 +29,6 @@ router.get("/by-arbitrator/:address", async (req, res) => {
   }
 });
 
-// ── GET /api/arbitrate/dashboard/:address ────────────────────
 router.get("/dashboard/:address", async (req: Request, res: Response) => {
   const { address } = req.params;
   if (!address)
@@ -155,7 +153,6 @@ async function saveAndBroadcast(
   return updated;
 }
 
-// ── GET /api/arbitrate/:id/:index/events — SSE ────────────────
 router.get("/:id/:index/events", async (req: Request, res: Response) => {
   const { id, index } = req.params;
   const milestoneIndex = parseInt(index, 10);
@@ -192,7 +189,6 @@ router.get("/:id/:index/events", async (req: Request, res: Response) => {
   });
 });
 
-// ── GET /api/arbitrate/:id/:index ────────────────────────────
 router.get("/:id/:index", async (req: Request, res: Response) => {
   const { id, index } = req.params;
   const milestoneIndex = parseInt(index, 10);
@@ -209,7 +205,6 @@ router.get("/:id/:index", async (req: Request, res: Response) => {
   }
 });
 
-// ── POST /api/arbitrate/open ──────────────────────────────────
 router.post("/open", async (req: Request, res: Response) => {
   const { agreement_id, milestone_index, contract_terms } = req.body as {
     agreement_id: string;
@@ -262,7 +257,6 @@ router.post("/open", async (req: Request, res: Response) => {
   }
 });
 
-// ── POST /api/arbitrate/upload ────────────────────────────────
 router.post(
   "/upload",
   upload.array("files", 10),
@@ -318,7 +312,6 @@ router.post(
   },
 );
 
-// ── POST /api/arbitrate/submit ────────────────────────────────
 router.post("/submit", async (req: Request, res: Response) => {
   const {
     agreement_id,
@@ -438,7 +431,6 @@ router.post("/submit", async (req: Request, res: Response) => {
   }
 });
 
-// ── POST /api/arbitrate/verdict ───────────────────────────────
 router.post("/verdict", async (req: Request, res: Response) => {
   const { agreement_id, milestone_index } = req.body as {
     agreement_id: string;
@@ -470,7 +462,6 @@ router.post("/verdict", async (req: Request, res: Response) => {
   }
 });
 
-// ── POST /api/arbitrate/resolve ───────────────────────────────
 router.post("/resolve", async (req: Request, res: Response) => {
   const {
     agreement_id,

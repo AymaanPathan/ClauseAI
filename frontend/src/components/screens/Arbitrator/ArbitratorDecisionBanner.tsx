@@ -57,7 +57,7 @@ export default function ArbitratorDecisionBanner({
   const fetchDispute = useCallback(async () => {
     try {
       const res = await fetch(
-        `${API_BASE}/api/arbitrate/${agreementId}/${milestoneIndex}`,
+        `${API_BASE}/arbitrate/${agreementId}/${milestoneIndex}`,
       );
       if (!res.ok) {
         setLoading(false);

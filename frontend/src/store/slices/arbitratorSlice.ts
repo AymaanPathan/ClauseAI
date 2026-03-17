@@ -158,7 +158,7 @@ export const fetchArbitratorDashboardThunk = createAsyncThunk(
   "arbitrator/fetchDashboard",
   async (address: string, { rejectWithValue }) => {
     try {
-      const res = await fetch(`${API_BASE}/api/arbitrate/dashboard/${address}`);
+      const res = await fetch(`${API_BASE}/arbitrate/dashboard/${address}`);
       if (!res.ok) throw new Error(`Server error ${res.status}`);
       return await res.json();
     } catch (err) {
@@ -177,7 +177,7 @@ export const fetchDisputeDetailThunk = createAsyncThunk(
   ) => {
     try {
       const res = await fetch(
-        `${API_BASE}/api/arbitrate/${payload.agreementId}/${payload.milestoneIndex}`,
+        `${API_BASE}/arbitrate/${payload.agreementId}/${payload.milestoneIndex}`,
       );
       if (!res.ok) throw new Error(`Server error ${res.status}`);
       const data = await res.json();
@@ -196,7 +196,7 @@ export const uploadEvidenceThunk = createAsyncThunk(
     try {
       const formData = new FormData();
       files.forEach((f) => formData.append("files", f));
-      const res = await fetch(`${API_BASE}/api/arbitrate/upload`, {
+      const res = await fetch(`${API_BASE}/arbitrate/upload`, {
         method: "POST",
         body: formData,
       });
@@ -226,7 +226,7 @@ export const openDisputeThunk = createAsyncThunk(
     { rejectWithValue },
   ) => {
     try {
-      const res = await fetch(`${API_BASE}/api/arbitrate/open`, {
+      const res = await fetch(`${API_BASE}/arbitrate/open`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -263,7 +263,7 @@ export const submitStatementThunk = createAsyncThunk(
     { rejectWithValue },
   ) => {
     try {
-      const res = await fetch(`${API_BASE}/api/arbitrate/submit`, {
+      const res = await fetch(`${API_BASE}/arbitrate/submit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -294,7 +294,7 @@ export const resolveDisputeThunk = createAsyncThunk(
     { rejectWithValue },
   ) => {
     try {
-      const res = await fetch(`${API_BASE}/api/arbitrate/resolve`, {
+      const res = await fetch(`${API_BASE}/arbitrate/resolve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

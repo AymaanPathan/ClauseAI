@@ -411,7 +411,7 @@ export function useSyncedAgreement({
     const mySeq = ++fetchSeqRef.current;
     try {
       const res = await fetch(
-        `${API_BASE}/api/agreement/${agreementId}/milestones`,
+        `${API_BASE}/agreement/${agreementId}/milestones`,
       );
       if (!res.ok) return;
       const data = await res.json();
@@ -460,7 +460,7 @@ export function useSyncedAgreement({
       if (!agreementId) return;
       try {
         const res = await fetch(
-          `${API_BASE}/api/arbitrate/${agreementId}/${milestoneIndex}`,
+          `${API_BASE}/arbitrate/${agreementId}/${milestoneIndex}`,
         );
         if (!res.ok) return;
         const json = await res.json();

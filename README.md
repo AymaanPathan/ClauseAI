@@ -1,12 +1,13 @@
 <div align="center">
 
-                 
-                               ██████╗██╗      █████╗ ██╗   ██╗███████╗███████╗ █████╗ ██╗
-                              ██╔════╝██║     ██╔══██╗██║   ██║██╔════╝██╔════╝██╔══██╗██║
-                              ██║     ██║     ███████║██║   ██║███████╗█████╗  ███████║██║
-                              ██║     ██║     ██╔══██║██║   ██║╚════██║██╔══╝  ██╔══██║██║
-                              ╚██████╗███████╗██║  ██║╚██████╔╝███████║███████╗██║  ██║██║
-                               ╚═════╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚══════╝╚═╝  ╚═╝╚═
+```
+ ██████╗██╗      █████╗ ██╗   ██╗███████╗███████╗ █████╗ ██╗
+██╔════╝██║     ██╔══██╗██║   ██║██╔════╝██╔════╝██╔══██╗██║
+██║     ██║     ███████║██║   ██║███████╗█████╗  ███████║██║
+██║     ██║     ██╔══██║██║   ██║╚════██║██╔══╝  ██╔══██║██║
+╚██████╗███████╗██║  ██║╚██████╔╝███████║███████╗██║  ██║██║
+ ╚═════╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚══════╝╚═╝  ╚═╝╚═╝
+```
 
 **The Legal Layer for Bitcoin**
 
@@ -23,7 +24,6 @@
 
 ---
 
-<img width="1092" height="590" alt="landing" src="https://github.com/user-attachments/assets/948c64c2-2185-4c0f-b54a-88a0f97a4a41" />
 ## 🔴 The Problem
 
 Every day, millions of people make deals that get broken.
@@ -62,6 +62,9 @@ ClauseAI:    ✓ Parties extracted      → payer: you, receiver: Alex
 ```
 
 ---
+
+<img width="1092" height="590" alt="landing" src="https://github.com/user-attachments/assets/0fa8ab68-11e5-4ace-8db2-495f828abf50" />
+
 
 ## 🎬 Demo
 
@@ -398,7 +401,6 @@ Pull requests are welcome. For major changes, please open an issue first.
 3. Commit your changes (`git commit -m 'Add amazing feature'`)
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
-
 
 <div align="center">
 

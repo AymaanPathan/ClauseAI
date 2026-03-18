@@ -1,6 +1,8 @@
 "use client";
 // ============================================================
-// components/partyB/ScreenDashboard.tsx
+// components/partyB/ScreenDashboard.tsx — FULLY RESPONSIVE
+// Breakpoints: 1024 / 900 / 768 / 580 / 400
+// Mirrors the responsive pattern of partyA/ScreenDashboard.tsx
 // ============================================================
 
 import {
@@ -21,7 +23,6 @@ import {
   type SyncedMilestone,
 } from "@/hook/useSyncedAgreement";
 
-const API_BASE = process.env.NEXT_PUBLIC_BACKEND_URL;
 type MsStatus = SyncedMilestone["status"];
 
 function statusColor(s: MsStatus) {
@@ -72,7 +73,6 @@ function fmtDate(iso?: string): string {
   });
 }
 
-// ── Deadline helpers (same as Party A dashboard) ──────────────
 function fmtDeadline(iso: string | null | undefined): string {
   if (!iso) return "";
   try {
@@ -106,22 +106,7 @@ function DeadlineBadge({ iso }: { iso: string | null | undefined }) {
   if (!label) return null;
   const overdue = isOverdue(iso);
   return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 5,
-        fontSize: 9,
-        fontFamily: "var(--mono)",
-        fontWeight: 600,
-        color: overdue ? "var(--red)" : "var(--text-4)",
-        background: overdue ? "var(--red-dim)" : "var(--bg-3)",
-        border: `1px solid ${overdue ? "rgba(248,113,113,0.20)" : "rgba(255,255,255,0.07)"}`,
-        borderRadius: 4,
-        padding: "2px 8px",
-        letterSpacing: "0.02em",
-      }}
-    >
+    <span className={`pbb-deadline${overdue ? " pbb-deadline--overdue" : ""}`}>
       <svg
         width="8"
         height="8"
@@ -141,7 +126,6 @@ function DeadlineBadge({ iso }: { iso: string | null | undefined }) {
 }
 
 // ── Arbitrator Decision Banner ────────────────────────────────
-
 interface ArbitratorDecision {
   outcome: "release_to_receiver" | "refund_to_payer" | "split";
   followed_ai: boolean;
@@ -158,7 +142,7 @@ function ArbitratorDecisionBanner({
   viewerRole: "A" | "B";
 }) {
   const isRelease = decision.outcome === "release_to_receiver";
-  const outcomeColor = isRelease ? "var(--green)" : "var(--red)";
+  const c = isRelease ? "#4ade80" : "#f87171";
   const outcomeLabel = isRelease
     ? "Funds Released to Receiver"
     : "Funds Refunded to Payer";
@@ -173,165 +157,61 @@ function ArbitratorDecisionBanner({
 
   return (
     <div
-      style={{
-        margin: "8px 0 4px",
-        border: `1px solid ${outcomeColor}28`,
-        borderRadius: 8,
-        overflow: "hidden",
-        background: `color-mix(in srgb, ${outcomeColor} 5%, transparent)`,
-      }}
+      className="pbb-arb-banner"
+      style={{ borderColor: `${c}28`, background: `${c}06` }}
     >
       <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          padding: "9px 12px",
-          background: `color-mix(in srgb, ${outcomeColor} 8%, transparent)`,
-          borderBottom: `1px solid ${outcomeColor}18`,
-        }}
+        className="pbb-arb-head"
+        style={{ background: `${c}0a`, borderColor: `${c}18` }}
       >
         <span style={{ fontSize: 14 }}>⚖</span>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div
-            style={{
-              fontSize: 9,
-              fontFamily: "var(--mono)",
-              fontWeight: 700,
-              textTransform: "uppercase",
-              letterSpacing: "0.10em",
-              color: outcomeColor,
-              marginBottom: 2,
-            }}
-          >
+          <div className="pbb-arb-eyebrow" style={{ color: c }}>
             Arbitrator Decision
           </div>
-          <div
-            style={{
-              fontSize: 12,
-              fontWeight: 700,
-              color: outcomeColor,
-              letterSpacing: "-0.02em",
-            }}
-          >
+          <div className="pbb-arb-title" style={{ color: c }}>
             {outcomeLabel}
           </div>
         </div>
         {((viewerRole === "B" && isRelease) ||
           (viewerRole === "A" && !isRelease)) && (
           <span
-            style={{
-              fontSize: 9,
-              fontFamily: "var(--mono)",
-              fontWeight: 700,
-              textTransform: "uppercase",
-              letterSpacing: "0.06em",
-              color: outcomeColor,
-              background: `color-mix(in srgb, ${outcomeColor} 15%, transparent)`,
-              border: `1px solid ${outcomeColor}30`,
-              borderRadius: 3,
-              padding: "2px 7px",
-            }}
+            className="pbb-arb-you"
+            style={{ color: c, borderColor: `${c}30`, background: `${c}15` }}
           >
             You
           </span>
         )}
       </div>
-      <div
-        style={{
-          padding: "10px 12px",
-          display: "flex",
-          flexDirection: "column",
-          gap: 8,
-        }}
-      >
-        <p
-          style={{
-            fontSize: 12,
-            color: "var(--text-3)",
-            lineHeight: 1.6,
-            margin: 0,
-          }}
-        >
-          {personalMsg}
-        </p>
+      <div className="pbb-arb-body">
+        <p className="pbb-arb-msg">{personalMsg}</p>
         {decision.override_reason && (
-          <div
-            style={{
-              background: "rgba(255,255,255,0.03)",
-              border: "1px solid rgba(255,255,255,0.08)",
-              borderRadius: 6,
-              padding: "9px 11px",
-            }}
-          >
-            <div
-              style={{
-                fontSize: 9,
-                fontFamily: "var(--mono)",
-                fontWeight: 600,
-                textTransform: "uppercase",
-                letterSpacing: "0.10em",
-                color: "var(--text-4)",
-                marginBottom: 5,
-              }}
-            >
-              Arbitrator&apos;s Note
-            </div>
-            <p
-              style={{
-                fontSize: 12,
-                color: "var(--text-3)",
-                lineHeight: 1.65,
-                fontStyle: "italic",
-                margin: 0,
-              }}
-            >
+          <div className="pbb-arb-note">
+            <div className="pbb-arb-note-label">Arbitrator&apos;s Note</div>
+            <p className="pbb-arb-note-text">
               &ldquo;{decision.override_reason}&rdquo;
             </p>
           </div>
         )}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            flexWrap: "wrap",
-          }}
-        >
-          <span
-            style={{
-              fontSize: 9,
-              fontFamily: "var(--mono)",
-              color: "var(--text-4)",
-            }}
-          >
+        <div className="pbb-arb-meta">
+          <span className="pbb-arb-meta-item">
             By {truncateAddr(decision.arbitrator_address)}
           </span>
-          <span style={{ color: "var(--text-4)", fontSize: 10 }}>·</span>
-          <span
-            style={{
-              fontSize: 9,
-              fontFamily: "var(--mono)",
-              color: "var(--text-4)",
-            }}
-          >
+          <span className="pbb-arb-sep">·</span>
+          <span className="pbb-arb-meta-item">
             {fmtDate(decision.decided_at)}
           </span>
-          <span style={{ color: "var(--text-4)", fontSize: 10 }}>·</span>
+          <span className="pbb-arb-sep">·</span>
           <span
+            className="pbb-arb-ai"
             style={{
-              fontSize: 8,
-              fontFamily: "var(--mono)",
-              fontWeight: 700,
-              textTransform: "uppercase",
-              letterSpacing: "0.08em",
-              color: decision.followed_ai ? "var(--green)" : "var(--amber)",
+              color: decision.followed_ai ? "#4ade80" : "#fbbf24",
               background: decision.followed_ai
                 ? "rgba(74,222,128,0.07)"
                 : "rgba(251,191,36,0.07)",
-              border: `1px solid ${decision.followed_ai ? "rgba(74,222,128,0.20)" : "rgba(251,191,36,0.20)"}`,
-              borderRadius: 3,
-              padding: "2px 6px",
+              borderColor: decision.followed_ai
+                ? "rgba(74,222,128,0.20)"
+                : "rgba(251,191,36,0.20)",
             }}
           >
             {decision.followed_ai ? "✓ Followed AI" : "↺ Overrode AI"}
@@ -343,7 +223,6 @@ function ArbitratorDecisionBanner({
 }
 
 // ── History Card ──────────────────────────────────────────────
-
 function HistoryCard({ agreementId }: { agreementId: string }) {
   const [expanded, setExpanded] = useState(false);
   const {
@@ -358,17 +237,23 @@ function HistoryCard({ agreementId }: { agreementId: string }) {
 
   if (loading)
     return (
-      <div className="db-hist-row">
-        <span className="spinner" style={{ width: 10, height: 10 }} />
-        <span className="db-hist-id">#{agreementId}</span>
+      <div className="pbb-hist-row">
+        <span className="pbb-spinner-sm" />
+        <span className="pbb-hist-id">#{agreementId}</span>
       </div>
     );
 
   if (!milestones.length)
     return (
-      <div className="db-hist-row" style={{ opacity: 0.4 }}>
-        <span className="db-hist-id">#{agreementId}</span>
-        <span className="label" style={{ marginLeft: 6 }}>
+      <div className="pbb-hist-row" style={{ opacity: 0.4 }}>
+        <span className="pbb-hist-id">#{agreementId}</span>
+        <span
+          style={{
+            marginLeft: 6,
+            fontSize: 10,
+            color: "rgba(255,255,255,.25)",
+          }}
+        >
           not found
         </span>
       </div>
@@ -387,51 +272,36 @@ function HistoryCard({ agreementId }: { agreementId: string }) {
 
   return (
     <div
-      className={`db-hist-row${expanded ? " db-hist-row--open" : ""}`}
+      className={`pbb-hist-row${expanded ? " pbb-hist-row--open" : ""}`}
       onClick={() => setExpanded(!expanded)}
     >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          flex: 1,
-          minWidth: 0,
-        }}
-      >
-        <span className="db-hist-id">#{agreementId}</span>
+      <div className="pbb-hist-row-left">
+        <span className="pbb-hist-id">#{agreementId}</span>
         <div style={{ minWidth: 0 }}>
-          <div className="db-hist-payer">← {payerName}</div>
-          <div className="db-hist-amount">${displayAmt} USD</div>
+          <div className="pbb-hist-payer">← {payerName}</div>
+          <div className="pbb-hist-amount">${displayAmt} USD</div>
         </div>
       </div>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 14,
-          flexShrink: 0,
-        }}
-      >
-        <div className="db-hist-bar-wrap">
-          <div className="db-hist-bar-label">
+      <div className="pbb-hist-row-right">
+        <div className="pbb-hist-bar-wrap">
+          <div className="pbb-hist-bar-label">
             {completedMs}/{milestones.length}
           </div>
-          <div className="db-hist-bar">
+          <div className="pbb-hist-bar">
             <div
-              className="db-hist-bar-fill"
+              className="pbb-hist-bar-fill"
               style={{
                 width: `${pct}%`,
-                background: pct === 100 ? "var(--green)" : "var(--text-3)",
+                background: pct === 100 ? "#4ade80" : "rgba(255,255,255,.35)",
               }}
             />
           </div>
         </div>
-        <span className={`state-tag state-tag--${fundState}`}>
+        <span className={`pbb-state-tag pbb-state-tag--${fundState}`}>
           {fundStateLabel(fundState)}
         </span>
         <svg
-          className={`db-hist-chevron${expanded ? " db-hist-chevron--open" : ""}`}
+          className={`pbb-hist-chevron${expanded ? " pbb-hist-chevron--open" : ""}`}
           width="10"
           height="10"
           viewBox="0 0 24 24"
@@ -443,11 +313,11 @@ function HistoryCard({ agreementId }: { agreementId: string }) {
         </svg>
       </div>
       {expanded && (
-        <div className="db-hist-expanded" onClick={(e) => e.stopPropagation()}>
+        <div className="pbb-hist-expanded" onClick={(e) => e.stopPropagation()}>
           {milestones.map((ms) => (
-            <div key={ms.index} className="db-hist-ms">
+            <div key={ms.index} className="pbb-hist-ms">
               <div
-                className="db-hist-ms-dot"
+                className="pbb-hist-ms-dot"
                 style={{
                   color: statusColor(ms.status),
                   background: statusColor(ms.status) + "15",
@@ -457,26 +327,19 @@ function HistoryCard({ agreementId }: { agreementId: string }) {
                 {ms.status === "complete" ? "✓" : ms.index + 1}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div className="db-hist-ms-title">{ms.title}</div>
+                <div className="pbb-hist-ms-title">{ms.title}</div>
                 {ms.condition && (
-                  <div className="db-hist-ms-cond">
+                  <div className="pbb-hist-ms-cond">
                     {ms.condition.length > 60
                       ? ms.condition.slice(0, 60) + "…"
                       : ms.condition}
                   </div>
                 )}
               </div>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  flexShrink: 0,
-                }}
-              >
-                <span className="db-hist-ms-amt">${ms.amountUsd}</span>
+              <div className="pbb-hist-ms-right">
+                <span className="pbb-hist-ms-amt">${ms.amountUsd}</span>
                 <span
-                  className="ms-status-pill"
+                  className="pbb-ms-pill"
                   style={{
                     color: statusColor(ms.status),
                     background: statusColor(ms.status) + "10",
@@ -490,7 +353,7 @@ function HistoryCard({ agreementId }: { agreementId: string }) {
                     href={ms.txUrl ?? explorerTxUrl(ms.txId)}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="db-ms-tx-link"
+                    className="pbb-tx-link"
                   >
                     tx ↗
                   </a>
@@ -499,7 +362,10 @@ function HistoryCard({ agreementId }: { agreementId: string }) {
             </div>
           ))}
           {fundState !== "released" && (
-            <a href={`/agreement/${agreementId}`} className="db-hist-open-link">
+            <a
+              href={`/agreement/${agreementId}`}
+              className="pbb-hist-open-link"
+            >
               {fundState === "locked"
                 ? "Open Live Dashboard →"
                 : "Resume Agreement →"}
@@ -512,7 +378,6 @@ function HistoryCard({ agreementId }: { agreementId: string }) {
 }
 
 // ── Main Dashboard ────────────────────────────────────────────
-
 export default function PartyBDashboard() {
   const {
     terms: reduxTerms,
@@ -530,11 +395,8 @@ export default function PartyBDashboard() {
   const {
     milestones,
     fundState,
-    fundsLocked,
     amountLocked,
     partyA,
-    partyAApproved,
-    partyBApproved,
     totalAmountUsd,
     totalAmountSats,
     terms,
@@ -546,6 +408,7 @@ export default function PartyBDashboard() {
     refetch,
   } = useSyncedAgreement({ agreementId, walletAddress });
 
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [disputeConfirmMs, setDisputeConfirmMs] =
     useState<SyncedMilestone | null>(null);
   const [disputingIndex, setDisputingIndex] = useState<number | null>(null);
@@ -631,11 +494,22 @@ export default function PartyBDashboard() {
 
   return (
     <div>
+      <style>{css}</style>
+
       {/* ── Topbar ── */}
-      <div className="db-topbar">
-        <div className="db-topbar-left">
+      <header className="pbb-topbar">
+        <div className="pbb-topbar-left">
+          <button
+            className="pbb-ham"
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            aria-label="Toggle sidebar"
+          >
+            <span />
+            <span />
+            <span />
+          </button>
           <a
-            className="db-brand"
+            className="pbb-brand"
             href="/"
             onClick={(e) => {
               e.preventDefault();
@@ -650,206 +524,273 @@ export default function PartyBDashboard() {
               window.location.href = "/";
             }}
           >
-            <span className="db-brand-mark">◈</span>
-            <span className="db-brand-name">ClauseAI</span>
+            <span className="pbb-brand-mark">◈</span>
+            <span className="pbb-brand-name">ClauseAI</span>
           </a>
-          <div className="db-topbar-sep" />
-          <nav className="db-breadcrumb">
-            <span>Agreement</span>
-            <span className="db-breadcrumb-sep">/</span>
-            <span>#{agreementId}</span>
-            <span className="db-breadcrumb-sep">/</span>
-            <span className="db-breadcrumb-cur">Party B</span>
+          <div className="pbb-nav-sep" />
+          <nav className="pbb-breadcrumb">
+            <span className="pbb-bc-dim">Agreement</span>
+            <span className="pbb-bc-arr">›</span>
+            <span className="pbb-bc-id">#{agreementId}</span>
+            <span className="pbb-bc-arr pbb-bc-arr-last">›</span>
+            <span className="pbb-bc-cur">Party B</span>
           </nav>
         </div>
-        <div className="db-topbar-right">
+        <div className="pbb-topbar-right">
           {lastUpdate && (
-            <span className="db-timestamp">
-              {lastUpdate.toLocaleTimeString()}
-            </span>
+            <span className="pbb-ts">{lastUpdate.toLocaleTimeString()}</span>
           )}
-          <div
-            className={`db-live-badge${connected ? "" : " db-live-badge--off"}`}
-          >
+          {walletAddress && (
+            <div className="pbb-wallet">
+              <span className="pbb-wallet-dot" />
+              <span className="pbb-wallet-addr">
+                {walletAddress.slice(0, 10)}…{walletAddress.slice(-6)}
+              </span>
+            </div>
+          )}
+          <div className={`pbb-live${connected ? "" : " pbb-live--off"}`}>
             <span
-              className={`db-live-dot${connected ? "" : " db-live-dot--off"}`}
+              className={`pbb-live-dot${connected ? "" : " pbb-live-dot--off"}`}
             />
-            {connected ? "Live" : "Reconnecting"}
+            <span className="pbb-live-label">
+              {connected ? "Live" : "Reconnecting"}
+            </span>
           </div>
         </div>
-      </div>
+      </header>
+
+      {/* Overlay */}
+      {sidebarOpen && (
+        <div className="pbb-overlay" onClick={() => setSidebarOpen(false)} />
+      )}
 
       {/* ── Shell ── */}
-      <div className="db-shell">
+      <div className="pbb-shell">
         {/* ── Sidebar ── */}
-        <aside className="db-sidebar">
-          <div className="db-sidebar-section">
-            <div className="db-sidebar-label">Navigation</div>
-            <nav className="db-nav">
+        <aside
+          className={`pbb-sidebar${sidebarOpen ? " pbb-sidebar--open" : ""}`}
+        >
+          <div className="pbb-sb-block">
+            <div className="pbb-sb-label">Navigation</div>
+            <nav className="pbb-nav">
               <button
-                className={`db-nav-item${activeTab === "current" ? " db-nav-item--active" : ""}`}
-                onClick={() => setActiveTab("current")}
+                className={`pbb-nav-item${activeTab === "current" ? " pbb-nav-item--active" : ""}`}
+                onClick={() => {
+                  setActiveTab("current");
+                  setSidebarOpen(false);
+                }}
               >
-                <span className="db-nav-icon">▣</span> Dashboard
+                <span className="pbb-nav-icon">
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                  >
+                    <rect x="3" y="3" width="7" height="7" rx="1" />
+                    <rect x="14" y="3" width="7" height="7" rx="1" />
+                    <rect x="3" y="14" width="7" height="7" rx="1" />
+                    <rect x="14" y="14" width="7" height="7" rx="1" />
+                  </svg>
+                </span>
+                Dashboard
               </button>
               <button
-                className={`db-nav-item${activeTab === "history" ? " db-nav-item--active" : ""}`}
-                onClick={() => setActiveTab("history")}
+                className={`pbb-nav-item${activeTab === "history" ? " pbb-nav-item--active" : ""}`}
+                onClick={() => {
+                  setActiveTab("history");
+                  setSidebarOpen(false);
+                }}
               >
-                <span className="db-nav-icon">◫</span> History
+                <span className="pbb-nav-icon">
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                  >
+                    <rect x="3" y="3" width="18" height="5" rx="1" />
+                    <rect x="3" y="10" width="18" height="5" rx="1" />
+                    <rect x="3" y="17" width="18" height="4" rx="1" />
+                  </svg>
+                </span>
+                History
                 {historyIds.length > 0 && (
-                  <span className="db-nav-badge">{historyIds.length}</span>
+                  <span className="pbb-nav-badge">{historyIds.length}</span>
                 )}
               </button>
             </nav>
           </div>
-          <div className="db-sidebar-section">
-            <div className="db-sidebar-label">Agreement</div>
-            <div className="db-meta-list">
-              <div className="db-meta-row">
-                <span className="db-meta-key">Status</span>
-                <span className={`state-tag state-tag--${fundState}`}>
-                  {fundStateLabel(fundState)}
-                </span>
-              </div>
-              <div className="db-meta-row">
-                <span className="db-meta-key">Milestones</span>
-                <span className="db-meta-val">
-                  {completedCount}/{milestones.length}
-                </span>
-              </div>
-              <div className="db-meta-row">
-                <span className="db-meta-key">Progress</span>
-                <span className="db-meta-val">{progressPct}%</span>
-              </div>
-            </div>
-          </div>
-          <div className="db-ring-wrap">
-            <svg width="72" height="72" viewBox="0 0 72 72">
+
+          <div className="pbb-ring-wrap">
+            <svg width="80" height="80" viewBox="0 0 80 80">
               <circle
-                cx="36"
-                cy="36"
-                r="28"
+                cx="40"
+                cy="40"
+                r="32"
                 fill="none"
-                stroke="var(--bg-4)"
+                stroke="rgba(255,255,255,0.06)"
                 strokeWidth="4"
               />
               <circle
-                cx="36"
-                cy="36"
-                r="28"
+                cx="40"
+                cy="40"
+                r="32"
                 fill="none"
-                stroke={progressPct === 100 ? "var(--green)" : "var(--accent)"}
+                stroke={progressPct === 100 ? "#4ade80" : "#d4ff00"}
                 strokeWidth="4"
-                strokeDasharray={`${2 * Math.PI * 28}`}
-                strokeDashoffset={`${2 * Math.PI * 28 * (1 - progressPct / 100)}`}
+                strokeDasharray={`${2 * Math.PI * 32}`}
+                strokeDashoffset={`${2 * Math.PI * 32 * (1 - progressPct / 100)}`}
                 strokeLinecap="round"
-                transform="rotate(-90 36 36)"
+                transform="rotate(-90 40 40)"
                 style={{
                   transition:
                     "stroke-dashoffset 0.8s cubic-bezier(0.16,1,0.3,1)",
                 }}
               />
               <text
-                x="36"
-                y="40"
+                x="40"
+                y="44"
                 textAnchor="middle"
-                fill="var(--text-1)"
-                fontSize="12"
+                fill="#ffffff"
+                fontSize="13"
                 fontWeight="700"
-                fontFamily="var(--mono)"
+                fontFamily="'DM Mono',monospace"
               >
                 {progressPct}%
               </text>
             </svg>
-            <div className="db-ring-label">Overall</div>
+            <div className="pbb-ring-label">
+              {completedCount}/{milestones.length} milestones
+            </div>
+          </div>
+
+          <div className="pbb-sb-block">
+            <div className="pbb-sb-label">Agreement</div>
+            <div className="pbb-meta-list">
+              <div className="pbb-meta-row">
+                <span className="pbb-meta-key">Status</span>
+                <span className={`pbb-state-tag pbb-state-tag--${fundState}`}>
+                  {fundStateLabel(fundState)}
+                </span>
+              </div>
+              <div className="pbb-meta-row">
+                <span className="pbb-meta-key">Milestones</span>
+                <span className="pbb-meta-val">
+                  {completedCount}/{milestones.length}
+                </span>
+              </div>
+              <div className="pbb-meta-row">
+                <span className="pbb-meta-key">Progress</span>
+                <span className="pbb-meta-val">{progressPct}%</span>
+              </div>
+            </div>
           </div>
         </aside>
 
         {/* ── Main ── */}
-        <main className="db-main">
+        <main className="pbb-main">
+          {/* ── History Tab ── */}
           {activeTab === "history" && (
-            <div className="fade-up">
-              <div className="db-page-header" style={{ marginBottom: 0 }}>
+            <div>
+              <div className="pbb-page-header" style={{ marginBottom: 0 }}>
                 <div>
-                  <div className="db-eyebrow">Transaction History</div>
-                  <h1 className="db-page-title">All Agreements</h1>
+                  <div className="pbb-eyebrow">Transaction History</div>
+                  <h1 className="pbb-page-title">All Agreements</h1>
                 </div>
               </div>
-              <div className="db-hist-list" style={{ marginTop: 24 }}>
+              <div className="pbb-hist-list">
                 {historyIds.map((id) => (
                   <HistoryCard key={id} agreementId={id} />
                 ))}
                 {historyIds.length === 0 && (
-                  <div className="db-loading">
-                    <span className="db-loading-text">No agreements yet.</span>
+                  <div className="pbb-loading">
+                    <span className="pbb-loading-text">No agreements yet.</span>
                   </div>
                 )}
               </div>
             </div>
           )}
 
+          {/* ── Current Tab ── */}
           {activeTab === "current" && (
             <>
-              <div className="db-page-header fade-up">
+              <div className="pbb-page-header">
                 <div>
-                  <div className="db-eyebrow">Receiver Dashboard</div>
-                  <h1 className="db-page-title">Your Dashboard</h1>
+                  <div className="pbb-eyebrow">Receiver Dashboard</div>
+                  <h1 className="pbb-page-title">Your Dashboard</h1>
                 </div>
                 {walletAddress && (
-                  <div className="db-wallet-chip">
-                    <span className="db-wallet-dot" />
-                    <span className="db-wallet-addr">
+                  <div className="pbb-wallet-chip">
+                    <span className="pbb-wallet-dot" />
+                    <span className="pbb-wallet-addr">
                       {walletAddress.slice(0, 10)}…{walletAddress.slice(-6)}
                     </span>
                   </div>
                 )}
               </div>
 
-              <div className="db-stats-grid fade-up d1">
+              {/* Stats */}
+              <div className="pbb-stats">
                 {statsCards.map(({ label, value, sub, icon }) => (
-                  <div key={label} className="db-stat-card">
-                    <div className="db-stat-icon">{icon}</div>
-                    <div className="db-stat-label">{label}</div>
-                    <div className="db-stat-value">{value}</div>
-                    <div className="db-stat-sub">{sub}</div>
+                  <div key={label} className="pbb-stat">
+                    <div className="pbb-stat-icon">{icon}</div>
+                    <div className="pbb-stat-label">{label}</div>
+                    <div className="pbb-stat-value">{value}</div>
+                    <div className="pbb-stat-sub">{sub}</div>
                   </div>
                 ))}
               </div>
 
-              <div className="db-progress-wrap fade-up d2">
-                <div className="db-progress-header">
-                  <span className="label">Completion</span>
-                  <span className="label">
-                    {milestones.length > 0
-                      ? `${completedCount} of ${milestones.length} milestones`
-                      : "Awaiting data"}
-                  </span>
+              {/* Progress */}
+              <div className="pbb-prog-card">
+                <div className="pbb-prog-top">
+                  <span className="pbb-prog-title">Completion</span>
+                  <div className="pbb-prog-right">
+                    <span
+                      className="pbb-prog-pct"
+                      style={{
+                        color: progressPct === 100 ? "#4ade80" : "#d4ff00",
+                      }}
+                    >
+                      {progressPct}%
+                    </span>
+                    <span className="pbb-prog-frac">
+                      {milestones.length > 0
+                        ? `${completedCount} of ${milestones.length}`
+                        : "Awaiting data"}
+                    </span>
+                  </div>
                 </div>
-                <div className="db-progress-track">
+                <div className="pbb-prog-track">
                   <div
-                    className="db-progress-fill"
+                    className="pbb-prog-fill"
                     style={{
                       width: `${progressPct > 0 ? progressPct : 0.5}%`,
-                      background:
-                        progressPct === 100 ? "var(--green)" : "var(--accent)",
+                      background: progressPct === 100 ? "#4ade80" : "#d4ff00",
                     }}
                   />
                 </div>
               </div>
 
               {loading && (
-                <div className="db-loading fade-in">
-                  <span className="spinner" style={{ width: 16, height: 16 }} />
-                  <span className="db-loading-text">
+                <div className="pbb-loading">
+                  <span className="pbb-spinner-sm" />
+                  <span className="pbb-loading-text">
                     Fetching milestone data…
                   </span>
                 </div>
               )}
 
               {!loading && milestones.length === 0 && (
-                <div className="db-empty-state fade-up d3">
-                  <div className="db-empty-icon">
+                <div className="pbb-empty-state">
+                  <div className="pbb-empty-icon">
                     <svg
                       width="20"
                       height="20"
@@ -863,10 +804,10 @@ export default function PartyBDashboard() {
                     </svg>
                   </div>
                   <div>
-                    <div className="db-empty-title">
+                    <div className="pbb-empty-title">
                       Awaiting milestone data
                     </div>
-                    <div className="db-empty-body">
+                    <div className="pbb-empty-body">
                       Funds are locked. Details appear once the payer opens
                       their dashboard.
                     </div>
@@ -875,14 +816,14 @@ export default function PartyBDashboard() {
               )}
 
               {!loading && milestones.length > 0 && (
-                <div className="fade-up d3">
-                  <div className="db-section-head">
-                    <span className="label">Milestones</span>
-                    <span className="db-section-count">
+                <div>
+                  <div className="pbb-sec-head">
+                    <span className="pbb-sec-title">Milestones</span>
+                    <span className="pbb-sec-count">
                       {milestones.length} total
                     </span>
                   </div>
-                  <div className="db-ms-list">
+                  <div className="pbb-ms-list">
                     {milestones.map((ms) => {
                       const isDone = isSettled(ms.status);
                       const isPending = ms.status === "pending";
@@ -891,166 +832,171 @@ export default function PartyBDashboard() {
                       const alreadySub = disputeSubmitted[ms.index];
                       const arbDecision = arbDecisions[ms.index] ?? null;
                       const showArbBanner = isDone && arbDecision !== null;
-
-                      // ── deadline_dt: read from milestone directly (after backend fix)
-                      // or fall back to the legacy string deadline field
                       const deadlineDt: string | null =
                         (ms as any).deadline_dt ?? null;
                       const overdue =
                         isOverdue(deadlineDt) && !isDone && !isDisputed;
 
                       return (
-                        <div key={ms.index} className="db-ms-block">
-                          <div
-                            className={[
-                              "db-ms-row",
-                              isDone ? "db-ms-row--done" : "",
-                              isPending ? "db-ms-row--pending" : "",
-                              isDisputed ? "db-ms-row--disputed" : "",
-                              isFlashing ? "db-ms-row--flash" : "",
-                            ]
-                              .filter(Boolean)
-                              .join(" ")}
-                          >
+                        <div
+                          key={ms.index}
+                          className={[
+                            "pbb-ms-block",
+                            isDone ? "pbb-ms-block--done" : "",
+                            isDisputed ? "pbb-ms-block--disp" : "",
+                            isPending ? "pbb-ms-block--pending" : "",
+                            isFlashing ? "pbb-ms-block--flash" : "",
+                          ]
+                            .filter(Boolean)
+                            .join(" ")}
+                        >
+                          <div className="pbb-ms-row">
+                            {/* Number */}
                             <div
                               className={[
-                                "db-ms-num",
-                                isDone ? "db-ms-num--done" : "",
-                                isDisputed ? "db-ms-num--disputed" : "",
+                                "pbb-ms-num",
+                                isDone ? "pbb-ms-num--done" : "",
+                                isDisputed ? "pbb-ms-num--disp" : "",
                               ]
                                 .filter(Boolean)
                                 .join(" ")}
                             >
-                              {isDone ? "✓" : ms.index + 1}
+                              {isDone ? (
+                                <svg
+                                  width="11"
+                                  height="11"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="3"
+                                  strokeLinecap="round"
+                                >
+                                  <polyline points="20 6 9 17 4 12" />
+                                </svg>
+                              ) : (
+                                ms.index + 1
+                              )}
                             </div>
-                            <div className="db-ms-info">
-                              <div className="db-ms-title-row">
-                                <span className="db-ms-title">{ms.title}</span>
+
+                            {/* Info */}
+                            <div className="pbb-ms-info">
+                              <div className="pbb-ms-title-row">
+                                <span className="pbb-ms-title">{ms.title}</span>
                                 {isDisputed && (
-                                  <span className="db-dispute-chip">
+                                  <span className="pbb-chip pbb-chip--disp">
                                     ⚑ Dispute
                                   </span>
                                 )}
+                                {isPending && (
+                                  <span className="pbb-chip pbb-chip--pending">
+                                    <span className="pbb-spinner-xs" />
+                                    Confirming
+                                  </span>
+                                )}
                                 {isDone && arbDecision && (
-                                  <span
-                                    style={{
-                                      fontSize: 9,
-                                      fontFamily: "var(--mono)",
-                                      fontWeight: 700,
-                                      textTransform: "uppercase",
-                                      letterSpacing: "0.07em",
-                                      color: "#fbbf24",
-                                      background: "rgba(251,191,36,0.10)",
-                                      border: "1px solid rgba(251,191,36,0.25)",
-                                      borderRadius: 3,
-                                      padding: "2px 7px",
-                                    }}
-                                  >
+                                  <span className="pbb-chip pbb-chip--arb">
                                     ⚖ Arbitrated
                                   </span>
                                 )}
-                                {/* Overdue warning chip */}
                                 {overdue && (
-                                  <span
-                                    style={{
-                                      fontSize: 9,
-                                      fontFamily: "var(--mono)",
-                                      fontWeight: 700,
-                                      color: "var(--red)",
-                                      background: "var(--red-dim)",
-                                      border:
-                                        "1px solid rgba(248,113,113,0.20)",
-                                      borderRadius: 3,
-                                      padding: "2px 7px",
-                                    }}
-                                  >
+                                  <span className="pbb-chip pbb-chip--overdue">
                                     ⚠ Overdue
                                   </span>
                                 )}
                                 {isFlashing && !isDisputed && !isDone && (
-                                  <span className="db-flash-chip">Updated</span>
+                                  <span className="pbb-chip pbb-chip--flash">
+                                    Updated
+                                  </span>
                                 )}
                               </div>
 
                               {ms.condition && (
-                                <div className="db-ms-condition">
-                                  {ms.condition}
-                                </div>
+                                <p className="pbb-ms-cond">{ms.condition}</p>
                               )}
 
-                              {/* ── Deadline display ── */}
-                              <div
-                                className="db-ms-meta-row"
-                                style={{
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: 8,
-                                  flexWrap: "wrap",
-                                  marginTop: 4,
-                                }}
-                              >
+                              <div className="pbb-ms-meta">
                                 {deadlineDt ? (
                                   <DeadlineBadge iso={deadlineDt} />
                                 ) : ms.deadline ? (
-                                  <span className="db-ms-deadline">
-                                    ⏱ {ms.deadline}
+                                  <span className="pbb-ms-dl">
+                                    <svg
+                                      width="9"
+                                      height="9"
+                                      viewBox="0 0 24 24"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      strokeWidth="1.5"
+                                    >
+                                      <circle cx="12" cy="12" r="10" />
+                                      <polyline points="12 6 12 12 16 14" />
+                                    </svg>
+                                    {ms.deadline}
                                   </span>
                                 ) : null}
-
                                 {ms.txId && (
-                                  <div className="db-ms-tx">
-                                    <span className="db-ms-tx-label">TX</span>
-                                    <a
-                                      href={ms.txUrl ?? explorerTxUrl(ms.txId)}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="db-ms-tx-link"
+                                  <a
+                                    href={ms.txUrl ?? explorerTxUrl(ms.txId)}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="pbb-tx-link"
+                                  >
+                                    <svg
+                                      width="9"
+                                      height="9"
+                                      viewBox="0 0 24 24"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      strokeWidth="1.5"
                                     >
-                                      {ms.txId.slice(0, 12)}… ↗
-                                    </a>
+                                      <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" />
+                                      <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
+                                    </svg>
+                                    {ms.txId.slice(0, 12)}… ↗
                                     {isPending && (
-                                      <span
-                                        className="spinner"
-                                        style={{ width: 8, height: 8 }}
-                                      />
+                                      <span className="pbb-spinner-xs" />
                                     )}
-                                  </div>
+                                  </a>
                                 )}
                                 {ms.completedAt && (
-                                  <div className="db-ms-released">
+                                  <span className="pbb-ms-released">
                                     {ms.status === "complete"
                                       ? "Released"
                                       : "Settled"}{" "}
                                     {new Date(ms.completedAt).toLocaleString()}
-                                  </div>
+                                  </span>
                                 )}
                               </div>
                             </div>
 
-                            <div className="db-ms-right">
-                              <div>
+                            {/* Right */}
+                            <div className="pbb-ms-right">
+                              <div className="pbb-ms-amt-block">
                                 <div
-                                  className={`db-ms-amount${isDone ? " db-ms-amount--done" : ""}`}
+                                  className={`pbb-ms-amt${isDone ? " pbb-ms-amt--done" : ""}`}
                                 >
                                   {ms.amountSats > 0
                                     ? formatSats(ms.amountSats)
                                     : `$${ms.amountUsd}`}
                                 </div>
-                                <div className="db-ms-pct">
+                                <div className="pbb-ms-amt-sub">
                                   {ms.percentage}%
                                 </div>
                               </div>
-                              <div className="db-ms-actions">
+                              <div className="pbb-ms-actions">
                                 <span
-                                  className="ms-status-pill"
+                                  className="pbb-ms-pill"
                                   style={{
                                     color: statusColor(ms.status),
                                     background: statusColor(ms.status) + "10",
                                     borderColor: statusColor(ms.status) + "28",
                                   }}
                                 >
+                                  {isPending && (
+                                    <span className="pbb-spinner-dot" />
+                                  )}
                                   {statusLabel(ms.status)}
                                 </span>
+
                                 {!isDone &&
                                   !isPending &&
                                   !isDisputed &&
@@ -1063,7 +1009,7 @@ export default function PartyBDashboard() {
                                     return (
                                       <>
                                         <button
-                                          className="db-btn db-btn--dispute"
+                                          className="pbb-btn pbb-btn--dispute"
                                           onClick={() =>
                                             setDisputeConfirmMs(ms)
                                           }
@@ -1071,10 +1017,7 @@ export default function PartyBDashboard() {
                                         >
                                           {isDisputingThis ? (
                                             <>
-                                              <span
-                                                className="spinner"
-                                                style={{ width: 8, height: 8 }}
-                                              />
+                                              <span className="pbb-spinner-xs" />
                                               {bTxStatus === "confirming"
                                                 ? " Confirming…"
                                                 : " Submitting…"}
@@ -1085,8 +1028,7 @@ export default function PartyBDashboard() {
                                         </button>
                                         {bTxStatus === "failed" && (
                                           <button
-                                            className="db-btn db-btn--dispute"
-                                            style={{ opacity: 0.6 }}
+                                            className="pbb-btn pbb-btn--retry"
                                             onClick={() =>
                                               dispatch(
                                                 setMilestoneTxState({
@@ -1106,17 +1048,41 @@ export default function PartyBDashboard() {
                                       </>
                                     );
                                   })()}
+
                                 {isDisputed && !alreadySub && (
                                   <button
-                                    className="db-btn db-btn--evidence"
+                                    className="pbb-btn pbb-btn--evidence"
                                     onClick={() => setDisputeModalMs(ms)}
                                   >
-                                    📄 Evidence
+                                    <svg
+                                      width="10"
+                                      height="10"
+                                      viewBox="0 0 24 24"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      strokeWidth="2"
+                                      strokeLinecap="round"
+                                    >
+                                      <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                                      <polyline points="14 2 14 8 20 8" />
+                                    </svg>
+                                    Evidence
                                   </button>
                                 )}
                                 {isDisputed && alreadySub && (
-                                  <span className="db-submitted-badge">
-                                    ✓ Filed
+                                  <span className="pbb-filed">
+                                    <svg
+                                      width="9"
+                                      height="9"
+                                      viewBox="0 0 24 24"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      strokeWidth="3"
+                                      strokeLinecap="round"
+                                    >
+                                      <polyline points="20 6 9 17 4 12" />
+                                    </svg>
+                                    Filed
                                   </span>
                                 )}
                               </div>
@@ -1124,7 +1090,7 @@ export default function PartyBDashboard() {
                           </div>
 
                           {showArbBanner && arbDecision && (
-                            <div style={{ padding: "0 16px 16px" }}>
+                            <div className="pbb-disp-panel">
                               <ArbitratorDecisionBanner
                                 decision={arbDecision}
                                 viewerRole="B"
@@ -1133,17 +1099,10 @@ export default function PartyBDashboard() {
                           )}
 
                           {isDisputed && !showArbBanner && (
-                            <div className="db-dispute-panel">
-                              <div
-                                style={{
-                                  fontSize: 11,
-                                  fontFamily: "var(--mono)",
-                                  color: "var(--text-4)",
-                                  marginBottom: 8,
-                                }}
-                              >
+                            <div className="pbb-disp-panel">
+                              <span className="pbb-disp-awaiting">
                                 ⚑ Dispute is open — awaiting arbitrator decision
-                              </div>
+                              </span>
                             </div>
                           )}
                         </div>
@@ -1154,39 +1113,36 @@ export default function PartyBDashboard() {
               )}
 
               {progressPct === 100 && milestones.length > 0 && (
-                <div className="db-complete-banner fade-up">
-                  <div style={{ fontSize: 28, marginBottom: 8 }}>🎉</div>
-                  <div
-                    style={{
-                      fontSize: 16,
-                      fontWeight: 700,
-                      color: "var(--text-1)",
-                      letterSpacing: "-0.03em",
-                      marginBottom: 4,
-                    }}
-                  >
+                <div className="pbb-complete-banner">
+                  <div className="pbb-complete-icon">
+                    <svg
+                      width="24"
+                      height="24"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="#0a0a0a"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                    >
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                  </div>
+                  <div className="pbb-complete-title">
                     All milestones settled
                   </div>
-                  <div
-                    className="label"
-                    style={{
-                      textTransform: "none",
-                      letterSpacing: 0,
-                      fontSize: 11,
-                    }}
-                  >
+                  <p className="pbb-complete-body">
                     {formatSats(earnedSats)} released to your wallet
-                  </div>
+                  </p>
                 </div>
               )}
 
-              <div className="db-info-strip fade-up">
+              <div className="pbb-info-strip">
                 <svg
                   width="12"
                   height="12"
                   viewBox="0 0 24 24"
                   fill="none"
-                  stroke="var(--text-4)"
+                  stroke="rgba(255,255,255,.28)"
                   strokeWidth="1.5"
                   style={{ flexShrink: 0, marginTop: 2 }}
                 >
@@ -1194,9 +1150,11 @@ export default function PartyBDashboard() {
                   <line x1="12" y1="8" x2="12" y2="12" />
                   <line x1="12" y1="16" x2="12.01" y2="16" />
                 </svg>
-                <p className="db-info-text">
+                <p className="pbb-info-text">
                   Updates push{" "}
-                  <strong style={{ color: "var(--text-2)", fontWeight: 500 }}>
+                  <strong
+                    style={{ color: "rgba(255,255,255,.55)", fontWeight: 500 }}
+                  >
                     instantly
                   </strong>{" "}
                   via Socket.io. When a milestone is disputed, submit your
@@ -1208,67 +1166,24 @@ export default function PartyBDashboard() {
         </main>
       </div>
 
-      {/* Dispute Modal */}
+      {/* ── Evidence / Dispute Modal ── */}
       {disputeModalMs && agreementId && (
         <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 1000,
-            background: "rgba(5,5,7,0.82)",
-            backdropFilter: "blur(20px) saturate(1.4)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 24,
-          }}
+          className="pbb-modal-bd"
           onClick={(e) => {
             if (e.currentTarget === e.target) setDisputeModalMs(null);
           }}
         >
-          <div
-            style={{
-              width: "100%",
-              maxWidth: 640,
-              maxHeight: "90vh",
-              background: "var(--bg-1)",
-              border: "1px solid var(--border-hi)",
-              borderRadius: 20,
-              overflow: "hidden",
-              display: "flex",
-              flexDirection: "column",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                padding: "20px 24px",
-                background: "var(--bg-2)",
-                borderBottom: "1px solid var(--border)",
-                flexShrink: 0,
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                <div
-                  style={{
-                    width: 40,
-                    height: 40,
-                    borderRadius: 11,
-                    background: "rgba(212,162,58,0.10)",
-                    border: "1px solid rgba(212,162,58,0.26)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
+          <div className="pbb-modal">
+            <div className="pbb-modal-head">
+              <div className="pbb-modal-head-left">
+                <div className="pbb-modal-icon">
                   <svg
-                    width="16"
-                    height="16"
+                    width="14"
+                    height="14"
                     viewBox="0 0 24 24"
                     fill="none"
-                    stroke="var(--amber)"
+                    stroke="var(--amber,#fbbf24)"
                     strokeWidth="1.8"
                     strokeLinecap="round"
                   >
@@ -1278,51 +1193,19 @@ export default function PartyBDashboard() {
                   </svg>
                 </div>
                 <div>
-                  <div
-                    style={{
-                      fontSize: 10,
-                      fontFamily: "var(--mono)",
-                      fontWeight: 600,
-                      color: "var(--amber)",
-                      textTransform: "uppercase",
-                      letterSpacing: "0.10em",
-                      marginBottom: 3,
-                    }}
-                  >
+                  <div className="pbb-modal-eyebrow">
                     File Evidence · Dispute
                   </div>
-                  <div
-                    style={{
-                      fontFamily: "var(--font-display)",
-                      fontSize: 16,
-                      fontWeight: 700,
-                      color: "var(--text-1)",
-                      letterSpacing: "-0.03em",
-                    }}
-                  >
-                    {disputeModalMs.title}
-                  </div>
+                  <div className="pbb-modal-title">{disputeModalMs.title}</div>
                 </div>
               </div>
               <button
-                style={{
-                  width: 32,
-                  height: 32,
-                  borderRadius: 8,
-                  background: "var(--bg-3)",
-                  border: "1px solid var(--border)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  cursor: "pointer",
-                  color: "var(--text-4)",
-                  fontFamily: "var(--font)",
-                }}
+                className="pbb-modal-close"
                 onClick={() => setDisputeModalMs(null)}
               >
                 <svg
-                  width="12"
-                  height="12"
+                  width="14"
+                  height="14"
                   viewBox="0 0 24 24"
                   fill="none"
                   stroke="currentColor"
@@ -1334,7 +1217,7 @@ export default function PartyBDashboard() {
                 </svg>
               </button>
             </div>
-            <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
+            <div className="pbb-modal-body pbb-modal-body--scroll">
               <DisputeSubmitScreen
                 agreementId={agreementId}
                 milestoneIndex={disputeModalMs.index}
@@ -1351,7 +1234,6 @@ export default function PartyBDashboard() {
                   milestone_description:
                     disputeModalMs.condition || disputeModalMs.title,
                   milestone_percentage: disputeModalMs.percentage,
-                  // ── deadline_dt preferred, legacy deadline as fallback ──
                   milestone_deadline:
                     (disputeModalMs as any).deadline_dt ||
                     disputeModalMs.deadline ||
@@ -1374,60 +1256,61 @@ export default function PartyBDashboard() {
         </div>
       )}
 
-      {/* Dispute Confirm */}
+      {/* ── Dispute Confirm Modal ── */}
       {disputeConfirmMs && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 999,
-            background: "rgba(0,0,0,0.75)",
-            backdropFilter: "blur(6px)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 24,
-          }}
-          onClick={() => setDisputeConfirmMs(null)}
-        >
+        <div className="pbb-modal-bd" onClick={() => setDisputeConfirmMs(null)}>
           <div
-            style={{
-              background: "var(--bg-1)",
-              border: "1px solid var(--border-hi)",
-              borderRadius: 14,
-              padding: 28,
-              width: "100%",
-              maxWidth: 420,
-            }}
+            className="pbb-modal pbb-modal--confirm"
             onClick={(e) => e.stopPropagation()}
           >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                marginBottom: 14,
-              }}
-            >
-              <div
-                style={{
-                  width: 32,
-                  height: 32,
-                  borderRadius: 8,
-                  background: "var(--amber-dim)",
-                  border: "1px solid rgba(212,162,58,0.28)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  flexShrink: 0,
-                }}
+            <div className="pbb-modal-head">
+              <div className="pbb-modal-head-left">
+                <div className="pbb-modal-icon">
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="var(--amber,#fbbf24)"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                  >
+                    <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                  </svg>
+                </div>
+                <div>
+                  <div className="pbb-modal-title">Open Dispute</div>
+                  <div className="pbb-modal-subtitle">
+                    {disputeConfirmMs.title}
+                  </div>
+                </div>
+              </div>
+              <button
+                className="pbb-modal-close"
+                onClick={() => setDisputeConfirmMs(null)}
               >
                 <svg
-                  width="13"
-                  height="13"
+                  width="14"
+                  height="14"
                   viewBox="0 0 24 24"
                   fill="none"
-                  stroke="var(--amber)"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                >
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+            <div className="pbb-modal-body">
+              <div className="pbb-modal-warn">
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="#fbbf24"
                   strokeWidth="1.8"
                   strokeLinecap="round"
                 >
@@ -1435,64 +1318,47 @@ export default function PartyBDashboard() {
                   <line x1="12" y1="9" x2="12" y2="13" />
                   <line x1="12" y1="17" x2="12.01" y2="17" />
                 </svg>
+                <p>
+                  This will flag the milestone on-chain and lock funds until the
+                  arbitrator resolves it.
+                </p>
               </div>
-              <div
-                style={{
-                  fontSize: 15,
-                  fontWeight: 600,
-                  color: "var(--text-1)",
-                }}
-              >
-                Open Dispute
+              <div className="pbb-modal-grid">
+                <div className="pbb-modal-cell">
+                  <span className="pbb-modal-cell-label">Milestone</span>
+                  <span className="pbb-modal-cell-val">
+                    {disputeConfirmMs.title}
+                  </span>
+                </div>
+                {(disputeConfirmMs as any).deadline_dt && (
+                  <div className="pbb-modal-cell">
+                    <span className="pbb-modal-cell-label">Deadline</span>
+                    <span
+                      className="pbb-modal-cell-val"
+                      style={{ fontSize: 11, color: "rgba(255,255,255,.55)" }}
+                    >
+                      {fmtDeadline((disputeConfirmMs as any).deadline_dt)}
+                    </span>
+                  </div>
+                )}
               </div>
-            </div>
-            <div
-              style={{
-                fontSize: 12,
-                color: "var(--text-3)",
-                lineHeight: 1.6,
-                marginBottom: 6,
-              }}
-            >
-              Milestone:{" "}
-              <strong style={{ color: "var(--text-2)" }}>
-                {disputeConfirmMs.title}
-              </strong>
-            </div>
-            {/* Show deadline in confirm dialog too */}
-            {(disputeConfirmMs as any).deadline_dt && (
-              <div style={{ marginBottom: 10 }}>
-                <DeadlineBadge iso={(disputeConfirmMs as any).deadline_dt} />
+              <div className="pbb-modal-footer">
+                <button
+                  className="pbb-cta-secondary"
+                  onClick={() => setDisputeConfirmMs(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="pbb-cta-dispute"
+                  disabled={disputingIndex === disputeConfirmMs.index}
+                  onClick={() => handlePartyBDispute(disputeConfirmMs)}
+                >
+                  {disputingIndex === disputeConfirmMs.index
+                    ? "Submitting…"
+                    : "Confirm Dispute On-chain →"}
+                </button>
               </div>
-            )}
-            <div
-              style={{
-                fontSize: 12,
-                color: "var(--text-3)",
-                lineHeight: 1.6,
-                marginBottom: 20,
-              }}
-            >
-              This will flag the milestone on-chain and lock funds until the
-              arbitrator resolves it.
-            </div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button
-                className="btn btn-primary"
-                style={{ flex: 1 }}
-                disabled={disputingIndex === disputeConfirmMs.index}
-                onClick={() => handlePartyBDispute(disputeConfirmMs)}
-              >
-                {disputingIndex === disputeConfirmMs.index
-                  ? "Submitting…"
-                  : "Confirm Dispute On-chain →"}
-              </button>
-              <button
-                className="btn btn-ghost"
-                onClick={() => setDisputeConfirmMs(null)}
-              >
-                Cancel
-              </button>
             </div>
           </div>
         </div>
@@ -1500,3 +1366,383 @@ export default function PartyBDashboard() {
     </div>
   );
 }
+
+// ── Scoped CSS ────────────────────────────────────────────────
+const css = `
+@keyframes pbbSpin  { to{transform:rotate(360deg)} }
+@keyframes pbbPulse { 0%,100%{opacity:1}50%{opacity:.4} }
+@keyframes pbbFlash { 0%{background:rgba(212,255,0,.12)}100%{background:transparent} }
+@keyframes pbbSlide { from{transform:translateX(-100%)}to{transform:translateX(0)} }
+
+/* ── Topbar ──────────────────────────────────────────────────── */
+.pbb-topbar { position:sticky;top:0;z-index:200;height:56px;background:#0a0a0a;border-bottom:1px solid rgba(255,255,255,.07);display:flex;align-items:center;justify-content:space-between;padding:0 28px;gap:12px; }
+.pbb-topbar-left  { display:flex;align-items:center;min-width:0;overflow:hidden; }
+.pbb-topbar-right { display:flex;align-items:center;gap:10px;flex-shrink:0; }
+
+.pbb-ham { display:none;flex-direction:column;justify-content:center;gap:4.5px;width:34px;height:34px;background:none;border:1px solid rgba(255,255,255,.10);border-radius:6px;cursor:pointer;padding:0 9px;flex-shrink:0;margin-right:12px; }
+.pbb-ham span { display:block;height:1.5px;background:rgba(255,255,255,.55);border-radius:2px; }
+
+.pbb-brand { display:flex;align-items:center;gap:9px;text-decoration:none;flex-shrink:0; }
+.pbb-brand-mark { width:28px;height:28px;border-radius:6px;background:#d4ff00;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:900;color:#0a0a0a;font-family:'Syne',sans-serif;flex-shrink:0; }
+.pbb-brand-name { font-family:'Syne',sans-serif;font-size:15px;font-weight:800;color:#fff;letter-spacing:-.02em; }
+
+.pbb-nav-sep { width:1px;height:16px;background:rgba(255,255,255,.08);margin:0 20px;flex-shrink:0; }
+
+.pbb-breadcrumb { display:flex;align-items:center;overflow:hidden; }
+.pbb-bc-dim { font-size:11px;font-family:'DM Mono',monospace;color:rgba(255,255,255,.22);white-space:nowrap; }
+.pbb-bc-id  { font-size:11px;font-family:'DM Mono',monospace;color:rgba(255,255,255,.22);max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.pbb-bc-arr { font-size:11px;color:rgba(255,255,255,.15);margin:0 6px;flex-shrink:0; }
+.pbb-bc-cur { font-size:11px;font-family:'DM Mono',monospace;color:rgba(255,255,255,.55);flex-shrink:0; }
+
+.pbb-ts { font-size:10px;font-family:'DM Mono',monospace;color:rgba(255,255,255,.20); }
+
+.pbb-wallet { display:flex;align-items:center;gap:7px;border:1px solid rgba(255,255,255,.10);border-radius:4px;padding:5px 12px; }
+.pbb-wallet-dot  { width:5px;height:5px;border-radius:50%;background:#d4ff00;flex-shrink:0; }
+.pbb-wallet-addr { font-size:10px;font-family:'DM Mono',monospace;color:rgba(255,255,255,.45); }
+
+.pbb-wallet-chip { display:flex;align-items:center;gap:7px;border:1px solid rgba(255,255,255,.10);border-radius:4px;padding:6px 12px;flex-shrink:0; }
+
+.pbb-live     { display:flex;align-items:center;gap:6px;font-size:10px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#d4ff00;border:1px solid rgba(212,255,0,.25);border-radius:4px;padding:4px 10px;white-space:nowrap; }
+.pbb-live--off { color:rgba(255,255,255,.30);border-color:rgba(255,255,255,.12); }
+.pbb-live-dot { width:5px;height:5px;border-radius:50%;background:#d4ff00;flex-shrink:0;animation:pbbPulse 2s ease infinite; }
+.pbb-live-dot--off { background:rgba(255,255,255,.30);animation:none; }
+.pbb-live-label {}
+
+/* ── Shell / Overlay / Sidebar ───────────────────────────────── */
+.pbb-shell   { display:flex;min-height:calc(100vh - 56px);background:#0a0a0a; }
+.pbb-overlay { display:none;position:fixed;inset:0;z-index:150;background:rgba(0,0,0,.65);backdrop-filter:blur(4px); }
+.pbb-sidebar { width:220px;flex-shrink:0;background:#0d0d0d;border-right:1px solid rgba(255,255,255,.07);display:flex;flex-direction:column;position:sticky;top:56px;height:calc(100vh - 56px);overflow-y:auto;padding:20px 0 24px;transition:transform .26s cubic-bezier(.16,1,.3,1); }
+.pbb-sb-block { padding:0 14px 20px;margin-bottom:4px;border-bottom:1px solid rgba(255,255,255,.05); }
+.pbb-sb-block:last-of-type { border-bottom:none; }
+.pbb-sb-label { font-size:9px;font-family:'DM Mono',monospace;color:rgba(255,255,255,.22);text-transform:uppercase;letter-spacing:.14em;margin-bottom:10px; }
+
+.pbb-nav     { display:flex;flex-direction:column;gap:1px; }
+.pbb-nav-item { display:flex;align-items:center;gap:9px;width:100%;padding:8px 10px;border-radius:4px;font-size:12px;font-weight:500;color:rgba(255,255,255,.35);background:none;border:none;cursor:pointer;text-align:left;font-family:'DM Sans',sans-serif;min-height:40px; }
+.pbb-nav-item:hover { color:#fff;background:rgba(255,255,255,.05); }
+.pbb-nav-item--active { color:#fff;background:rgba(255,255,255,.06); }
+.pbb-nav-icon { color:rgba(255,255,255,.25);flex-shrink:0;width:16px;display:flex;align-items:center;justify-content:center; }
+.pbb-nav-item--active .pbb-nav-icon,.pbb-nav-item:hover .pbb-nav-icon { color:#d4ff00; }
+.pbb-nav-badge { margin-left:auto;font-size:9px;font-family:'DM Mono',monospace;font-weight:700;color:#d4ff00;background:rgba(212,255,0,.12);border:1px solid rgba(212,255,0,.25);border-radius:3px;padding:1px 6px; }
+
+.pbb-ring-wrap  { display:flex;flex-direction:column;align-items:center;gap:8px;padding:16px 14px 20px;border-bottom:1px solid rgba(255,255,255,.05); }
+.pbb-ring-label { font-size:9px;font-family:'DM Mono',monospace;color:rgba(255,255,255,.25);text-align:center;letter-spacing:.10em;text-transform:uppercase; }
+
+.pbb-meta-list { display:flex;flex-direction:column;gap:10px; }
+.pbb-meta-row  { display:flex;align-items:center;justify-content:space-between;gap:8px; }
+.pbb-meta-key  { font-size:10px;font-family:'DM Mono',monospace;color:rgba(255,255,255,.25); }
+.pbb-meta-val  { font-size:11px;font-family:'DM Mono',monospace;color:rgba(255,255,255,.70);font-weight:600; }
+
+.pbb-state-tag { font-size:9px;font-family:'DM Mono',monospace;font-weight:700;text-transform:uppercase;letter-spacing:.07em;border-radius:3px;padding:2px 7px;border:1px solid; }
+.pbb-state-tag--locked   { color:#d4ff00;border-color:rgba(212,255,0,.30); }
+.pbb-state-tag--pending  { color:rgba(255,255,255,.40);border-color:rgba(255,255,255,.15); }
+.pbb-state-tag--released { color:#4ade80;border-color:rgba(74,222,128,.30); }
+.pbb-state-tag--disputed { color:#fbbf24;border-color:rgba(251,191,36,.30); }
+
+/* ── Main ────────────────────────────────────────────────────── */
+.pbb-main { flex:1;min-width:0;padding:40px 48px 72px;display:flex;flex-direction:column;gap:28px; }
+
+.pbb-page-header { display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap; }
+.pbb-eyebrow     { font-size:10px;font-family:'DM Mono',monospace;color:#d4ff00;text-transform:uppercase;letter-spacing:.12em;margin-bottom:8px; }
+.pbb-page-title  { font-family:'Syne',sans-serif;font-size:clamp(22px,3vw,36px);font-weight:800;color:#fff;letter-spacing:-.04em;line-height:1;margin:0; }
+
+/* ── Stats ───────────────────────────────────────────────────── */
+.pbb-stats { display:grid;grid-template-columns:repeat(4,1fr);border:1px solid rgba(255,255,255,.07); }
+.pbb-stat  { padding:24px 20px 20px;display:flex;flex-direction:column;border-right:1px solid rgba(255,255,255,.07);min-width:0; }
+.pbb-stat:last-child { border-right:none; }
+.pbb-stat-icon  { font-size:18px;margin-bottom:20px;opacity:.6; }
+.pbb-stat-label { font-size:10px;font-family:'DM Mono',monospace;color:rgba(255,255,255,.30);text-transform:uppercase;letter-spacing:.10em;margin-bottom:8px; }
+.pbb-stat-value { font-family:'Syne',sans-serif;font-size:16px;font-weight:700;color:#fff;letter-spacing:-.03em;line-height:1.2;word-break:break-all;margin-bottom:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.pbb-stat-sub   { font-size:11px;font-family:'DM Mono',monospace;color:rgba(255,255,255,.25);overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+
+/* ── Progress ────────────────────────────────────────────────── */
+.pbb-prog-card { border:1px solid rgba(255,255,255,.07);padding:20px;display:flex;flex-direction:column;gap:14px; }
+.pbb-prog-top  { display:flex;align-items:center;justify-content:space-between; }
+.pbb-prog-title { font-size:10px;font-family:'DM Mono',monospace;color:rgba(255,255,255,.30);text-transform:uppercase;letter-spacing:.09em; }
+.pbb-prog-right { display:flex;align-items:baseline;gap:8px; }
+.pbb-prog-pct   { font-size:20px;font-family:'DM Mono',monospace;font-weight:800;letter-spacing:-.03em; }
+.pbb-prog-frac  { font-size:10px;font-family:'DM Mono',monospace;color:rgba(255,255,255,.25); }
+.pbb-prog-track { height:3px;background:rgba(255,255,255,.06);overflow:hidden; }
+.pbb-prog-fill  { height:100%;transition:width .8s ease; }
+
+/* ── Loading / Empty ─────────────────────────────────────────── */
+.pbb-loading      { padding:24px 0;display:flex;align-items:center;gap:10px;color:rgba(255,255,255,.30);font-size:12px;font-family:'DM Mono',monospace; }
+.pbb-loading-text { font-size:12px;font-family:'DM Mono',monospace;color:rgba(255,255,255,.30); }
+.pbb-empty-state  { display:flex;align-items:flex-start;gap:14px;border:1px solid rgba(255,255,255,.07);padding:24px 20px; }
+.pbb-empty-icon   { width:36px;height:36px;border-radius:8px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.25);flex-shrink:0; }
+.pbb-empty-title  { font-size:14px;font-weight:600;color:rgba(255,255,255,.60);margin-bottom:4px; }
+.pbb-empty-body   { font-size:12px;color:rgba(255,255,255,.28);line-height:1.6; }
+
+/* ── Section ─────────────────────────────────────────────────── */
+.pbb-sec-head  { display:flex;align-items:center;justify-content:space-between;margin-bottom:12px; }
+.pbb-sec-title { font-size:10px;font-family:'DM Mono',monospace;color:rgba(255,255,255,.30);text-transform:uppercase;letter-spacing:.10em; }
+.pbb-sec-count { font-size:10px;font-family:'DM Mono',monospace;color:rgba(255,255,255,.20); }
+
+/* ── Milestone list ──────────────────────────────────────────── */
+.pbb-ms-list { display:flex;flex-direction:column;border:1px solid rgba(255,255,255,.07); }
+.pbb-ms-block { background:#0d0d0d;border-bottom:1px solid rgba(255,255,255,.06); }
+.pbb-ms-block:last-child { border-bottom:none; }
+.pbb-ms-block--done    { opacity:.55; }
+.pbb-ms-block--disp    { background:rgba(251,191,36,.02);border-left:2px solid rgba(251,191,36,.35); }
+.pbb-ms-block--pending { background:rgba(255,255,255,.01); }
+.pbb-ms-block--flash   { animation:pbbFlash .4s ease; }
+.pbb-ms-row   { display:flex;align-items:flex-start; }
+.pbb-ms-num   { width:28px;height:28px;border-radius:4px;flex-shrink:0;border:1px solid rgba(255,255,255,.15);margin:20px 16px 20px 18px;display:flex;align-items:center;justify-content:center;font-size:10px;font-family:'DM Mono',monospace;font-weight:800;color:rgba(255,255,255,.40); }
+.pbb-ms-num--done { border-color:#4ade80;color:#4ade80; }
+.pbb-ms-num--disp { border-color:rgba(251,191,36,.50);color:#fbbf24; }
+.pbb-ms-info  { flex:1;min-width:0;padding:20px 0 20px 2px; }
+.pbb-ms-title-row { display:flex;align-items:center;gap:8px;margin-bottom:5px;flex-wrap:wrap; }
+.pbb-ms-title { font-size:14px;font-weight:600;color:#fff;letter-spacing:-.02em;font-family:'DM Sans',sans-serif; }
+.pbb-ms-cond  { font-size:12px;color:rgba(255,255,255,.38);line-height:1.65;max-width:440px;margin-bottom:8px; }
+.pbb-ms-meta  { display:flex;align-items:center;gap:8px;flex-wrap:wrap; }
+.pbb-ms-dl    { display:flex;align-items:center;gap:4px;font-size:10px;font-family:'DM Mono',monospace;color:rgba(255,255,255,.22); }
+.pbb-ms-released { font-size:10px;font-family:'DM Mono',monospace;color:rgba(255,255,255,.28); }
+.pbb-tx-link  { display:flex;align-items:center;gap:4px;font-size:10px;font-family:'DM Mono',monospace;color:rgba(255,255,255,.28);text-decoration:none; }
+.pbb-tx-link:hover { color:#d4ff00; }
+.pbb-ms-right { display:flex;flex-direction:column;align-items:flex-end;gap:10px;flex-shrink:0;padding:20px 22px; }
+.pbb-ms-amt-block { text-align:right; }
+.pbb-ms-amt     { font-family:'DM Mono',monospace;font-size:14px;font-weight:600;letter-spacing:-.02em;line-height:1;color:#fff; }
+.pbb-ms-amt--done { color:#4ade80; }
+.pbb-ms-amt-sub { font-size:10px;font-family:'DM Mono',monospace;color:rgba(255,255,255,.22);margin-top:4px; }
+.pbb-ms-actions { display:flex;align-items:center;gap:5px;flex-wrap:wrap;justify-content:flex-end; }
+
+.pbb-ms-pill { display:inline-flex;align-items:center;gap:5px;font-size:9px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:.05em;border:1px solid;border-radius:3px;padding:3px 8px;white-space:nowrap; }
+.pbb-spinner-dot { width:5px;height:5px;border-radius:50%;background:currentColor;animation:pbbPulse 1.4s ease infinite; }
+
+.pbb-chip { display:inline-flex;align-items:center;gap:5px;font-size:9px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:.04em;border-radius:3px;padding:2px 7px;border:1px solid; }
+.pbb-chip--disp    { color:#fbbf24;border-color:rgba(251,191,36,.30); }
+.pbb-chip--pending { color:rgba(255,255,255,.55);border-color:rgba(255,255,255,.12); }
+.pbb-chip--arb     { color:#fbbf24;background:rgba(251,191,36,.10);border-color:rgba(251,191,36,.25); }
+.pbb-chip--overdue { color:#f87171;background:rgba(248,113,113,.08);border-color:rgba(248,113,113,.20); }
+.pbb-chip--flash   { color:#d4ff00;background:rgba(212,255,0,.08);border-color:rgba(212,255,0,.20); }
+
+.pbb-btn { display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:4px;font-size:11px;font-family:'DM Mono',monospace;font-weight:600;cursor:pointer;border:1px solid;white-space:nowrap;letter-spacing:.02em;min-height:28px; }
+.pbb-btn:disabled { opacity:.35;cursor:not-allowed; }
+.pbb-btn--dispute  { color:rgba(255,255,255,.70);background:transparent;border-color:rgba(255,255,255,.15); }
+.pbb-btn--dispute:hover:not(:disabled) { border-color:rgba(255,255,255,.30);color:#fff; }
+.pbb-btn--evidence { color:#fbbf24;background:transparent;border-color:rgba(251,191,36,.25); }
+.pbb-btn--evidence:hover { border-color:rgba(251,191,36,.50); }
+.pbb-btn--retry    { color:#f87171;background:transparent;border-color:rgba(248,113,113,.25); }
+.pbb-btn--retry:hover { border-color:rgba(248,113,113,.45); }
+.pbb-filed { display:inline-flex;align-items:center;gap:5px;font-size:10px;font-family:'DM Mono',monospace;font-weight:700;color:#4ade80;border:1px solid rgba(74,222,128,.25);border-radius:3px;padding:3px 9px; }
+
+.pbb-disp-panel   { border-top:1px solid rgba(251,191,36,.10);padding:16px 22px; }
+.pbb-disp-awaiting { font-size:11px;font-family:'DM Mono',monospace;color:rgba(255,255,255,.28); }
+
+/* ── Deadline badge ──────────────────────────────────────────── */
+.pbb-deadline { display:inline-flex;align-items:center;gap:5px;font-size:9px;font-family:'DM Mono',monospace;font-weight:600;color:rgba(255,255,255,.35);background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:4px;padding:2px 8px;letter-spacing:.02em; }
+.pbb-deadline--overdue { color:#f87171;background:rgba(248,113,113,.07);border-color:rgba(248,113,113,.20); }
+
+/* ── Arbitrator banner ───────────────────────────────────────── */
+.pbb-arb-banner { margin:4px 0 8px;border:1px solid;border-radius:6px;overflow:hidden; }
+.pbb-arb-head   { display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid; }
+.pbb-arb-eyebrow{ font-size:9px;font-family:'DM Mono',monospace;font-weight:700;text-transform:uppercase;letter-spacing:.10em;margin-bottom:2px; }
+.pbb-arb-title  { font-size:12px;font-weight:700;letter-spacing:-.02em; }
+.pbb-arb-you    { font-size:9px;font-family:'DM Mono',monospace;font-weight:700;text-transform:uppercase;letter-spacing:.06em;border:1px solid;border-radius:3px;padding:2px 7px;flex-shrink:0; }
+.pbb-arb-body   { padding:10px 14px;display:flex;flex-direction:column;gap:8px; }
+.pbb-arb-msg    { font-size:12px;color:rgba(255,255,255,.45);line-height:1.6;margin:0; }
+.pbb-arb-note   { background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:5px;padding:9px 11px; }
+.pbb-arb-note-label { font-size:9px;font-family:'DM Mono',monospace;font-weight:600;text-transform:uppercase;letter-spacing:.10em;color:rgba(255,255,255,.30);margin-bottom:5px; }
+.pbb-arb-note-text  { font-size:12px;color:rgba(255,255,255,.55);line-height:1.65;font-style:italic;margin:0; }
+.pbb-arb-meta   { display:flex;align-items:center;gap:8px;flex-wrap:wrap; }
+.pbb-arb-meta-item { font-size:9px;font-family:'DM Mono',monospace;color:rgba(255,255,255,.28); }
+.pbb-arb-sep    { color:rgba(255,255,255,.15);font-size:10px; }
+.pbb-arb-ai     { font-size:8px;font-family:'DM Mono',monospace;font-weight:700;text-transform:uppercase;letter-spacing:.08em;border:1px solid;border-radius:3px;padding:2px 6px; }
+
+/* ── Info / Complete ─────────────────────────────────────────── */
+.pbb-info-strip { display:flex;align-items:flex-start;gap:10px;border:1px solid rgba(255,255,255,.07);padding:14px 16px; }
+.pbb-info-text  { font-size:12px;color:rgba(255,255,255,.28);line-height:1.7;margin:0; }
+.pbb-complete-banner { text-align:center;border:1px solid rgba(74,222,128,.20);padding:48px 28px; }
+.pbb-complete-icon   { width:52px;height:52px;border-radius:50%;background:#d4ff00;display:flex;align-items:center;justify-content:center;margin:0 auto 18px; }
+.pbb-complete-title  { font-family:'Syne',sans-serif;font-size:22px;font-weight:800;letter-spacing:-.04em;color:#fff;margin-bottom:8px; }
+.pbb-complete-body   { font-size:13px;color:rgba(255,255,255,.35);margin-bottom:0; }
+
+/* ── History ─────────────────────────────────────────────────── */
+.pbb-hist-list { display:flex;flex-direction:column;border:1px solid rgba(255,255,255,.07);margin-top:24px; }
+.pbb-hist-row  { display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:14px 16px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,.05);transition:background .15s; }
+.pbb-hist-row:last-child { border-bottom:none; }
+.pbb-hist-row:hover { background:rgba(255,255,255,.02); }
+.pbb-hist-row--open { background:rgba(255,255,255,.02); }
+.pbb-hist-row-left  { display:flex;align-items:center;gap:10px;flex:1;min-width:0; }
+.pbb-hist-row-right { display:flex;align-items:center;gap:14px;flex-shrink:0; }
+.pbb-hist-id     { font-size:11px;font-family:'DM Mono',monospace;font-weight:700;color:rgba(255,255,255,.35);flex-shrink:0; }
+.pbb-hist-payer  { font-size:10px;font-family:'DM Mono',monospace;color:rgba(255,255,255,.28); }
+.pbb-hist-amount { font-size:12px;font-family:'DM Mono',monospace;font-weight:600;color:rgba(255,255,255,.60); }
+.pbb-hist-bar-wrap  { display:flex;flex-direction:column;align-items:flex-end;gap:4px; }
+.pbb-hist-bar-label { font-size:9px;font-family:'DM Mono',monospace;color:rgba(255,255,255,.28); }
+.pbb-hist-bar    { width:52px;height:3px;background:rgba(255,255,255,.07);overflow:hidden; }
+.pbb-hist-bar-fill { height:100%;transition:width .4s ease; }
+.pbb-hist-chevron { color:rgba(255,255,255,.25);transition:transform .2s; }
+.pbb-hist-chevron--open { transform:rotate(180deg); }
+.pbb-hist-expanded { width:100%;flex-basis:100%;border-top:1px solid rgba(255,255,255,.06);padding:12px 0 4px;display:flex;flex-direction:column;gap:0; }
+.pbb-hist-ms { display:flex;align-items:center;gap:10px;padding:8px 0; }
+.pbb-hist-ms-dot { width:20px;height:20px;border-radius:3px;flex-shrink:0;border:1px solid;display:flex;align-items:center;justify-content:center;font-size:9px;font-family:'DM Mono',monospace;font-weight:700; }
+.pbb-hist-ms-title { font-size:12px;font-weight:500;color:rgba(255,255,255,.55); }
+.pbb-hist-ms-cond  { font-size:10px;color:rgba(255,255,255,.28);margin-top:2px; }
+.pbb-hist-ms-right { display:flex;align-items:center;gap:8px;flex-shrink:0;margin-left:auto; }
+.pbb-hist-ms-amt { font-size:11px;font-family:'DM Mono',monospace;color:rgba(255,255,255,.45); }
+.pbb-hist-open-link { display:inline-block;margin-top:8px;font-size:11px;font-family:'DM Mono',monospace;color:#d4ff00;text-decoration:none; }
+.pbb-hist-open-link:hover { text-decoration:underline; }
+
+/* ── Spinners ────────────────────────────────────────────────── */
+.pbb-spinner-xs { display:inline-block;width:7px;height:7px;border-radius:50%;border:1.5px solid rgba(255,255,255,.15);border-top-color:rgba(255,255,255,.6);animation:pbbSpin .65s linear infinite;flex-shrink:0; }
+.pbb-spinner-sm { display:inline-block;flex-shrink:0;width:12px;height:12px;border-radius:50%;border:1.5px solid rgba(255,255,255,.12);border-top-color:rgba(255,255,255,.60);animation:pbbSpin .65s linear infinite; }
+
+/* ── Modal ───────────────────────────────────────────────────── */
+.pbb-modal-bd { position:fixed;inset:0;z-index:999;background:rgba(0,0,0,.80);display:flex;align-items:center;justify-content:center;padding:16px; }
+.pbb-modal    { width:100%;max-width:640px;background:#111;border:1px solid rgba(255,255,255,.10);overflow:hidden;display:flex;flex-direction:column;max-height:90vh; }
+.pbb-modal--confirm { max-width:440px; }
+.pbb-modal-head { display:flex;align-items:center;justify-content:space-between;padding:18px 20px;border-bottom:1px solid rgba(255,255,255,.07);flex-shrink:0; }
+.pbb-modal-head-left { display:flex;align-items:center;gap:12px;min-width:0; }
+.pbb-modal-icon { width:34px;height:34px;border-radius:4px;flex-shrink:0;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.20);display:flex;align-items:center;justify-content:center; }
+.pbb-modal-eyebrow { font-size:9px;font-family:'DM Mono',monospace;font-weight:700;color:#fbbf24;text-transform:uppercase;letter-spacing:.10em;margin-bottom:3px; }
+.pbb-modal-title   { font-family:'Syne',sans-serif;font-size:15px;font-weight:800;color:#fff;letter-spacing:-.03em; }
+.pbb-modal-subtitle{ font-size:11px;font-family:'DM Mono',monospace;color:rgba(255,255,255,.28);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px; }
+.pbb-modal-close   { width:28px;height:28px;border-radius:4px;flex-shrink:0;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.10);display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.35);cursor:pointer; }
+.pbb-modal-close:hover { background:rgba(255,255,255,.10);color:#fff; }
+.pbb-modal-body    { padding:20px;display:flex;flex-direction:column;gap:16px;flex-shrink:0; }
+.pbb-modal-body--scroll { overflow-y:auto;flex:1;padding:0; }
+.pbb-modal-warn { display:flex;align-items:flex-start;gap:10px;border:1px solid rgba(251,191,36,.18);padding:13px 14px; }
+.pbb-modal-warn svg { flex-shrink:0;margin-top:1px; }
+.pbb-modal-warn p { font-size:12px;color:rgba(255,255,255,.45);line-height:1.65;margin:0; }
+.pbb-modal-grid { display:grid;grid-template-columns:1fr 1fr;border:1px solid rgba(255,255,255,.07); }
+.pbb-modal-cell { background:#161616;padding:13px 14px;display:flex;flex-direction:column;gap:5px;border-right:1px solid rgba(255,255,255,.06);border-bottom:1px solid rgba(255,255,255,.06); }
+.pbb-modal-cell:nth-child(even) { border-right:none; }
+.pbb-modal-cell-label { font-size:9px;font-family:'DM Mono',monospace;color:rgba(255,255,255,.25);text-transform:uppercase;letter-spacing:.11em; }
+.pbb-modal-cell-val   { font-size:13px;font-family:'DM Mono',monospace;color:rgba(255,255,255,.75);font-weight:600;letter-spacing:-.01em;word-break:break-all; }
+.pbb-modal-footer { display:flex;align-items:center;justify-content:flex-end;gap:10px;padding-top:4px; }
+
+.pbb-cta-secondary { display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:11px 24px;border-radius:4px;cursor:pointer;background:transparent;color:rgba(255,255,255,.55);border:1px solid rgba(255,255,255,.12);font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500; }
+.pbb-cta-secondary:hover { border-color:rgba(255,255,255,.22);color:#fff; }
+.pbb-cta-dispute  { display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:10px 20px;border-radius:4px;cursor:pointer;background:#d4ff00;color:#0a0a0a;border:none;font-family:'Syne',sans-serif;font-size:13px;font-weight:700; }
+.pbb-cta-dispute:hover:not(:disabled) { background:#e0ff33; }
+.pbb-cta-dispute:disabled { opacity:.45;cursor:not-allowed; }
+
+/* ═══════════════════════════════════════════════════════════════
+   RESPONSIVE BREAKPOINTS
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── 1024px ─────────────────────────────────────────────────── */
+@media (max-width:1024px) {
+  .pbb-topbar { padding:0 20px; }
+  .pbb-main   { padding:32px 32px 64px;gap:22px; }
+  .pbb-stats  { grid-template-columns:repeat(2,1fr); }
+  .pbb-stat:nth-child(2) { border-right:none; }
+  .pbb-stat:nth-child(3) { border-right:1px solid rgba(255,255,255,.07); }
+  .pbb-stat:nth-child(4) { border-right:none; }
+}
+
+/* ── 900px — sidebar becomes a drawer ──────────────────────── */
+@media (max-width:900px) {
+  .pbb-ham { display:flex; }
+  .pbb-overlay { display:block; }
+  .pbb-sidebar {
+    position:fixed;left:0;bottom:0;z-index:160;
+    width:260px;height:100vh;top:0;
+    transform:translateX(-100%);
+    border-right:1px solid rgba(255,255,255,.10);
+  }
+  .pbb-sidebar--open { transform:translateX(0);animation:pbbSlide .26s cubic-bezier(.16,1,.3,1); }
+  .pbb-main { padding:24px 20px 56px; }
+}
+
+/* ── 768px ──────────────────────────────────────────────────── */
+@media (max-width:768px) {
+  .pbb-topbar { padding:0 16px;height:50px;gap:8px; }
+  .pbb-nav-sep { margin:0 12px; }
+  .pbb-bc-id,.pbb-bc-arr-last,.pbb-bc-cur { display:none; }
+  .pbb-ts { display:none; }
+  .pbb-main { padding:20px 16px 52px;gap:18px; }
+  .pbb-page-title { font-size:22px; }
+  .pbb-stats { grid-template-columns:repeat(2,1fr); }
+  .pbb-stat  { padding:16px 14px; }
+  .pbb-stat-icon { font-size:15px;margin-bottom:14px; }
+  .pbb-ms-right { padding:14px 16px; }
+}
+
+/* ── 580px ──────────────────────────────────────────────────── */
+@media (max-width:580px) {
+  .pbb-topbar { height:48px;padding:0 12px; }
+  .pbb-brand-name { font-size:13px; }
+  .pbb-live-label { display:none; }
+  .pbb-live { padding:4px 8px; }
+  .pbb-wallet { padding:4px 9px; }
+  .pbb-wallet-addr { font-size:9px; }
+
+  .pbb-main { padding:16px 12px 48px;gap:16px; }
+  .pbb-page-title { font-size:20px; }
+
+  .pbb-stats { grid-template-columns:1fr 1fr; }
+  .pbb-stat  { padding:14px 12px; }
+  .pbb-stat-value { font-size:13px; }
+  .pbb-stat-sub   { font-size:9px; }
+
+  .pbb-prog-card { padding:14px; }
+  .pbb-prog-pct  { font-size:16px; }
+
+  /* Milestone rows: stack vertically */
+  .pbb-ms-row  { flex-direction:column; }
+  .pbb-ms-num  { margin:12px 0 0 14px;align-self:flex-start; }
+  .pbb-ms-info { padding:8px 14px; }
+  .pbb-ms-title { font-size:13px; }
+  .pbb-ms-cond  { font-size:11px;max-width:100%; }
+  .pbb-ms-right { flex-direction:row;align-items:center;justify-content:space-between;padding:8px 14px 14px;gap:8px; }
+  .pbb-ms-amt-block { text-align:left; }
+  .pbb-ms-amt   { font-size:12px; }
+  .pbb-ms-actions { justify-content:flex-start; }
+
+  .pbb-disp-panel { padding:12px 14px; }
+
+  .pbb-complete-banner { padding:28px 16px; }
+  .pbb-complete-title  { font-size:18px; }
+
+  .pbb-info-strip { padding:12px 14px; }
+  .pbb-info-text  { font-size:11px; }
+
+  .pbb-hist-row    { padding:12px; }
+  .pbb-hist-bar    { width:40px; }
+  .pbb-hist-row-right { gap:8px; }
+
+  /* Modal: bottom sheet */
+  .pbb-modal-bd { align-items:flex-end;padding:0; }
+  .pbb-modal,.pbb-modal--confirm { max-width:100%;border-radius:0;border-left:none;border-right:none;border-bottom:none;max-height:92vh; }
+  .pbb-modal-head { padding:14px 16px; }
+  .pbb-modal-body { padding:14px 16px;gap:12px; }
+  .pbb-modal-footer { flex-direction:column-reverse;gap:8px; }
+  .pbb-cta-secondary,.pbb-cta-dispute { width:100%;justify-content:center;padding:12px 16px; }
+  .pbb-modal-grid { grid-template-columns:1fr; }
+  .pbb-modal-cell { border-right:none !important; }
+}
+
+/* ── 400px ──────────────────────────────────────────────────── */
+@media (max-width:400px) {
+  .pbb-topbar { padding:0 10px; }
+  .pbb-brand-name { display:none; }
+  .pbb-wallet { display:none; }
+  .pbb-nav-sep,.pbb-breadcrumb { display:none; }
+  .pbb-main { padding:14px 10px 48px; }
+  .pbb-stats { grid-template-columns:1fr; }
+  .pbb-stat  { border-right:none !important;border-bottom:1px solid rgba(255,255,255,.07); }
+  .pbb-stat:last-child { border-bottom:none; }
+  .pbb-btn { padding:5px 8px;font-size:10px; }
+  .pbb-ms-amt { font-size:11px; }
+  .pbb-hist-bar-wrap { display:none; }
+}
+
+/* ── Touch targets ──────────────────────────────────────────── */
+@media (max-width:768px) {
+  .pbb-btn { min-height:36px; }
+  .pbb-cta-secondary,.pbb-cta-dispute { min-height:44px; }
+  .pbb-nav-item { min-height:44px; }
+  .pbb-modal-close { width:36px;height:36px; }
+}
+
+/* ── Safe area (iOS notch) ──────────────────────────────────── */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .pbb-main { padding-bottom: max(56px, calc(env(safe-area-inset-bottom) + 24px)); }
+  .pbb-topbar { padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right)); }
+  .pbb-sidebar { padding-bottom: max(24px, env(safe-area-inset-bottom)); }
+}
+
+/* ── Overflow guard ─────────────────────────────────────────── */
+.pbb-main,.pbb-ms-block,.pbb-ms-info,.pbb-stat,.pbb-modal { min-width:0;max-width:100%; }
+`;

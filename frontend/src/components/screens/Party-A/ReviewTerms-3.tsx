@@ -997,12 +997,6 @@ export default function ReviewTerms() {
       hint: "Total escrow",
       dot: "var(--accent)",
     },
-    {
-      key: "deadline",
-      label: "Deadline",
-      hint: "Completion date",
-      dot: "var(--blue)",
-    },
   ];
 
   return (

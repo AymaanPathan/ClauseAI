@@ -1,7 +1,4 @@
 "use client";
-// ============================================================
-// components/screens/Shared/DisputeSubmitScreen.tsx — v2 2026
-// ============================================================
 
 import { useState, useRef, useEffect } from "react";
 import {

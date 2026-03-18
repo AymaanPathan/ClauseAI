@@ -1,9 +1,4 @@
 "use client";
-// ============================================================
-// components/partyB/ScreenDashboard.tsx — FULLY RESPONSIVE
-// Breakpoints: 1024 / 900 / 768 / 580 / 400
-// Mirrors the responsive pattern of partyA/ScreenDashboard.tsx
-// ============================================================
 
 import {
   disputeMilestoneAsPartyBThunk,

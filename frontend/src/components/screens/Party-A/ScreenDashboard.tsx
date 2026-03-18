@@ -428,7 +428,10 @@ export default function ScreenDashboard() {
             milestoneIndex: parseInt(i),
             txId: tx.txId,
             agreementId: agreementId ?? undefined,
-            action: "complete",
+            // ↓ FIX: use the stored action so disputes/timeouts aren't
+            //         re-reported as "complete" after a page remount.
+            action:
+              (tx.action as "complete" | "dispute" | "timeout") ?? "complete",
             callerAddress: walletAddress ?? undefined,
             onConfirmed: () => {
               setLastRefresh(Date.now());

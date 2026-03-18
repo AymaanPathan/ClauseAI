@@ -75,6 +75,7 @@ export interface TxState {
   txId: string | null;
   txUrl: string | null;
   error: string | null;
+  action?: "complete" | "dispute" | "timeout";
 }
 
 const emptyTx = (): TxState => ({
@@ -270,7 +271,6 @@ export const saveAgreementToDbThunk = createAsyncThunk(
         deadline?: string;
         deadline_dt?: string;
         amountUsd: string;
-
         amountSats: number;
       }>;
       onChainCreateTxId?: string;
@@ -512,6 +512,7 @@ export const pollMilestoneTxThunk = createAsyncThunk(
         const txStatus = await fetchTxStatus(payload.txId);
 
         if (txStatus === "success") {
+          // FIX: preserve action so the re-poll useEffect never loses it
           dispatch(
             setMilestoneTxState({
               index: payload.milestoneIndex,
@@ -520,6 +521,7 @@ export const pollMilestoneTxThunk = createAsyncThunk(
                 txId: payload.txId,
                 txUrl: explorerTxUrl(payload.txId),
                 error: null,
+                action: payload.action,
               },
             }),
           );
@@ -550,6 +552,7 @@ export const pollMilestoneTxThunk = createAsyncThunk(
           txStatus === "abort_by_response" ||
           txStatus === "abort_by_post_condition"
         ) {
+          // FIX: preserve action on abort failure
           dispatch(
             setMilestoneTxState({
               index: payload.milestoneIndex,
@@ -558,6 +561,7 @@ export const pollMilestoneTxThunk = createAsyncThunk(
                 txId: payload.txId,
                 txUrl: explorerTxUrl(payload.txId),
                 error: `Transaction aborted: ${txStatus}`,
+                action: payload.action,
               },
             }),
           );
@@ -568,6 +572,9 @@ export const pollMilestoneTxThunk = createAsyncThunk(
           };
         }
 
+        // FIX: preserve action on every "confirming" tick — this is the key
+        // fix that prevents the useEffect from re-spawning a parallel poll
+        // with action=undefined which then overwrites the DB with "complete"
         dispatch(
           setMilestoneTxState({
             index: payload.milestoneIndex,
@@ -576,6 +583,7 @@ export const pollMilestoneTxThunk = createAsyncThunk(
               txId: payload.txId,
               txUrl: explorerTxUrl(payload.txId),
               error: null,
+              action: payload.action,
             },
           }),
         );
@@ -584,6 +592,7 @@ export const pollMilestoneTxThunk = createAsyncThunk(
       }
     }
 
+    // FIX: preserve action on timeout failure
     dispatch(
       setMilestoneTxState({
         index: payload.milestoneIndex,
@@ -592,6 +601,7 @@ export const pollMilestoneTxThunk = createAsyncThunk(
           txId: payload.txId,
           txUrl: explorerTxUrl(payload.txId),
           error: "Polling timed out after 15 minutes. Check the explorer.",
+          action: payload.action,
         },
       }),
     );
@@ -900,7 +910,13 @@ const partyASlice = createSlice({
         const { milestoneIndex, txId, txUrl } = action.payload;
         state.txMilestone = {
           ...state.txMilestone,
-          [milestoneIndex]: { status: "confirming", txId, txUrl, error: null },
+          [milestoneIndex]: {
+            status: "confirming",
+            txId,
+            txUrl,
+            error: null,
+            action: "complete",
+          },
         };
       })
       .addCase(completeMilestoneThunk.rejected, (state, action) => {
@@ -929,7 +945,13 @@ const partyASlice = createSlice({
         const { milestoneIndex, txId, txUrl } = action.payload;
         state.txMilestone = {
           ...state.txMilestone,
-          [milestoneIndex]: { status: "confirming", txId, txUrl, error: null },
+          [milestoneIndex]: {
+            status: "confirming",
+            txId,
+            txUrl,
+            error: null,
+            action: "dispute",
+          },
         };
       })
       .addCase(disputeMilestoneThunk.rejected, (state, action) => {
@@ -958,7 +980,13 @@ const partyASlice = createSlice({
         const { milestoneIndex, txId, txUrl } = action.payload;
         state.txMilestone = {
           ...state.txMilestone,
-          [milestoneIndex]: { status: "confirming", txId, txUrl, error: null },
+          [milestoneIndex]: {
+            status: "confirming",
+            txId,
+            txUrl,
+            error: null,
+            action: "timeout",
+          },
         };
       })
       .addCase(triggerTimeoutThunk.rejected, (state, action) => {
@@ -1021,7 +1049,6 @@ const partyASlice = createSlice({
         "timeout",
         "dispute",
       ];
-      if (screen && safeScreens.includes(screen)) state.screen = screen;
       if (screen && safeScreens.includes(screen)) state.screen = screen;
     });
   },

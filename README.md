@@ -17,7 +17,6 @@
 [![GitHub](https://img.shields.io/badge/GitHub-AymaanPathan%2FClauseAI-181717?style=for-the-badge&logo=github)](https://github.com/AymaanPathan/ClauseAI.git)
 [![Built on Stacks](https://img.shields.io/badge/Built_on-Stacks-5546FF?style=for-the-badge)](https://stacks.co)
 [![Bitcoin](https://img.shields.io/badge/Secured_by-Bitcoin-F7931A?style=for-the-badge&logo=bitcoin)](https://bitcoin.org)
-[![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)](LICENSE)
 
 > *"Write your deal in plain English. AI makes it airtight. Bitcoin holds the money. Nobody can cheat."*
 

@@ -12,10 +12,6 @@
 **The Legal Layer for Bitcoin**
 
 *Natural Language → Bitcoin-Enforced Smart Contracts*
-<img width="1087" height="588" alt="open-dispute" src="https://github.com/user-attachments/assets/3af039b1-745b-4874-ac27-c2fba481b0da" />
-<img width="1092" height="590" alt="landing" src="https://github.com/user-attachments/assets/948c64c2-2185-4c0f-b54a-88a0f97a4a41" />
-<img width="1083" height="586" alt="describe" src="https://github.com/user-attachments/assets/6bd59993-3a38-4664-ad78-bd90744fe085" />
-<img width="1085" height="585" alt="agreement-dashboard" src="https://github.com/user-attachments/assets/5bf5f830-d4af-4ae4-9f2d-75ef1f6e99c0" />
 
 [![Live Demo](https://img.shields.io/badge/Live_Demo-clause--ai.vercel.app-orange?style=for-the-badge&logo=vercel)](https://clause-ai-bfno.vercel.app/)
 [![GitHub](https://img.shields.io/badge/GitHub-AymaanPathan%2FClauseAI-181717?style=for-the-badge&logo=github)](https://github.com/AymaanPathan/ClauseAI.git)
@@ -27,6 +23,11 @@
 </div>
 
 ---
+
+<img width="1087" height="588" alt="open-dispute" src="https://github.com/user-attachments/assets/3af039b1-745b-4874-ac27-c2fba481b0da" />
+<img width="1092" height="590" alt="landing" src="https://github.com/user-attachments/assets/948c64c2-2185-4c0f-b54a-88a0f97a4a41" />
+<img width="1083" height="586" alt="describe" src="https://github.com/user-attachments/assets/6bd59993-3a38-4664-ad78-bd90744fe085" />
+<img width="1085" height="585" alt="agreement-dashboard" src="https://github.com/user-attachments/assets/5bf5f830-d4af-4ae4-9f2d-75ef1f6e99c0" />
 
 ## 🔴 The Problem
 

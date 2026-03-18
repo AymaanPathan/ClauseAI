@@ -547,7 +547,8 @@ function DisputeRow({
     dispute.status === "ai_complete" || dispute.status === "party_b_submitted";
   const isRes =
     dispute.status === "resolved" || dispute.status === "auto_refunded";
-  const deadline = dispute.contract_terms.milestone_deadline;
+  const ct_row = dispute.contract_terms ?? {};
+  const deadline = ct_row.milestone_deadline;
   const overdue = isOverdue(deadline) && !isRes;
 
   return (
@@ -568,8 +569,7 @@ function DisputeRow({
       <div className="a-drow-body">
         <div className="a-drow-id">#{dispute.agreement_id.slice(0, 13)}…</div>
         <div className="a-drow-sub">
-          MS {dispute.milestone_index} ·{" "}
-          {dispute.contract_terms.milestone_percentage}%
+          MS {dispute.milestone_index} · {ct_row.milestone_percentage ?? "—"}%
           {overdue && <span className="a-drow-overdue">⚠ overdue</span>}
         </div>
       </div>
@@ -602,6 +602,7 @@ function DisputePanel({
   isResolved: boolean;
   onResolve: () => void;
 }) {
+  if (!dispute.contract_terms) return null;
   const ct = dispute.contract_terms;
   const aiV = dispute.ai_verdict;
   const arbD = dispute.arbitrator_decision;

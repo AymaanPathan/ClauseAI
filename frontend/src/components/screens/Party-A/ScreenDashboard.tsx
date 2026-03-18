@@ -1,17 +1,4 @@
 "use client";
-// ============================================================
-// components/partyA/ScreenDashboard.tsx — FULLY RESPONSIVE
-// Breakpoints: 1024 / 900 / 768 / 580 / 400
-// Key changes vs original:
-//   - Hamburger button opens sidebar as a slide-in drawer on mobile
-//   - Overlay backdrop closes sidebar on outside tap
-//   - Stats grid 4→2→1 col cascade
-//   - Milestone rows stack vertically on phones
-//   - Topbar items progressively collapse
-//   - Modal becomes a bottom sheet on mobile
-//   - All touch targets ≥ 44px
-//   - iOS safe-area insets applied
-// ============================================================
 
 import { useEffect, useCallback, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
@@ -254,6 +241,8 @@ function ArbitratorDecisionBanner({
 export default function ScreenDashboard() {
   const [refreshing, setRefreshing] = useState(false);
   const dispatch = useDispatch<AppDispatch>();
+  const [disputeRefreshKey, setDisputeRefreshKey] = useState(0);
+
   const {
     editedTerms,
     agreementId,

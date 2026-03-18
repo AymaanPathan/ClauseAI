@@ -1107,8 +1107,8 @@ const css = `
 :root{
   --bg:#0a0a0a;--bg1:#101010;--bg2:#161616;--bg3:#1c1c1c;
   --y:#f5c518;--yd:rgba(245,197,24,0.70);--ydim:rgba(245,197,24,0.08);--yborder:rgba(245,197,24,0.22);
-  --t1:#f0f0f0;--t2:rgba(240,240,240,0.70);--t3:rgba(240,240,240,0.40);--t4:rgba(240,240,240,0.22);
-  --border:rgba(240,240,240,0.08);--border2:rgba(240,240,240,0.13);
+  --t2:rgba(240,240,240,0.90);--t3:rgba(240,240,240,0.72);--t4:rgba(240,240,240,0.55);
+  --border:rgba(240,240,240,0.12);--border2:rgba(240,240,240,0.22);
   --mono:'DM Mono',monospace;--display:'Syne',sans-serif;--sans:'DM Sans',sans-serif;
 }
 

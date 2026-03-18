@@ -402,7 +402,7 @@ export default function PartyBDashboard() {
     flashIndex,
     refetch,
   } = useSyncedAgreement({ agreementId, walletAddress });
-
+  const [refreshing, setRefreshing] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [disputeConfirmMs, setDisputeConfirmMs] =
     useState<SyncedMilestone | null>(null);
@@ -412,6 +412,14 @@ export default function PartyBDashboard() {
   const [disputeModalMs, setDisputeModalMs] = useState<SyncedMilestone | null>(
     null,
   );
+  async function handleRefresh() {
+    setRefreshing(true);
+    try {
+      await refetch();
+    } finally {
+      setTimeout(() => setRefreshing(false), 600);
+    }
+  }
   const [disputeSubmitted, setDisputeSubmitted] = useState<
     Record<number, boolean>
   >({});
@@ -551,6 +559,34 @@ export default function PartyBDashboard() {
               {connected ? "Live" : "Reconnecting"}
             </span>
           </div>
+          <button
+            className="pbb-refresh-btn"
+            onClick={handleRefresh}
+            disabled={refreshing}
+            aria-label="Refresh agreement state"
+          >
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={
+                refreshing
+                  ? { animation: "pbbSpin .7s linear infinite" }
+                  : undefined
+              }
+            >
+              <polyline points="23 4 23 10 17 10" />
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+            </svg>
+            <span className="pbb-refresh-label">
+              {refreshing ? "Syncing…" : "Refresh"}
+            </span>
+          </button>
         </div>
       </header>
 
@@ -1396,6 +1432,13 @@ const css = `
 .pbb-wallet-addr { font-size:10px;font-family:'DM Mono',monospace;color:rgba(255,255,255,.45); }
 
 .pbb-wallet-chip { display:flex;align-items:center;gap:7px;border:1px solid rgba(255,255,255,.10);border-radius:4px;padding:6px 12px;flex-shrink:0; }
+
+
+/* ── Refresh button ─────────────────────────────────────────── */
+.pbb-refresh-btn { display:flex;align-items:center;gap:6px;padding:4px 12px;border-radius:4px;background:none;border:1px solid rgba(255,255,255,.12);color:rgba(255,255,255,.40);font-size:11px;font-family:'DM Mono',monospace;font-weight:600;cursor:pointer;letter-spacing:.04em;min-height:28px;transition:border-color .15s,color .15s,opacity .15s; }
+.pbb-refresh-btn:hover:not(:disabled) { border-color:rgba(255,255,255,.28);color:rgba(255, 255, 255, 0.8); }
+.pbb-refresh-btn:disabled { cursor:not-allowed;opacity:.55; }
+@media (max-width:580px) { .pbb-refresh-label { display:none; } .pbb-refresh-btn { padding:4px 8px; } }
 
 .pbb-live     { display:flex;align-items:center;gap:6px;font-size:10px;font-family:'DM Mono',monospace;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#d4ff00;border:1px solid rgba(212,255,0,.25);border-radius:4px;padding:4px 10px;white-space:nowrap; }
 .pbb-live--off { color:rgba(255,255,255,.30);border-color:rgba(255,255,255,.12); }

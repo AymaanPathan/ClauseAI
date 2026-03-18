@@ -252,6 +252,7 @@ function ArbitratorDecisionBanner({
 }
 
 export default function ScreenDashboard() {
+  const [refreshing, setRefreshing] = useState(false);
   const dispatch = useDispatch<AppDispatch>();
   const {
     editedTerms,
@@ -327,6 +328,16 @@ export default function ScreenDashboard() {
     flashIndex,
     refetch,
   } = useSyncedAgreement({ agreementId, walletAddress, localOptimistic });
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    try {
+      await refetch();
+      setLastRefresh(Date.now());
+    } finally {
+      setTimeout(() => setRefreshing(false), 600);
+    }
+  }
 
   const getStatus = useCallback(
     (index: number): MilestoneUIStatus => {
@@ -589,6 +600,34 @@ export default function ScreenDashboard() {
               {connected ? "sBTC Live" : "Reconnecting"}
             </span>
           </div>
+          <button
+            className="db-refresh-btn"
+            onClick={handleRefresh}
+            disabled={refreshing}
+            aria-label="Refresh agreement state"
+          >
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={
+                refreshing
+                  ? { animation: "dbSpin .7s linear infinite" }
+                  : undefined
+              }
+            >
+              <polyline points="23 4 23 10 17 10" />
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+            </svg>
+            <span className="db-refresh-label">
+              {refreshing ? "Syncing…" : "Refresh"}
+            </span>
+          </button>
         </div>
       </header>
 
@@ -626,6 +665,7 @@ export default function ScreenDashboard() {
                 </span>
                 Dashboard
               </button>
+
               {allComplete && (
                 <button
                   className="db-nav-item"
@@ -1747,7 +1787,11 @@ const css = `
 .db-cta-secondary:hover { border-color:rgba(255,255,255,.22);color:#fff; }
 .db-cta-dispute  { display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:10px 20px;border-radius:4px;cursor:pointer;background:#d4ff00;color:#0a0a0a;border:none;font-family:'Syne',sans-serif;font-size:13px;font-weight:700; }
 .db-cta-dispute:hover { background:#e0ff33; }
-
+/* ── Refresh button ─────────────────────────────────────────── */
+.db-refresh-btn { display:flex;align-items:center;gap:6px;padding:4px 12px;border-radius:4px;background:none;border:1px solid rgba(255,255,255,.12);color:rgba(255,255,255,.40);font-size:11px;font-family:'DM Mono',monospace;font-weight:600;cursor:pointer;letter-spacing:.04em;min-height:28px;transition:border-color .15s,color .15s,opacity .15s; }
+.db-refresh-btn:hover:not(:disabled) { border-color:rgba(255,255,255,.28);color:rgba(255,255,255,.80); }
+.db-refresh-btn:disabled { cursor:not-allowed;opacity:.55; }
+@media (max-width:580px) { .db-refresh-label { display:none; } .db-refresh-btn { padding:4px 8px; } }
 /* Spinners */
 .db-spinner-xs { display:inline-block;width:7px;height:7px;border-radius:50%;border:1.5px solid rgba(255,255,255,.15);border-top-color:rgba(255,255,255,.6);animation:dbSpin .65s linear infinite;flex-shrink:0; }
 .db-spinner-sm { display:inline-block;flex-shrink:0;width:12px;height:12px;border-radius:50%;border:1.5px solid rgba(255,255,255,.12);border-top-color:rgba(255,255,255,.60);animation:dbSpin .65s linear infinite; }
